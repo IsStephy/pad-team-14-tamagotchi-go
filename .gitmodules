@@ -1,0 +1,24 @@
+[submodule "user-management-service"]
+	path = user-management-service
+	url = https://github.com/pavelcium23/user-management-service.git
+[submodule "battle-service"]
+	path = battle-service
+	url = https://github.com/pavelcium23/battle-service.git
+[submodule "tamagotchi-service"]
+	path = tamagotchi-service
+	url = 
+[submodule "notification-service"]
+	path = notification-service
+	url = 
+[submodule "map-service"]
+	path = map-service
+	url = https://github.com/Dackohn/map-service
+[submodule "monster-raid-service"]
+	path = monster-raid-service
+	url = https://github.com/Dackohn/monster-raid-service
+[submodule "guild-service"]
+	path = guild-service
+	url = https://github.com/IsStephy/guild-service
+[submodule "package-registry-service"]
+	path = package-registry-service
+	url = https://github.com/IsStephy/package-registry-service
