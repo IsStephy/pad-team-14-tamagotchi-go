@@ -38,17 +38,17 @@ The team works in **2 languages**, split by repo/member pair:
 
 | Repo | Service | Language / Framework | Sync communication | Async communication |
 |---|---|---|---|---|
-| `user-management-service` | User Management | **Java** (Spring Boot) | REST CRUD (auth, profile, currency checks) | Publishes friend/relationship/currency-change events for other services to consume |
-| `battle-service` | Battle | **Java** (Spring Boot) | REST to create/query a match; WebSocket pushes live turn/state updates during a match | Publishes battle-end events (reward/XP/currency change, Tamagotchi transfer) for Notification/Tamagotchi/User Management to consume |
-| `tamagotchi-service` | Tamagotchi | **Java** (Spring Boot) | REST CRUD (create/level/read stats) | Publishes Tamagotchi-updated/transferred events |
-| `notification-service` | Notification | **Java** (Spring Boot) | REST for device registration only | Purely event-driven: consumes events from every other service and delivers via Firebase push; no service should call it synchronously for delivery |
+| `user-management-service` | User Management | **Go** (e.g. Gin/Echo) | REST CRUD (auth, profile, currency checks) | Publishes friend/relationship/currency-change events for other services to consume |
+| `battle-service` | Battle | **Go** (e.g. Gin/Echo) | REST to create/query a match; WebSocket pushes live turn/state updates during a match | Publishes battle-end events (reward/XP/currency change, Tamagotchi transfer) for Notification/Tamagotchi/User Management to consume |
+| `tamagotchi-service` | Tamagotchi | **Go** (e.g. Gin/Echo) | REST CRUD (create/level/read stats) | Publishes Tamagotchi-updated/transferred events |
+| `notification-service` | Notification | **Go** (e.g. Gin/Echo) | REST for device registration only | Purely event-driven: consumes events from every other service and delivers via Firebase push; no service should call it synchronously for delivery |
 | `map-service` | Map | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for nearby-user queries; WebSocket/streaming for continuous geolocation updates | Emits proximity events (async, fire-and-forget) rather than blocking callers |
 | `monster-raid-service` | Monster Raid | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for raid queries/attacks (current HP/status) | Publishes raid-complete/raid-failed events for rewards |
 | `guild-service` | Guild | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for guild/membership CRUD; WebSocket for Guild Chat (real-time, low-latency) | Publishes invite/raid-join events |
 | `package-registry-service` | Package Registry | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for package/moderator/stat-definition CRUD | Publishes raid-config-activated events for Monster Raid Service |
 
 **Why this split:**
-- **Java (Spring Boot)** for User Management, Battle, Tamagotchi, Notification: these are the services with the most structured, relational domain data (accounts, currencies, combat math, stat definitions) and benefit from Spring's mature ecosystem for transactional REST APIs, validation, and strong typing around combat/currency logic where correctness matters most (e.g. atomic Tamagotchi transfer on battle end).
+- **Go** for User Management, Battle, Tamagotchi, Notification: these are the services with the most structured, relational domain data (accounts, currencies, combat math, stat definitions), and Go's low memory footprint, fast startup, and static typing keep these always-on core services cheap to run while still giving strong compile-time guarantees around combat/currency logic where correctness matters most (e.g. atomic Tamagotchi transfer on battle end). Its built-in goroutine concurrency also handles the event consuming/publishing these services do without extra machinery.
 - **TypeScript (Node.js)** for Map, Monster Raid, Guild, Package Registry: these are I/O-heavy, connection-heavy services (constant geolocation streams, guild chat WebSockets, many concurrent raid clicks) where Node's non-blocking event loop and first-class WebSocket support are a natural fit, and where the JSON-shaped, loosely-structured config data (package-specific stat definitions, raid configs) suits a more dynamic language.
 - **WebSockets** are used specifically where the interaction is inherently real-time/bidirectional (Battle turn updates, Guild Chat, Monster Raid live damage) — REST elsewhere, since most other operations are simple request/response.
 - **Async events** (rather than synchronous calls) are used wherever a service shouldn't block on/depend on the availability of a downstream consumer — most notably Notification Service, and reward/XP distribution after Battle or Monster Raid completes.
@@ -76,7 +76,7 @@ All cross-service reads (e.g. Battle Service checking a user's currency) go thro
 
 Format: `METHOD /path` — request body → response body.
 
-#### User Management Service (`user-battle`, Java)
+#### User Management Service (`user-battle`, Go)
 - `POST /users/register` — `{username, password, email, packageId}` → `{userId, username, email}`
 - `POST /users/login` — `{username, password}` → `{token, userId}`
 - `GET /users/{userId}` — → `{userId, username, profile, level, xp}`
@@ -86,14 +86,14 @@ Format: `METHOD /path` — request body → response body.
 - `GET /users/{userId}/friends` — → `[{userId, username, status}]`
 - `GET /users/{userId}/relationship/{targetId}` — → `{relationship: "friend"|"enemy"|"none"}`
 
-#### Battle Service (`user-battle`, Java)
+#### Battle Service (`user-battle`, Go)
 - `POST /battles` — `{player1Id, player2Id, primaryTamagotchiId, secondaryTamagotchiId, boosts[]}` → `{battleId, status: "in_progress"}`
 - `GET /battles/{battleId}` — → `{battleId, state, currentTurn, healthP1, healthP2}`
 - `POST /battles/{battleId}/action` — `{userId, action, targetMoveId}` → `{battleId, state, log[]}`
 - `WS /battles/{battleId}/live` — server pushes `{type: "turn_update"|"battle_end", payload}`
 - On battle end (internal event, not client-facing): publishes `BattleEnded {winnerId, loserId, rewardCurrency, rewardXp, transferredTamagotchiId}`
 
-#### Tamagotchi Service (`tamagotchi-notification`, Java)
+#### Tamagotchi Service (`tamagotchi-notification`, Go)
 - `POST /tamagotchis` — `{ownerId, type, packageId, name}` → `{tamagotchiId, type, level, stats}`
 - `GET /tamagotchis/{id}` — → `{tamagotchiId, ownerId, type, level, sprite, packageStats}`
 - `GET /users/{userId}/tamagotchis` — → `[{tamagotchiId, type, level, isPrimary}]`
@@ -101,7 +101,7 @@ Format: `METHOD /path` — request body → response body.
 - `POST /tamagotchis/{id}/xp` — `{xpAmount}` → `{tamagotchiId, level, xp}`
 - `POST /tamagotchis/{id}/transfer-owner` — `{newOwnerId}` → `{tamagotchiId, ownerId}`
 
-#### Notification Service (`tamagotchi-notification`, Java)
+#### Notification Service (`tamagotchi-notification`, Go)
 - `POST /notifications/register-device` — `{userId, fcmToken}` → `{status: "registered"}`
 - `GET /notifications/{userId}` — → `[{id, type, payload, read, createdAt}]`
 - (No public "send" endpoint — triggered internally by consuming events: `FriendRequestReceived`, `NearbyPlayerDetected`, `BattleRequestReceived`, `TamagotchiCaptured`, `GuildInvitation`, `RaidStarted`)
