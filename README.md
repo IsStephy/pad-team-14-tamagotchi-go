@@ -74,64 +74,787 @@ All cross-service reads (e.g. Battle Service checking a user's currency) go thro
 
 ### Endpoints
 
-Format: `METHOD /path` — request body → response body.
+Each field below is annotated with its type (`string`, `int`, `float`, `bool`, `object`, `array<T>`, ISO 8601 timestamp, etc.).
 
 #### User Management Service (`user-battle`, Go)
-- `POST /users/register` — `{username, password, email, packageId}` → `{userId, username, email}`
-- `POST /users/login` — `{username, password}` → `{token, userId}`
-- `GET /users/{userId}` — → `{userId, username, profile, level, xp}`
-- `GET /users/{userId}/currency` — → `{localCurrency, globalCurrency}`
-- `POST /users/{userId}/currency/adjust` — `{globalCurrencyDelta, localCurrencyDelta, reason}` → `{localCurrency, globalCurrency}`
-- `POST /users/{userId}/friends/{targetId}` — → `{status: "pending"|"friends"}`
-- `GET /users/{userId}/friends` — → `[{userId, username, status}]`
-- `GET /users/{userId}/relationship/{targetId}` — → `{relationship: "friend"|"enemy"|"none"}`
+
+**Register a Player**
+
+`POST` `/users/register` — Description: Creates a new player account. Payload:
+
+```json
+{
+  "username": "string",
+  "password": "string",
+  "email": "string",
+  "packageId": "string"
+}
+```
+
+Success Response (201 Created):
+
+```json
+{
+  "userId": "string",
+  "username": "string",
+  "email": "string"
+}
+```
+
+**Login**
+
+`POST` `/users/login` — Description: Authenticates a player and returns a JWT. Payload:
+
+```json
+{
+  "username": "string",
+  "password": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "token": "string",
+  "userId": "string"
+}
+```
+
+**Get Player**
+
+`GET` `/users/{userId}` — Description: Retrieves a player's profile.
+
+Success Response (200 OK):
+
+```json
+{
+  "userId": "string",
+  "username": "string",
+  "profile": "string",
+  "level": "int",
+  "xp": "int"
+}
+```
+
+**Get Currency Balance**
+
+`GET` `/users/{userId}/currency` — Description: Retrieves a player's local and global currency balances.
+
+Success Response (200 OK):
+
+```json
+{
+  "localCurrency": "int",
+  "globalCurrency": "int"
+}
+```
+
+**Adjust Currency**
+
+`POST` `/users/{userId}/currency/adjust` — Description: Applies a currency delta (positive or negative) to a player. Payload:
+
+```json
+{
+  "globalCurrencyDelta": "int",
+  "localCurrencyDelta": "int",
+  "reason": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "localCurrency": "int",
+  "globalCurrency": "int"
+}
+```
+
+**Send Friend Request**
+
+`POST` `/users/{userId}/friends/{targetId}` — Description: Sends or accepts a friend request between two players.
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: pending, friends)"
+}
+```
+
+**List Friends**
+
+`GET` `/users/{userId}/friends` — Description: Lists a player's friends.
+
+Success Response (200 OK):
+
+```json
+[
+  {
+    "userId": "string",
+    "username": "string",
+    "status": "string"
+  }
+]
+```
+
+**Get Relationship**
+
+`GET` `/users/{userId}/relationship/{targetId}` — Description: Returns the relationship between two players.
+
+Success Response (200 OK):
+
+```json
+{
+  "relationship": "string (enum: friend, enemy, none)"
+}
+```
 
 #### Battle Service (`user-battle`, Go)
-- `POST /battles` — `{player1Id, player2Id, primaryTamagotchiId, secondaryTamagotchiId, boosts[]}` → `{battleId, status: "in_progress"}`
-- `GET /battles/{battleId}` — → `{battleId, state, currentTurn, healthP1, healthP2}`
-- `POST /battles/{battleId}/action` — `{userId, action, targetMoveId}` → `{battleId, state, log[]}`
-- `WS /battles/{battleId}/live` — server pushes `{type: "turn_update"|"battle_end", payload}`
-- On battle end (internal event, not client-facing): publishes `BattleEnded {winnerId, loserId, rewardCurrency, rewardXp, transferredTamagotchiId}`
+
+**Create Battle**
+
+`POST` `/battles` — Description: Creates a new PvP battle between two players. Payload:
+
+```json
+{
+  "player1Id": "string",
+  "player2Id": "string",
+  "primaryTamagotchiId": "string",
+  "secondaryTamagotchiId": "string",
+  "boosts": "array<string>"
+}
+```
+
+Success Response (201 Created):
+
+```json
+{
+  "battleId": "string",
+  "status": "string (enum: in_progress)"
+}
+```
+
+**Get Battle**
+
+`GET` `/battles/{battleId}` — Description: Retrieves the current state of a battle.
+
+Success Response (200 OK):
+
+```json
+{
+  "battleId": "string",
+  "state": "string",
+  "currentTurn": "int",
+  "healthP1": "int",
+  "healthP2": "int"
+}
+```
+
+**Submit Battle Action**
+
+`POST` `/battles/{battleId}/action` — Description: Submits a turn action for a battle. Payload:
+
+```json
+{
+  "userId": "string",
+  "action": "string",
+  "targetMoveId": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "battleId": "string",
+  "state": "string",
+  "log": "array<string>"
+}
+```
+
+**Live Battle Updates**
+
+`WS` `/battles/{battleId}/live` — Description: Server pushes live turn/state updates for a battle.
+
+Server push message:
+
+```json
+{
+  "type": "string (enum: turn_update, battle_end)",
+  "payload": "object"
+}
+```
+
+**Battle Ended (internal event)**
+
+Not client-facing — published when a battle ends, consumed by Notification/Tamagotchi/User Management services.
+
+```json
+{
+  "winnerId": "string",
+  "loserId": "string",
+  "rewardCurrency": "int",
+  "rewardXp": "int",
+  "transferredTamagotchiId": "string"
+}
+```
 
 #### Tamagotchi Service (`tamagotchi-notification`, Go)
-- `POST /tamagotchis` — `{ownerId, type, packageId, name}` → `{tamagotchiId, type, level, stats}`
-- `GET /tamagotchis/{id}` — → `{tamagotchiId, ownerId, type, level, sprite, packageStats}`
-- `GET /users/{userId}/tamagotchis` — → `[{tamagotchiId, type, level, isPrimary}]`
-- `PATCH /tamagotchis/{id}/stats` — `{statUpdates: {...}}` → `{tamagotchiId, packageStats}`
-- `POST /tamagotchis/{id}/xp` — `{xpAmount}` → `{tamagotchiId, level, xp}`
-- `POST /tamagotchis/{id}/transfer-owner` — `{newOwnerId}` → `{tamagotchiId, ownerId}`
+
+**Create Tamagotchi**
+
+`POST` `/tamagotchis` — Description: Creates a new Tamagotchi for a player. Payload:
+
+```json
+{
+  "ownerId": "string",
+  "type": "string",
+  "packageId": "string",
+  "name": "string"
+}
+```
+
+Success Response (201 Created):
+
+```json
+{
+  "tamagotchiId": "string",
+  "type": "string",
+  "level": "int",
+  "stats": "object"
+}
+```
+
+**Get Tamagotchi**
+
+`GET` `/tamagotchis/{id}` — Description: Retrieves a Tamagotchi's details.
+
+Success Response (200 OK):
+
+```json
+{
+  "tamagotchiId": "string",
+  "ownerId": "string",
+  "type": "string",
+  "level": "int",
+  "sprite": "string",
+  "packageStats": "object"
+}
+```
+
+**List Player's Tamagotchis**
+
+`GET` `/users/{userId}/tamagotchis` — Description: Lists all Tamagotchis owned by a player.
+
+Success Response (200 OK):
+
+```json
+[
+  {
+    "tamagotchiId": "string",
+    "type": "string",
+    "level": "int",
+    "isPrimary": "bool"
+  }
+]
+```
+
+**Update Tamagotchi Stats**
+
+`PATCH` `/tamagotchis/{id}/stats` — Description: Updates a Tamagotchi's package-local stats. Payload:
+
+```json
+{
+  "statUpdates": "object"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "tamagotchiId": "string",
+  "packageStats": "object"
+}
+```
+
+**Add XP**
+
+`POST` `/tamagotchis/{id}/xp` — Description: Adds experience points to a Tamagotchi, possibly leveling it up. Payload:
+
+```json
+{
+  "xpAmount": "int"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "tamagotchiId": "string",
+  "level": "int",
+  "xp": "int"
+}
+```
+
+**Transfer Ownership**
+
+`POST` `/tamagotchis/{id}/transfer-owner` — Description: Transfers a Tamagotchi to a new owner (e.g. on battle loss). Payload:
+
+```json
+{
+  "newOwnerId": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "tamagotchiId": "string",
+  "ownerId": "string"
+}
+```
 
 #### Notification Service (`tamagotchi-notification`, Go)
-- `POST /notifications/register-device` — `{userId, fcmToken}` → `{status: "registered"}`
-- `GET /notifications/{userId}` — → `[{id, type, payload, read, createdAt}]`
-- (No public "send" endpoint — triggered internally by consuming events: `FriendRequestReceived`, `NearbyPlayerDetected`, `BattleRequestReceived`, `TamagotchiCaptured`, `GuildInvitation`, `RaidStarted`)
+
+**Register Device**
+
+`POST` `/notifications/register-device` — Description: Registers a device's Firebase token for push notifications. Payload:
+
+```json
+{
+  "userId": "string",
+  "fcmToken": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: registered)"
+}
+```
+
+**List Notifications**
+
+`GET` `/notifications/{userId}` — Description: Lists a player's notifications.
+
+Success Response (200 OK):
+
+```json
+[
+  {
+    "id": "string",
+    "type": "string",
+    "payload": "object",
+    "read": "bool",
+    "createdAt": "string (ISO 8601 timestamp)"
+  }
+]
+```
+
+> No public "send" endpoint — notifications are triggered internally by consuming events: `FriendRequestReceived`, `NearbyPlayerDetected`, `BattleRequestReceived`, `TamagotchiCaptured`, `GuildInvitation`, `RaidStarted`.
 
 #### Map Service (`map-raid`, TypeScript)
-- `POST /map/location` — `{userId, lat, lng, timestamp}` → `{status: "updated"}`
-- `GET /map/nearby/{userId}` — → `[{userId, distance, relationship}]`
-- `WS /map/stream/{userId}` — client streams `{lat, lng, timestamp}` continuously
-- Publishes `ProximityDetected {userAId, userBId, distance}` when two unrelated users cross the threshold
+
+**Update Location**
+
+`POST` `/map/location` — Description: Updates a player's latest known geolocation. Payload:
+
+```json
+{
+  "userId": "string",
+  "lat": "float",
+  "lng": "float",
+  "timestamp": "string (ISO 8601 timestamp)"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: updated)"
+}
+```
+
+**Get Nearby Users**
+
+`GET` `/map/nearby/{userId}` — Description: Lists users near a given player.
+
+Success Response (200 OK):
+
+```json
+[
+  {
+    "userId": "string",
+    "distance": "float",
+    "relationship": "string"
+  }
+]
+```
+
+**Stream Location**
+
+`WS` `/map/stream/{userId}` — Description: Client continuously streams its geolocation.
+
+Client message:
+
+```json
+{
+  "lat": "float",
+  "lng": "float",
+  "timestamp": "string (ISO 8601 timestamp)"
+}
+```
+
+**Proximity Detected (event)**
+
+Published when two unrelated users cross the proximity threshold (~6m).
+
+```json
+{
+  "userAId": "string",
+  "userBId": "string",
+  "distance": "float"
+}
+```
 
 #### Monster Raid Service (`map-raid`, TypeScript)
-- `POST /raids/{raidId}/join` — `{userId, tamagotchiId}` → `{raidId, participantCount}`
-- `POST /raids/{raidId}/attack` — `{userId}` → `{raidId, monsterHp, damageDealt}`
-- `GET /raids/{raidId}` — → `{raidId, monsterHp, maxHp, participants[], status, expiresAt}`
-- Publishes `RaidCompleted {raidId, rewards: [{userId, currency, xp}]}` or `RaidFailed {raidId}`
+
+**Join Raid**
+
+`POST` `/raids/{raidId}/join` — Description: Joins an active raid with a Tamagotchi. Payload:
+
+```json
+{
+  "userId": "string",
+  "tamagotchiId": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "raidId": "string",
+  "participantCount": "int"
+}
+```
+
+**Attack Raid Monster**
+
+`POST` `/raids/{raidId}/attack` — Description: Deals damage to the shared raid monster. Payload:
+
+```json
+{
+  "userId": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "raidId": "string",
+  "monsterHp": "int",
+  "damageDealt": "int"
+}
+```
+
+**Get Raid**
+
+`GET` `/raids/{raidId}` — Description: Retrieves the current state of a raid.
+
+Success Response (200 OK):
+
+```json
+{
+  "raidId": "string",
+  "monsterHp": "int",
+  "maxHp": "int",
+  "participants": "array<object>",
+  "status": "string",
+  "expiresAt": "string (ISO 8601 timestamp)"
+}
+```
+
+**Raid Completed / Raid Failed (events)**
+
+Published on kill or on timeout.
+
+```json
+{
+  "raidId": "string",
+  "rewards": [
+    {
+      "userId": "string",
+      "currency": "int",
+      "xp": "int"
+    }
+  ]
+}
+```
+
+```json
+{
+  "raidId": "string"
+}
+```
 
 #### Guild Service (`guild-registry`, TypeScript)
-- `POST /guilds` — `{name, ownerId}` → `{guildId, name}`
-- `POST /guilds/{guildId}/members` — `{userId, invitedBy}` → `{status: "invited"|"joined"}`
-- `GET /guilds/{guildId}` — → `{guildId, name, members: [{userId, role}]}`
-- `PATCH /guilds/{guildId}/members/{userId}/role` — `{role}` → `{userId, role}`
-- `WS /guilds/{guildId}/chat` — bidirectional `{authorId, message, timestamp}`
+
+**Search Guilds**
+
+`GET` `/guilds/search` — Description: Searches guilds by name.
+
+Query params:
+
+```json
+{
+  "query": "string",
+  "limit": "int",
+  "offset": "int"
+}
+```
+
+Success Response (200 OK):
+
+```json
+[
+  {
+    "guildId": "string",
+    "name": "string",
+    "memberCount": "int"
+  }
+]
+```
+
+**Join Guild**
+
+`POST` `/guilds/{guildId}/join` — Description: Lets a player self-join an open guild (no invitation required). Payload:
+
+```json
+{
+  "userId": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: joined)"
+}
+```
+
+**Create Guild**
+
+`POST` `/guilds` — Description: Creates a new guild. Payload:
+
+```json
+{
+  "name": "string",
+  "ownerId": "string"
+}
+```
+
+Success Response (201 Created):
+
+```json
+{
+  "guildId": "string",
+  "name": "string"
+}
+```
+
+**Invite/Add Member**
+
+`POST` `/guilds/{guildId}/members` — Description: Invites or adds a member to a guild. Payload:
+
+```json
+{
+  "userId": "string",
+  "invitedBy": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: invited, joined)"
+}
+```
+
+**Get Guild**
+
+`GET` `/guilds/{guildId}` — Description: Retrieves a guild's details and members.
+
+Success Response (200 OK):
+
+```json
+{
+  "guildId": "string",
+  "name": "string",
+  "members": [
+    {
+      "userId": "string",
+      "role": "string (enum: owner, officer, member)"
+    }
+  ]
+}
+```
+
+**Update Member Role**
+
+`PATCH` `/guilds/{guildId}/members/{userId}/role` — Description: Updates a guild member's role. Payload:
+
+```json
+{
+  "role": "string (enum: owner, officer, member)"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "userId": "string",
+  "role": "string"
+}
+```
+
+**Guild Chat**
+
+`WS` `/guilds/{guildId}/chat` — Description: Bidirectional real-time guild chat.
+
+Message shape (client ↔ server):
+
+```json
+{
+  "authorId": "string",
+  "message": "string",
+  "timestamp": "string (ISO 8601 timestamp)"
+}
+```
 
 #### Package Registry Service (`guild-registry`, TypeScript)
-- `POST /packages` — `{name, version, description, moderatorIds[]}` → `{packageId, status}`
-- `GET /packages/{packageId}` — → `{packageId, name, version, status, statDefinitions}`
-- `PUT /packages/{packageId}/stat-definitions` — `{statDefinitions: {...}}` → `{packageId, statDefinitions}`
-- `POST /packages/{packageId}/users` — `{userId}` → `{status: "registered"}`
-- `POST /raid-configs` — `{monsterName, maxHp, duration, rewards, createdByAdminId}` → `{raidConfigId}`
-- `POST /raid-configs/{id}/activate` — → `{raidId, status: "active"}`
+
+**Register Package**
+
+`POST` `/packages` — Description: Registers a new client package. Payload:
+
+```json
+{
+  "name": "string",
+  "version": "string",
+  "description": "string",
+  "moderatorIds": "array<string>"
+}
+```
+
+Success Response (201 Created):
+
+```json
+{
+  "packageId": "string",
+  "status": "string"
+}
+```
+
+**Get Package**
+
+`GET` `/packages/{packageId}` — Description: Retrieves a package's details.
+
+Success Response (200 OK):
+
+```json
+{
+  "packageId": "string",
+  "name": "string",
+  "version": "string",
+  "status": "string",
+  "statDefinitions": "object"
+}
+```
+
+**Update Stat Definitions**
+
+`PUT` `/packages/{packageId}/stat-definitions` — Description: Updates a package's local Tamagotchi stat definitions. Payload:
+
+```json
+{
+  "statDefinitions": "object"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "packageId": "string",
+  "statDefinitions": "object"
+}
+```
+
+**Register User to Package**
+
+`POST` `/packages/{packageId}/users` — Description: Registers a player as belonging to a package. Payload:
+
+```json
+{
+  "userId": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: registered)"
+}
+```
+
+**Create Raid Config**
+
+`POST` `/raid-configs` — Description: Creates a new Monster Raid configuration. Payload:
+
+```json
+{
+  "monsterName": "string",
+  "maxHp": "int",
+  "duration": "int",
+  "rewards": "object",
+  "createdByAdminId": "string"
+}
+```
+
+Success Response (201 Created):
+
+```json
+{
+  "raidConfigId": "string"
+}
+```
+
+**Activate Raid Config**
+
+`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration, spinning up a live raid.
+
+Success Response (200 OK):
+
+```json
+{
+  "raidId": "string",
+  "status": "string (enum: active)"
+}
+```
 
 ## Architecture Diagram
 
@@ -166,6 +889,55 @@ graph TD
     TG -->|owner identity| UM
     PR -->|registers users to packages| UM
 ```
+
+## Contributing
+
+Workflow rules for Team 14 — Tamagotchi Go (CPR + all submodules follow the same rules).
+
+### Branches
+
+- `main` — always deployable/presentable. Protected: no direct pushes, PRs only.
+- `dev` — integration branch. Protected: no direct pushes, PRs only.
+- Feature/fix branches, cut from `dev`:
+  - `feature/<short-description>` — new functionality (e.g. `feature/battle-turn-endpoint`)
+  - `fix/<short-description>` — bug fixes (e.g. `fix/currency-negative-balance`)
+  - `chore/<short-description>` — tooling, docs, config (e.g. `chore/update-readme`)
+
+### Pull requests
+
+- Open PRs against `dev` (never directly against `main`).
+- Title: short, imperative (e.g. "Add battle damage calculation").
+- Description must include:
+  - What changed and why
+  - How it was tested
+  - Linked issue/task from the GitHub Project, if any
+- **At least 1 approval** required before merging (2 for changes touching a shared contract, e.g. `.gitmodules` or endpoint schemas in the CPR README).
+- Merge strategy: **squash and merge** — keeps `dev`/`main` history linear and one commit per feature.
+- CI (when set up) must pass before merge.
+- Delete the branch after merging.
+
+### Commits
+
+- Use present-tense, imperative messages (e.g. "Add", not "Added"/"Adds").
+- Keep commits scoped to one logical change.
+- Follow [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<optional scope>): <description>`
+  - `feat` — a new feature (e.g. `feat(battle): add turn action endpoint`)
+  - `fix` — a bug fix (e.g. `fix(currency): prevent negative balance on adjust`)
+  - `chore` — tooling, config, dependency bumps, non-code maintenance
+  - `docs` — documentation only changes (e.g. README, CONTRIBUTING)
+  - `refactor` — code change that neither fixes a bug nor adds a feature
+  - `test` — adding or correcting tests
+  - `perf` — a change that improves performance
+  - `ci` — changes to CI configuration/scripts
+  - Scope is optional but recommended — typically the service or module name (e.g. `guild`, `tamagotchi`, `map`).
+
+### Test coverage
+
+- New endpoints/business logic should ship with at least basic unit tests before a PR is opened.
+
+### General
+
+- Never commit `.env` files, credentials, API keys, or `node_modules`/`vendor` (see `.gitignore`).
 
 ## Getting Started
 
