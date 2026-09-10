@@ -224,6 +224,18 @@ Success Response (200 OK):
 }
 ```
 
+**Mark as Enemy**
+
+`POST` `/users/{userId}/enemies/{targetId}` — Description: Marks another player as an enemy (e.g. after a proximity-suggested battle, or a manual block). Required so that Map Service's "friends/enemies always visible" rule has an `enemy` state to actually visualize — previously only `friend` had a write path.
+
+Success Response (200 OK):
+
+```json
+{
+  "relationship": "string (enum: enemy)"
+}
+```
+
 #### Battle Service (`user-battle`, Go)
 
 **Challenge a Player**
@@ -542,7 +554,7 @@ Success Response (200 OK):
 
 **Update Location**
 
-`POST` `/map/location` — Description: Updates a player's latest known geolocation. Payload:
+`POST` `/map/location` — Description: Updates a player's latest known geolocation. A location older than **2 minutes** relative to server time is rejected as stale rather than stored, per the spec's "discard or ignore stale locations" requirement. Payload:
 
 ```json
 {
@@ -557,7 +569,7 @@ Success Response (200 OK):
 
 ```json
 {
-  "status": "string (enum: updated)"
+  "status": "string (enum: updated, rejected_stale)"
 }
 ```
 
@@ -593,7 +605,7 @@ Client message:
 
 **Proximity Detected (event)**
 
-Published when two unrelated users cross the proximity threshold (~6m).
+Published when two unrelated users cross the proximity threshold, finalized at **6 meters**. Fired once per user pair per "proximity session" — suppressed on subsequent location updates while the pair remains within range, and re-armed only after they leave range and re-enter, to avoid flooding Notification Service with a duplicate event on every location tick.
 
 ```json
 {
@@ -605,14 +617,41 @@ Published when two unrelated users cross the proximity threshold (~6m).
 
 #### Monster Raid Service (`map-raid`, TypeScript)
 
+**Create Raid (internal)**
+
+`POST` `/raids` — Description: Creates a live raid instance from a Package Registry raid configuration. Called when an admin activates a raid config (`POST /raid-configs/{id}/activate` in Package Registry Service) — previously that endpoint returned a `raidId` with nowhere for it to actually land; this is the entrypoint that closes that gap. Not client-facing. Publishes `RaidStarted {raidId, guildId}` on success (consumed by Notification Service) — previously nothing ever emitted this event despite Notification Service listing it as consumed. Payload:
+
+```json
+{
+  "configId": "string",
+  "guildId": "string",
+  "monsterName": "string",
+  "maxHp": "int",
+  "duration": "int",
+  "rewards": "object"
+}
+```
+
+Success Response (201 Created):
+
+```json
+{
+  "raidId": "string",
+  "monsterHp": "int",
+  "status": "string (enum: active)",
+  "expiresAt": "string (ISO 8601 timestamp)"
+}
+```
+
 **Join Raid**
 
-`POST` `/raids/{raidId}/join` — Description: Joins an active raid with a Tamagotchi. Payload:
+`POST` `/raids/{raidId}/join` — Description: Joins an active raid with a Tamagotchi. A raid is scoped to the guild it was started for (`guildId`, see above); this endpoint verifies the caller is a member of that guild via Guild Service's `GET /guilds/{guildId}` before accepting the join — only *eligible* guild members may contribute, per spec. `idempotencyKey` lets a client safely retry a join after a dropped connection without double-registering as a participant. Payload:
 
 ```json
 {
   "userId": "string",
-  "tamagotchiId": "string"
+  "tamagotchiId": "string",
+  "idempotencyKey": "string"
 }
 ```
 
@@ -627,11 +666,12 @@ Success Response (200 OK):
 
 **Attack Raid Monster**
 
-`POST` `/raids/{raidId}/attack` — Description: Deals damage to the shared raid monster. Payload:
+`POST` `/raids/{raidId}/attack` — Description: Deals damage to the shared raid monster. `idempotencyKey` is required — the spec explicitly calls for idempotent operations here so reconnects or duplicated submissions cannot award damage/rewards twice; a repeated key returns the original result instead of applying damage again. Payload:
 
 ```json
 {
-  "userId": "string"
+  "userId": "string",
+  "idempotencyKey": "string"
 }
 ```
 
@@ -654,6 +694,7 @@ Success Response (200 OK):
 ```json
 {
   "raidId": "string",
+  "guildId": "string",
   "monsterHp": "int",
   "maxHp": "int",
   "participants": "array<object>",
