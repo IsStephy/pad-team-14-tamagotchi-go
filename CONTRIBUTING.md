@@ -28,6 +28,16 @@ Workflow rules for Team 14 — Tamagotchi Go (CPR + all submodules follow the sa
 
 - Use present-tense, imperative messages (e.g. "Add", not "Added"/"Adds").
 - Keep commits scoped to one logical change.
+- Follow [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<optional scope>): <description>`
+  - `feat` — a new feature (e.g. `feat(battle): add turn action endpoint`)
+  - `fix` — a bug fix (e.g. `fix(currency): prevent negative balance on adjust`)
+  - `chore` — tooling, config, dependency bumps, non-code maintenance
+  - `docs` — documentation only changes (e.g. README, CONTRIBUTING)
+  - `refactor` — code change that neither fixes a bug nor adds a feature
+  - `test` — adding or correcting tests
+  - `perf` — a change that improves performance
+  - `ci` — changes to CI configuration/scripts
+  - Scope is optional but recommended — typically the service or module name (e.g. `guild`, `tamagotchi`, `map`).
 
 
 ## Test coverage
