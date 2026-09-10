@@ -152,13 +152,14 @@ Success Response (200 OK):
 
 **Adjust Currency**
 
-`POST` `/users/{userId}/currency/adjust` — Description: Applies a currency delta (positive or negative) to a player. Payload:
+`POST` `/users/{userId}/currency/adjust` — Description: Applies a currency delta (positive or negative) to a player. `idempotencyKey` is required for adjustments originating from async events (`BattleEnded`, `RaidCompleted`) — those events may be redelivered at least once, and a repeated key must no-op rather than reapplying the delta, or a redelivered reward event double-pays a player. Payload:
 
 ```json
 {
   "globalCurrencyDelta": "int",
   "localCurrencyDelta": "int",
-  "reason": "string"
+  "reason": "string",
+  "idempotencyKey": "string"
 }
 ```
 
@@ -211,16 +212,28 @@ Success Response (200 OK):
 }
 ```
 
-#### Battle Service (`user-battle`, Go)
+**Remove Relationship**
 
-**Create Battle**
+`DELETE` `/users/{userId}/friends/{targetId}` — Description: Cancels a pending friend request, or ends an existing friendship. Previously the only friend-related mutation was additive (pending → friends); this closes the gap where a request could never be rejected or reversed.
 
-`POST` `/battles` — Description: Creates a new PvP battle between two players. Payload:
+Success Response (200 OK):
 
 ```json
 {
-  "player1Id": "string",
-  "player2Id": "string",
+  "relationship": "string (enum: none)"
+}
+```
+
+#### Battle Service (`user-battle`, Go)
+
+**Challenge a Player**
+
+`POST` `/battles/challenge` — Description: Challenges another player to a PvP battle, submitting the challenger's own team. Previously `POST /battles` only had room for one shared team selection even though each player picks their own primary/secondary Tamagotchi and boosts — this two-step challenge/accept flow gives both sides a place to submit their team. `boosts` references Tamagotchi Service's per-Tamagotchi `equippedBoosts` (see the Tamagotchi Service section) — Battle Service resolves them by ID, it doesn't own boost data itself. Payload:
+
+```json
+{
+  "challengerId": "string",
+  "targetId": "string",
   "primaryTamagotchiId": "string",
   "secondaryTamagotchiId": "string",
   "boosts": "array<string>"
@@ -228,6 +241,27 @@ Success Response (200 OK):
 ```
 
 Success Response (201 Created):
+
+```json
+{
+  "battleId": "string",
+  "status": "string (enum: pending_acceptance)"
+}
+```
+
+**Accept a Challenge**
+
+`POST` `/battles/{battleId}/accept` — Description: Submits the challenged player's own team, finalizing both sides and starting the battle. Payload:
+
+```json
+{
+  "primaryTamagotchiId": "string",
+  "secondaryTamagotchiId": "string",
+  "boosts": "array<string>"
+}
+```
+
+Success Response (200 OK):
 
 ```json
 {
@@ -251,6 +285,8 @@ Success Response (200 OK):
   "healthP2": "int"
 }
 ```
+
+> **Type advantage & package bonuses:** damage calculation resolves type advantage via Tamagotchi Service's `GET /types/advantages` (canonical source, see the Tamagotchi Service section — Battle Service must not hardcode its own copy of the advantage cycle) and package-specific stat bonuses via Package Registry's stat definitions. If a Tamagotchi has a stat with no matching definition in Package Registry (e.g. an incompletely-configured package), that stat contributes **zero bonus** rather than failing the battle.
 
 **Submit Battle Action**
 
@@ -289,10 +325,11 @@ Server push message:
 
 **Battle Ended (internal event)**
 
-Not client-facing — published when a battle ends, consumed by Notification/Tamagotchi/User Management services.
+Not client-facing — published when a battle ends, consumed by Notification/Tamagotchi/User Management services. Each consumer must treat this idempotently keyed by `battleId` (e.g. via the `idempotencyKey` on Tamagotchi/User Management writes it triggers) — at-least-once delivery means a consumer can see the same `BattleEnded` event more than once, and reapplying it would double-grant rewards or double-transfer ownership.
 
 ```json
 {
+  "battleId": "string",
   "winnerId": "string",
   "loserId": "string",
   "rewardCurrency": "int",
@@ -302,6 +339,20 @@ Not client-facing — published when a battle ends, consumed by Notification/Tam
 ```
 
 #### Tamagotchi Service (`tamagotchi-notification`, Go)
+
+**Get Type Advantages**
+
+`GET` `/types/advantages` — Description: Returns the canonical six-type elemental advantage cycle. This service owns the definition since it already owns the `type` field on every Tamagotchi — Battle Service consults this endpoint rather than keeping its own independently-maintained copy, so the two can't drift.
+
+Success Response (200 OK):
+
+```json
+{
+  "cycle": "array<string> (e.g. [\"Flame\", \"Nature\", \"Earth\", \"Electric\", \"Water\", \"Shadow\"])"
+}
+```
+
+> Interpretation: each type is strong against the next one in the cycle (wrapping around), e.g. Flame → Nature.
 
 **Create Tamagotchi**
 
@@ -356,14 +407,28 @@ Success Response (200 OK):
     "tamagotchiId": "string",
     "type": "string",
     "level": "int",
-    "isPrimary": "bool"
+    "isPrimary": "bool",
+    "equippedBoosts": "array<string>"
   }
 ]
 ```
 
+**Set Primary Tamagotchi**
+
+`PATCH` `/users/{userId}/tamagotchis/{id}/set-primary` — Description: Designates a Tamagotchi as the player's primary. Previously `isPrimary` was returned everywhere but never had a write path — a newly-created package starter Tamagotchi defaults to primary at creation time; a Tamagotchi acquired via `transfer-owner` (e.g. won in battle) defaults to **secondary** for its new owner unless this endpoint promotes it. Setting a new primary demotes the previous one to secondary (a player always has exactly one primary).
+
+Success Response (200 OK):
+
+```json
+{
+  "tamagotchiId": "string",
+  "isPrimary": "bool"
+}
+```
+
 **Update Tamagotchi Stats**
 
-`PATCH` `/tamagotchis/{id}/stats` — Description: Updates a Tamagotchi's package-local stats. Payload:
+`PATCH` `/tamagotchis/{id}/stats` — Description: Updates a Tamagotchi's package-local stats. `statUpdates` keys must match a `stat_key` already defined for this Tamagotchi's package in Package Registry Service's stat definitions (`PUT /packages/{packageId}/stat-definitions`) — an update for an undefined key should be rejected rather than silently stored, since Battle Service's bonus calculation depends on every stored stat resolving to a known definition. Payload:
 
 ```json
 {
@@ -402,7 +467,7 @@ Success Response (200 OK):
 
 **Transfer Ownership**
 
-`POST` `/tamagotchis/{id}/transfer-owner` — Description: Transfers a Tamagotchi to a new owner (e.g. on battle loss). Payload:
+`POST` `/tamagotchis/{id}/transfer-owner` — Description: Transfers a Tamagotchi to a new owner (e.g. on battle loss). This mutates the existing record's `ownerId` in place — per spec, a Tamagotchi acquired this way is a **reference to the existing entry, never a new row**. The transferred Tamagotchi defaults to `isPrimary: false` for its new owner (use `set-primary` above to promote it). Payload:
 
 ```json
 {
@@ -442,7 +507,7 @@ Success Response (200 OK):
 
 **List Notifications**
 
-`GET` `/notifications/{userId}` — Description: Lists a player's notifications.
+`GET` `/notifications/{userId}` — Description: Lists a player's notifications. Retained for **30 days**, then evicted — matches the Redis-backed store choice (an ephemeral delivery queue, not a durable long-term history) rather than promising unbounded retention.
 
 Success Response (200 OK):
 
@@ -458,7 +523,20 @@ Success Response (200 OK):
 ]
 ```
 
-> No public "send" endpoint — notifications are triggered internally by consuming events: `FriendRequestReceived`, `NearbyPlayerDetected`, `BattleRequestReceived`, `TamagotchiCaptured`, `GuildInvitation`, `RaidStarted`.
+**Mark Notification as Read**
+
+`PATCH` `/notifications/{id}/read` — Description: Marks a single notification as read. Previously `read` was returned in every response but had no write path.
+
+Success Response (200 OK):
+
+```json
+{
+  "id": "string",
+  "read": "bool"
+}
+```
+
+> No public "send" endpoint — notifications are triggered internally by consuming events: `FriendRequestReceived` (User Management), `ProximityDetected` (Map Service — corrected here from `NearbyPlayerDetected`, which didn't match what Map Service actually publishes), `BattleRequestReceived`/`BattleEnded` (Battle Service), `TamagotchiCaptured` (Battle Service, part of `BattleEnded`), `GuildInvitation` (Guild Service), `RaidStarted`/`RaidCompleted`/`RaidFailed` (Monster Raid Service). Every publisher's event payload shape is defined once, in that publishing service's own section — this service should not redefine or assume a shape independently, since duplicated definitions are exactly what drifts. Publishers deliver at-least-once; this service should dedupe by an event id rather than assume exactly-once delivery.
 
 #### Map Service (`map-raid`, TypeScript)
 
@@ -675,7 +753,7 @@ Success Response (201 Created):
 
 **Invite/Add Member**
 
-`POST` `/guilds/{guildId}/members` — Description: Invites or adds a member to a guild. Payload:
+`POST` `/guilds/{guildId}/members` — Description: Invites or adds a member to a guild. Only the owner or an officer may call this — a plain member inviting someone should be rejected. Publishes `GuildInvitation` (consumed by Notification Service) when the result is `invited`. Payload:
 
 ```json
 {
@@ -690,6 +768,34 @@ Success Response (200 OK):
 {
   "status": "string (enum: invited, joined)"
 }
+```
+
+**Remove Member**
+
+`DELETE` `/guilds/{guildId}/members/{userId}` — Description: Removes a member from a guild. Two authorization paths share this endpoint: a member removing **themselves** (leaving) is always allowed; removing a **different** member (kicking) requires the caller to be the owner or an officer. Previously there was no removal path at all — membership could only ever grow.
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: removed)"
+}
+```
+
+**List My Guilds**
+
+`GET` `/users/{userId}/guilds` — Description: Lists the guilds a player belongs to. Previously a player needed to already know their `guildId` to call anything guild-related — this covers the common "show me my guild" case on load.
+
+Success Response (200 OK):
+
+```json
+[
+  {
+    "guildId": "string",
+    "name": "string",
+    "role": "string (enum: owner, officer, member)"
+  }
+]
 ```
 
 **Get Guild**
@@ -713,7 +819,7 @@ Success Response (200 OK):
 
 **Update Member Role**
 
-`PATCH` `/guilds/{guildId}/members/{userId}/role` — Description: Updates a guild member's role. Payload:
+`PATCH` `/guilds/{guildId}/members/{userId}/role` — Description: Updates a guild member's role. Only the **owner** may call this — officers can invite/kick ordinary members but cannot promote/demote, and cannot touch the owner's own role (ownership transfer, if ever needed, should be a separate explicit action, not a side effect of this endpoint). Payload:
 
 ```json
 {
@@ -744,7 +850,26 @@ Message shape (client ↔ server):
 }
 ```
 
+> **Guild → Raid joining, resolved:** a member's client calls Monster Raid Service's `POST /raids/{raidId}/join` directly with their own `tamagotchiId` — Guild Service does **not** proxy this call. Eligibility (is this user actually in the raid's guild?) is checked on Monster Raid Service's side, which calls this service's `GET /guilds/{guildId}` to verify membership before accepting a join. See the Monster Raid Service section.
+
 #### Package Registry Service (`guild-registry`, TypeScript)
+
+**List Packages**
+
+`GET` `/packages` — Description: Lists all registered packages. Previously there was no discovery endpoint — a caller needed to already know a `packageId`.
+
+Success Response (200 OK):
+
+```json
+[
+  {
+    "packageId": "string",
+    "name": "string",
+    "version": "string",
+    "status": "string"
+  }
+]
+```
 
 **Register Package**
 
@@ -805,7 +930,7 @@ Success Response (200 OK):
 
 **Register User to Package**
 
-`POST` `/packages/{packageId}/users` — Description: Registers a player as belonging to a package. Payload:
+`POST` `/packages/{packageId}/users` — Description: Registers a player as belonging to a package, and forwards the registration to User Management Service so `GET /users/{userId}` can reflect it too — this service is the source of truth for package membership; User Management's copy is a denormalized read convenience, not a second authority. Payload:
 
 ```json
 {
@@ -818,6 +943,44 @@ Success Response (200 OK):
 ```json
 {
   "status": "string (enum: registered)"
+}
+```
+
+**Add Package Moderator**
+
+`POST` `/packages/{packageId}/moderators` — Description: Grants moderator status for a package to an existing user, after the package's already been created. Previously moderators could only be set once, at creation time (`moderatorIds` on Register Package), with no way to add one later. Payload:
+
+```json
+{
+  "userId": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "userId": "string",
+  "status": "string (enum: moderator)"
+}
+```
+
+**Grant Admin**
+
+`POST` `/admins` — Description: Grants global admin status to a user. Admins are unrelated to package moderators — a moderator manages one package's stat definitions; an admin can design/schedule Monster Raids across the whole ecosystem. Previously there was no path to becoming an admin at all. Payload:
+
+```json
+{
+  "userId": "string"
+}
+```
+
+Success Response (200 OK):
+
+```json
+{
+  "userId": "string",
+  "status": "string (enum: admin)"
 }
 ```
 
@@ -845,7 +1008,7 @@ Success Response (201 Created):
 
 **Activate Raid Config**
 
-`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration, spinning up a live raid.
+`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration. This service authors and schedules the config, but does **not** own live raid execution — activating calls Monster Raid Service's `POST /raids` (see that service's section) to actually spin up the live raid and get back a `raidId`; this endpoint's response mirrors that result rather than fabricating its own. Previously this returned a `raidId` with no defined recipient, i.e. nothing ever actually created a live raid from it — that's now closed by Monster Raid Service's side. Monster Raid Service publishes `RaidStarted` once created, consumed by Notification Service.
 
 Success Response (200 OK):
 
@@ -853,6 +1016,32 @@ Success Response (200 OK):
 {
   "raidId": "string",
   "status": "string (enum: active)"
+}
+```
+
+**Deactivate Raid Config**
+
+`POST` `/raid-configs/{id}/deactivate` — Description: Pauses an active raid without ending it definitively — admins can reactivate later. Spec explicitly grants admins "activate, deactivate **or cancel**" but previously only activate existed.
+
+Success Response (200 OK):
+
+```json
+{
+  "raidId": "string",
+  "status": "string (enum: inactive)"
+}
+```
+
+**Cancel Raid Config**
+
+`POST` `/raid-configs/{id}/cancel` — Description: Permanently cancels a raid config; any live raid instance is force-ended without rewards (distinct from a normal timeout, which still may distribute partial-progress rewards per Monster Raid Service's rules).
+
+Success Response (200 OK):
+
+```json
+{
+  "raidId": "string",
+  "status": "string (enum: cancelled)"
 }
 ```
 
