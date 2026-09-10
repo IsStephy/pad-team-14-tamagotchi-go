@@ -858,37 +858,7 @@ Success Response (200 OK):
 
 ## Architecture Diagram
 
-```mermaid
-graph TD
-    UM[User Management Service]
-    BT[Battle Service]
-    TG[Tamagotchi Service]
-    NT[Notification Service]
-    MP[Map Service]
-    MR[Monster Raid Service]
-    GD[Guild Service]
-    PR[Package Registry Service]
-
-    BT -->|player/currency checks| UM
-    BT -->|combat stats| TG
-    BT -->|package stat definitions| PR
-    BT -->|battle events| NT
-
-    MP -->|proximity events| NT
-    MP -->|identity for friends/enemies| UM
-
-    GD -->|identity/relationships| UM
-    GD -->|invite/raid events| NT
-    GD -->|guild members join| MR
-
-    MR -->|primary Tamagotchi combat stats| TG
-    MR -->|reward currency/XP| UM
-    MR -->|raid config from admins| PR
-    MR -->|raid events| NT
-
-    TG -->|owner identity| UM
-    PR -->|registers users to packages| UM
-```
+![Architecture Diagram](docs/images/architecture.png)
 
 ## Contributing
 
