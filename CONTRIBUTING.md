@@ -17,7 +17,6 @@ Workflow rules for Team 14 — Tamagotchi Go (CPR + all submodules follow the sa
 - Title: short, imperative (e.g. "Add battle damage calculation").
 - Description must include:
   - What changed and why
-  - How it was tested
   - Linked issue/task from the GitHub Project, if any
 - **At least 1 approval** required before merging (2 for changes touching a shared contract, e.g. `.gitmodules` or endpoint schemas in the CPR README).
 - Merge strategy: **squash and merge** — keeps `dev`/`main` history linear and one commit per feature.
@@ -39,10 +38,6 @@ Workflow rules for Team 14 — Tamagotchi Go (CPR + all submodules follow the sa
   - `ci` — changes to CI configuration/scripts
   - Scope is optional but recommended — typically the service or module name (e.g. `guild`, `tamagotchi`, `map`).
 
-
-## Test coverage
-
-- New endpoints/business logic should ship with at least basic unit tests before a PR is opened.
 
 ## General
 
