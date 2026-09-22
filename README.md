@@ -1161,3 +1161,90 @@ Each submodule is an independent service repo — enter it and follow its own RE
 cd user-battle              # or tamagotchi-notification / map-raid / guild-registry
 ```
 
+
+## Running the Services
+
+Each service is an independent submodule with its own database and its own
+start-up command. Nothing here needs another service to be running.
+
+### Ports
+
+Each service claims one port on localhost, so the whole system can run side by
+side. Claim a free one when you wire up your service and add it here.
+
+| Service | Port | Status |
+|---|---|---|
+| User Management | `8081` | Running |
+| Battle | `8082` | Running |
+| Tamagotchi | — | Not yet assigned |
+| Notification | — | Not yet assigned |
+| Map | — | Not yet assigned |
+| Monster Raid | — | Not yet assigned |
+| Guild | — | Not yet assigned |
+| Package Registry | — | Not yet assigned |
+
+### User Management Service
+
+**What it does:** owns player identity — registration, login, profiles, the
+friend/enemy graph, and both in-game currencies. This is the service everyone
+else asks "who is this user?", "are these two friends?" and "can this user
+afford it?".
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 (`docker compose version`). Nothing else — no Go toolchain and no local
+Postgres; Compose starts the database and the schema is applied on start-up.
+
+**Run it:**
+
+```bash
+cd user-management-service
+./run.sh
+```
+
+It builds the image, starts the service with its database, and waits until the
+API answers. When it prints
+`user-management-service is running on http://localhost:8081` you are ready:
+
+```bash
+curl http://localhost:8081/health
+# {"service":"user-management-service","status":"ok"}
+```
+
+| Command | What it does |
+|---|---|
+| `./run.sh` | Build and start, waiting until healthy |
+| `./run.sh stop` | Stop the stack, keeping the database contents |
+| `./run.sh clean` | Stop the stack and delete the database volume |
+| `./run.sh logs` | Follow the service logs |
+| `./run.sh test` | Run the unit tests (needs Go, no database required) |
+
+Set `PORT` to run somewhere else: `PORT=9081 ./run.sh`.
+
+### Battle Service
+
+**What it does:** runs turn-based PvP matches — damage from Tamagotchi levels,
+the elemental type matchup and equipped boosts, turn tracking, and the reward
+settlement (currency, XP, the loser's primary Tamagotchi) when a match ends.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 (`docker compose version`). Nothing else. This service owns no user or
+Tamagotchi records and calls no other service in this milestone — the combat
+stats it needs are supplied at match creation, so it runs standalone.
+
+**Run it:**
+
+```bash
+cd battle-service
+./run.sh
+```
+
+When it prints `battle-service is running on http://localhost:8082` you are
+ready:
+
+```bash
+curl http://localhost:8082/health
+# {"service":"battle-service","status":"ok"}
+```
+
+It takes the same `stop` / `clean` / `logs` / `test` commands and the same
+`PORT` override as above.
