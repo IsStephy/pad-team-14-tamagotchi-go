@@ -1,0 +1,105 @@
+# Shared stack for Tamagotchi Go (Team 14).
+#
+# Brings up every service that has been published, each with the database it
+# owns. Services run from their published Docker Hub images, so this file needs
+# no source checkout of any service repo.
+#
+#   cp .env.example .env     # then fill in the values
+#   docker compose up -d
+#
+# ---------------------------------------------------------------------------
+# Adding your service — conventions, so entries do not collide:
+#
+#   service name   the repo name            e.g. guild-service
+#   database name  <service>-db             e.g. guild-service-db
+#   volume name    <service>-db-data        e.g. guild-service-db-data
+#   env prefix     <SERVICE>_               e.g. GUILD_DB_PASSWORD
+#   image          your published image, pinned to a version tag — never a
+#                  build: context, and never :latest
+#
+# Claim your host port in the port table in README.md before merging, and add
+# your variables to .env.example with placeholder values only.
+#
+# Databases deliberately publish no host port: services reach them over the
+# Compose network by service name. If you need psql access, add a `ports:`
+# entry locally rather than committing one, so we do not fight over 5432.
+# ---------------------------------------------------------------------------
+
+name: tamagotchi-go
+
+services:
+
+  # ---------------------------------------------------------------- Go / user
+  user-management-service-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${USER_MANAGEMENT_DB_NAME:-user_management_db}
+      POSTGRES_USER: ${USER_MANAGEMENT_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - user-management-service-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  user-management-service:
+    image: pavelcium23/user-management-service:v1.0.0
+    depends_on:
+      user-management-service-db:
+        condition: service_healthy
+    environment:
+      PORT: 8081
+      DB_HOST: user-management-service-db
+      DB_PORT: 5432
+      DB_NAME: ${USER_MANAGEMENT_DB_NAME:-user_management_db}
+      DB_USER: ${USER_MANAGEMENT_DB_USER:?set it in .env — copy .env.example}
+      DB_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
+      DB_SSLMODE: disable
+      JWT_SECRET: ${USER_MANAGEMENT_JWT_SECRET:?set it in .env — copy .env.example}
+      JWT_TTL: ${USER_MANAGEMENT_JWT_TTL:-24h}
+    ports:
+      - "${USER_MANAGEMENT_PORT:-8081}:8081"
+    restart: unless-stopped
+
+  # -------------------------------------------------------------- Go / battle
+  battle-service-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${BATTLE_DB_NAME:-battle_db}
+      POSTGRES_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - battle-service-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  battle-service:
+    image: pavelcium23/battle-service:v1.0.0
+    depends_on:
+      battle-service-db:
+        condition: service_healthy
+    environment:
+      PORT: 8082
+      DB_HOST: battle-service-db
+      DB_PORT: 5432
+      DB_NAME: ${BATTLE_DB_NAME:-battle_db}
+      DB_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
+      DB_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
+      DB_SSLMODE: disable
+    ports:
+      - "${BATTLE_PORT:-8082}:8082"
+    restart: unless-stopped
+
+# Named volumes keep each database's data across container restarts and
+# rebuilds. `docker compose down` keeps them; `docker compose down -v` deletes
+# them, which is the only way to reset a database.
+volumes:
+  user-management-service-db-data:
+  battle-service-db-data:

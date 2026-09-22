@@ -1248,3 +1248,77 @@ curl http://localhost:8082/health
 
 It takes the same `stop` / `clean` / `logs` / `test` commands and the same
 `PORT` override as above.
+
+## Running the Whole System
+
+[`docker-compose.yml`](docker-compose.yml) in this repository brings up every
+published service together with the database it owns. Services run from their
+published Docker Hub images, so this needs no source checkout of any service
+repo — just Docker.
+
+```bash
+cp .env.example .env     # then fill in the values
+docker compose up -d
+```
+
+Check what came up:
+
+```bash
+docker compose ps
+curl http://localhost:8081/health     # user management
+curl http://localhost:8082/health     # battle
+```
+
+| Command | What it does |
+|---|---|
+| `docker compose up -d` | Start everything in the background |
+| `docker compose ps` | Show what is running |
+| `docker compose logs -f <service>` | Follow one service's logs |
+| `docker compose down` | Stop everything, **keeping** all database data |
+| `docker compose down -v` | Stop everything and **delete** every database volume |
+
+### Credentials
+
+Configuration is read from the environment, never from committed files.
+[`.env.example`](.env.example) holds placeholders only and is the file that
+gets committed; `.env` holds the real values and is git-ignored. Never commit
+`.env`, and never put a real password in `.env.example`.
+
+Variables are prefixed with the service they belong to
+(`USER_MANAGEMENT_DB_PASSWORD`, `BATTLE_DB_PASSWORD`, …), so entries from
+different services cannot collide.
+
+### Data persistence
+
+Each database gets its own named volume, so data survives container restarts
+and rebuilds. `docker compose down` keeps the volumes; only `down -v` deletes
+them.
+
+> Postgres creates its user only when it initialises an **empty** data
+> directory. If you change a `*_DB_USER` or `*_DB_PASSWORD` after the volume
+> exists, the change has no effect and connections are refused. Delete that
+> volume (`docker compose down -v`) to reset it.
+
+### Adding your service
+
+Conventions, so entries do not collide — please follow them:
+
+| Thing | Convention | Example |
+|---|---|---|
+| Service entry | the repo name | `guild-service` |
+| Database entry | `<service>-db` | `guild-service-db` |
+| Volume | `<service>-db-data` | `guild-service-db-data` |
+| Env prefix | `<SERVICE>_` | `GUILD_DB_PASSWORD` |
+| Image | your published image, pinned to a version tag | `you/guild-service:v1.0.0` |
+
+Reference your **published image**, never a `build:` context — the point is
+that a teammate can run your service without your source. Pin a version tag
+rather than `:latest`, so the file always describes a combination known to
+work.
+
+Databases deliberately publish no host port: services reach them over the
+Compose network by service name. If you want `psql` access, add a `ports:`
+entry locally rather than committing one, so we do not fight over `5432`.
+
+Before merging, claim your host port in the table above and add your variables
+to `.env.example` with placeholder values only.
