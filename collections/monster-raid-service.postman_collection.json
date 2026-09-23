@@ -1,0 +1,430 @@
+{
+  "info": {
+    "name": "Monster Raid Service (Team 14)",
+    "description": "Cooperative guild raids against a shared monster.\n\nOwner: Dackohn. Default port: 8086.\n\nStart the service first (see monster-raid-service/README.md), then run the requests top to bottom — `Create Raid` saves the new raidId into the `raidId` collection variable, so every later request works without copy-pasting ids.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8086"
+    },
+    {
+      "key": "raidId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Liveness check. Returns { status: ok, service: monster-raid-service }."
+      },
+      "response": []
+    },
+    {
+      "name": "Create Raid (internal)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "const body = pm.response.json();",
+              "pm.test('returns an active raid', function () {",
+              "    pm.expect(body).to.have.property('raidId');",
+              "    pm.expect(body.status).to.eql('active');",
+              "});",
+              "// Save the id so the rest of the collection can use it.",
+              "pm.collectionVariables.set('raidId', body.raidId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Overdue Assignment\",\n  \"maxHp\": 100,\n  \"duration\": 3600,\n  \"rewards\": { \"currency\": 10, \"xp\": 5 }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/raids",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raids"
+          ]
+        },
+        "description": "Not client-facing in production — Package Registry calls this internally on raid-config activation. Exposed directly here for testing."
+      },
+      "response": []
+    },
+    {
+      "name": "Join Raid",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('participantCount is 1', function () { pm.expect(pm.response.json().participantCount).to.eql(1); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u1\",\n  \"tamagotchiId\": \"t1\",\n  \"idempotencyKey\": \"join-key-1\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/raids/{{raidId}}/join",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raids",
+            "{{raidId}}",
+            "join"
+          ]
+        },
+        "description": "idempotencyKey lets a retry after a dropped connection avoid double-joining — send this same request twice and confirm participantCount stays at 1."
+      },
+      "response": []
+    },
+    {
+      "name": "Attack Raid Monster",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('damage was dealt', function () { pm.expect(pm.response.json().damageDealt).to.be.above(0); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u1\",\n  \"idempotencyKey\": \"attack-key-1\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/raids/{{raidId}}/attack",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raids",
+            "{{raidId}}",
+            "attack"
+          ]
+        },
+        "description": "Required idempotencyKey — resend with the same key to confirm the damage isn't reapplied."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Raid",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('has a participants array', function () { pm.expect(pm.response.json().participants).to.be.an('array'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/raids/{{raidId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raids",
+            "{{raidId}}"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "[debug] List active raids",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/raids/debug/active",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raids",
+            "debug",
+            "active"
+          ]
+        },
+        "description": "Dev-only telemetry endpoint — not part of the CPR communication contract."
+      },
+      "response": []
+    },
+    {
+      "name": "Error cases",
+      "description": "Requests that are expected to fail — they demonstrate the validation rules.",
+      "item": [
+        {
+          "name": "Join by a non-member of the guild (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u4\",\n  \"tamagotchiId\": \"t4\",\n  \"idempotencyKey\": \"join-key-u4\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raids/{{raidId}}/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "join"
+              ]
+            },
+            "description": "Mock data: u4 belongs to guild-2, not guild-1. Membership comes from Guild Service (mocked until reachable; set GUILD_SERVICE_URL to use the real one)."
+          },
+          "response": []
+        },
+        {
+          "name": "Join with someone else's Tamagotchi (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u2\",\n  \"tamagotchiId\": \"t1\",\n  \"idempotencyKey\": \"join-key-u2-t1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raids/{{raidId}}/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "join"
+              ]
+            },
+            "description": "Mock data: t1 belongs to u1. Ownership comes from Tamagotchi Service (mocked until reachable; set TAMAGOTCHI_SERVICE_URL to use the real one)."
+          },
+          "response": []
+        },
+        {
+          "name": "Attack without joining (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"ghost\",\n  \"idempotencyKey\": \"attack-key-99\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raids/{{raidId}}/attack",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "attack"
+              ]
+            },
+            "description": "Run this after Create Raid — a user who never joined cannot attack."
+          },
+          "response": []
+        },
+        {
+          "name": "Get unknown raid (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/raids/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": "A raidId that does not exist returns 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Create raid with negative maxHp (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Broken Monster\",\n  \"maxHp\": -5,\n  \"duration\": 3600,\n  \"rewards\": {}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raids",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids"
+              ]
+            },
+            "description": "maxHp must be a positive integer."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

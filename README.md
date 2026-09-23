@@ -42,8 +42,8 @@ The team works in **2 languages**, split by repo/member pair:
 | `battle-service` | Battle | **Go** (e.g. Gin/Echo) | REST to create/query a match; WebSocket pushes live turn/state updates during a match | Publishes battle-end events (reward/XP/currency change, Tamagotchi transfer) for Notification/Tamagotchi/User Management to consume |
 | `tamagotchi-service` | Tamagotchi | **Go** (e.g. Gin/Echo) | REST CRUD (create/level/read stats) | Publishes Tamagotchi-updated/transferred events |
 | `notification-service` | Notification | **Go** (e.g. Gin/Echo) | REST for device registration only | Purely event-driven: consumes events from every other service and delivers via Firebase push; no service should call it synchronously for delivery |
-| `map-service` | Map | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for nearby-user queries; WebSocket/streaming for continuous geolocation updates | Emits proximity events (async, fire-and-forget) rather than blocking callers |
-| `monster-raid-service` | Monster Raid | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for raid queries/attacks (current HP/status) | Publishes raid-complete/raid-failed events for rewards |
+| `map-service` | Map | **TypeScript** (Node.js 22, Express) | REST for nearby-user queries; WebSocket/streaming for continuous geolocation updates | Emits proximity events (async, fire-and-forget) rather than blocking callers |
+| `monster-raid-service` | Monster Raid | **TypeScript** (Node.js 22, Express) | REST for raid queries/attacks (current HP/status) | Publishes raid-complete/raid-failed events for rewards |
 | `guild-service` | Guild | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for guild/membership CRUD; WebSocket for Guild Chat (real-time, low-latency) | Publishes invite/raid-join events |
 | `package-registry-service` | Package Registry | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for package/moderator/stat-definition CRUD | Publishes raid-config-activated events for Monster Raid Service |
 
@@ -71,6 +71,102 @@ The team works in **2 languages**, split by repo/member pair:
 | Package Registry | PostgreSQL | Relational config data (packages, moderators, stat-definition schemas as JSON) |
 
 All cross-service reads (e.g. Battle Service checking a user's currency) go through that owning service's REST API — never direct DB access.
+
+### Authentication & authorization
+
+> **Status:** agreed target contract, not yet enforced. In Lab 1 services still take `userId` from the request as given; each service adopts the rules below as User Management ships the key endpoint.
+
+There are two kinds of caller, and they never share credentials:
+
+- **Players** (client apps) carry a **user token** issued at login.
+- **Services** calling each other's internal endpoints carry a **service key**. A player token is never accepted there.
+
+#### User tokens
+
+- **Issued by** User Management's `POST /users/login`: a JWT signed with **RS256**, valid for `JWT_TTL` (default 24 h). Claims: `sub` (the `userId`), `iat` and `exp`. Nothing else — roles are *not* in the token (see below).
+- **Sent as** `Authorization: Bearer <token>`. WebSocket clients can't set headers, so they pass it on the connect URL instead: `?token=<token>`.
+- **Verified locally** by every service using User Management's public key from `GET /.well-known/jwks.json` (fetched once and cached). No service ever holds the signing secret, and no request needs a round-trip to User Management.
+- **Identity comes from `sub`.** Where an endpoint also carries a `userId` (path or body), it must equal `sub`, or the request is rejected. The `userId` fields stay in the payloads for compatibility, but the token is the source of truth.
+- **Roles are checked by the service that owns them**, against its own data and the caller's `sub`: guild roles by Guild Service, admins and package moderators by Package Registry. That's why the token doesn't carry roles, and no role data has to be synchronised between services. Since `POST /admins` itself needs an admin, Package Registry seeds the first admin from configuration (e.g. `PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID` in `.env`).
+
+#### Service keys
+
+Endpoints marked **Service** below are internal: only the listed callers may use them. The caller sends `X-Service-Key: <key>`. Every caller gets its own key, configured through `.env` on both sides (placeholders only in `.env.example`), so one caller's access can be revoked without touching the others.
+
+#### Errors
+
+| Situation | HTTP | WebSocket |
+|---|---|---|
+| Token/key missing, malformed, expired or badly signed | `401 Unauthorized` | connection closed with `1008` |
+| Valid token, but acting as someone else or lacking the role | `403 Forbidden` | connection closed with `1008` |
+
+#### Access per endpoint
+
+| Access | Meaning |
+|---|---|
+| **Public** | No credentials |
+| **Player** | Any valid user token |
+| **Player (self)** | Valid user token whose `sub` is the user in the path/body (the actor) |
+| **Player + role** | Valid user token, and the role shown, checked by the owning service |
+| **Service** | Service key of one of the listed callers; user tokens are rejected |
+
+| Service | Endpoint | Access |
+|---|---|---|
+| User Management | `POST /users/register` | Public |
+| | `POST /users/login` | Public |
+| | `GET /.well-known/jwks.json` | Public |
+| | `GET /users/{userId}` | Player |
+| | `GET /users/{userId}/currency` | Player (self) |
+| | `POST /users/{userId}/currency/adjust` | **Service** — Battle, Monster Raid (rewards) |
+| | `POST /users/{userId}/friends/{targetId}` | Player (self) |
+| | `GET /users/{userId}/friends` | Player (self) |
+| | `DELETE /users/{userId}/friends/{targetId}` | Player (self) |
+| | `POST /users/{userId}/enemies/{targetId}` | Player (self) |
+| | `GET /users/{userId}/relationship/{targetId}` | Player (self), or **Service** — Map |
+| Battle | `POST /battles/challenge` | Player (self — the challenger) |
+| | `POST /battles/{battleId}/accept` | Player (self — the challenged player) |
+| | `GET /battles/{battleId}` | Player |
+| | `POST /battles/{battleId}/action` | Player (self — a participant) |
+| | `WS /battles/{battleId}/live` | Player |
+| Tamagotchi | `GET /types/advantages` | Public |
+| | `POST /tamagotchis` | Player (self — the owner) |
+| | `GET /tamagotchis/{id}` | Player |
+| | `GET /users/{userId}/tamagotchis` | Player |
+| | `PATCH /users/{userId}/tamagotchis/{id}/set-primary` | Player (self — the owner) |
+| | `PATCH /tamagotchis/{id}/stats` | Player (self — the owner) |
+| | `POST /tamagotchis/{id}/xp` | **Service** — Battle |
+| | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle |
+| Notification | `POST /notifications/register-device` | Player (self) |
+| | `GET /notifications/{userId}` | Player (self) |
+| | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
+| Map | `POST /map/location` | Player (self) |
+| | `GET /map/nearby/{userId}` | Player (self) — locations are private |
+| | `WS /map/stream` | Player (self — every frame's `userId` must be `sub`) |
+| Monster Raid | `POST /raids` | **Service** — Package Registry |
+| | `POST /raids/{raidId}/join` | Player (self) + member of the raid's guild |
+| | `POST /raids/{raidId}/attack` | Player (self — a participant) |
+| | `GET /raids/{raidId}` | Player |
+| Guild | `GET /guilds/search` | Player |
+| | `POST /guilds` | Player (self — the owner) |
+| | `POST /guilds/{guildId}/join` | Player (self) |
+| | `POST /guilds/{guildId}/members` | Player + role: owner or officer (`invitedBy` = `sub`) |
+| | `DELETE /guilds/{guildId}/members/{userId}` | Player (self) to leave; Player + role: owner or officer to remove others |
+| | `GET /users/{userId}/guilds` | Player |
+| | `GET /guilds/{guildId}` | Player |
+| | `PATCH /guilds/{guildId}/members/{userId}/role` | Player + role: owner |
+| | `WS /guilds/{guildId}/chat` | Player + role: member of the guild (`authorId` = `sub`) |
+| Package Registry | `GET /packages` | Public — needed before registering |
+| | `GET /packages/{packageId}` | Public |
+| | `POST /packages` | Player + role: admin |
+| | `PUT /packages/{packageId}/stat-definitions` | Player + role: moderator of that package, or admin |
+| | `POST /packages/{packageId}/users` | Player (self) |
+| | `POST /packages/{packageId}/moderators` | Player + role: moderator of that package, or admin |
+| | `POST /admins` | Player + role: admin |
+| | `POST /raid-configs` | Player + role: admin |
+| | `POST /raid-configs/{id}/activate` | Player + role: admin |
+| | `POST /raid-configs/{id}/deactivate` | Player + role: admin |
+| | `POST /raid-configs/{id}/cancel` | Player + role: admin |
+| Every service | `GET /health`, `/docs` | Public |
 
 ### Endpoints
 
@@ -103,7 +199,7 @@ Success Response (201 Created):
 
 **Login**
 
-`POST` `/users/login` — Description: Authenticates a player and returns a JWT. Payload:
+`POST` `/users/login` — Description: Authenticates a player and returns a user token: an RS256-signed JWT whose `sub` is the `userId`, expiring after `JWT_TTL`. Clients send it as `Authorization: Bearer <token>` (see [Authentication & authorization](#authentication--authorization)). Payload:
 
 ```json
 {
@@ -118,6 +214,27 @@ Success Response (200 OK):
 {
   "token": "string",
   "userId": "string"
+}
+```
+
+**Token Signing Keys**
+
+`GET` `/.well-known/jwks.json` — Description: Publishes the public key(s) user tokens are signed with, in standard JWKS format, so every other service can verify tokens locally without the signing secret. Public; safe to cache.
+
+Success Response (200 OK):
+
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "kid": "string",
+      "use": "sig",
+      "alg": "RS256",
+      "n": "string",
+      "e": "string"
+    }
+  ]
 }
 ```
 
@@ -591,15 +708,25 @@ Success Response (200 OK):
 
 **Stream Location**
 
-`WS` `/map/stream/{userId}` — Description: Client continuously streams its geolocation.
+`WS` `/map/stream` — Description: Client continuously streams its geolocation over one connection; each frame carries the user it belongs to and gets the same staleness check as `POST /map/location`.
 
 Client message:
 
 ```json
 {
+  "userId": "string",
   "lat": "float",
   "lng": "float",
   "timestamp": "string (ISO 8601 timestamp)"
+}
+```
+
+Server reply to every frame:
+
+```json
+{
+  "event": "string (enum: ack, error)",
+  "data": { "status": "string (enum: updated, rejected_stale)" }
 }
 ```
 
@@ -645,7 +772,7 @@ Success Response (201 Created):
 
 **Join Raid**
 
-`POST` `/raids/{raidId}/join` — Description: Joins an active raid with a Tamagotchi. A raid is scoped to the guild it was started for (`guildId`, see above); this endpoint verifies the caller is a member of that guild via Guild Service's `GET /guilds/{guildId}` before accepting the join — only *eligible* guild members may contribute, per spec. `idempotencyKey` lets a client safely retry a join after a dropped connection without double-registering as a participant. Payload:
+`POST` `/raids/{raidId}/join` — Description: Joins an active raid with a Tamagotchi. A raid is scoped to the guild it was started for (`guildId`, see above); this endpoint verifies the caller is a member of that guild via Guild Service's `GET /guilds/{guildId}` before accepting the join — only *eligible* guild members may contribute, per spec. It also verifies the Tamagotchi via Tamagotchi Service's `GET /tamagotchis/{id}`: it must exist (else 404) and be owned by `userId` (else 403). Its `level` sets the damage each attack deals (level × 2). `idempotencyKey` lets a client safely retry a join after a dropped connection without double-registering as a participant. Payload:
 
 ```json
 {
@@ -1111,7 +1238,7 @@ Workflow rules for Team 14 — Tamagotchi Go (CPR + all submodules follow the sa
   - What changed and why
   - Linked issue/task from the GitHub Project, if any
 - **At least 1 approval** required before merging (2 for changes touching a shared contract, e.g. `.gitmodules` or endpoint schemas in the CPR README).
-- Merge strategy: **squash and merge** — keeps `dev`/`main` history linear and one commit per feature.
+- Merge strategy: **merge commit** (no squash, no rebase) — every commit on the branch lands on `dev`/`main` as-is and the merge commit records which PR brought them in, so each commit must follow the commit rules below.
 - CI (when set up) must pass before merge.
 - Delete the branch after merging.
 
@@ -1164,24 +1291,70 @@ cd user-battle              # or tamagotchi-notification / map-raid / guild-regi
 
 ## Running the Services
 
-Each service is an independent submodule with its own database and its own
-start-up command. Nothing here needs another service to be running.
+Each service is an independent submodule with its own database(s) and its own
+start-up command. None of them needs another service running — dependencies
+that aren't available yet are mocked (see each service's README).
 
 ### Ports
 
-Each service claims one port on localhost, so the whole system can run side by
-side. Claim a free one when you wire up your service and add it here.
+Each service claims one host port so the whole system can run side by side.
+Claim a free one when you wire up your service and add it here.
 
-| Service | Port | Status |
-|---|---|---|
-| User Management | `8081` | Running |
-| Battle | `8082` | Running |
-| Tamagotchi | — | Not yet assigned |
-| Notification | — | Not yet assigned |
-| Map | — | Not yet assigned |
-| Monster Raid | — | Not yet assigned |
-| Guild | — | Not yet assigned |
-| Package Registry | — | Not yet assigned |
+| Service | Port |
+|---|---|
+| User Management | `8081` |
+| Battle | `8082` |
+| Tamagotchi | — |
+| Notification | — |
+| Map | `8085` |
+| Monster Raid | `8086` |
+| Guild | — |
+| Package Registry | — |
+
+### Map Service
+
+**What it does:** tracks each player's latest location (Redis geospatial),
+answers "who is near me?" with distance and friend/enemy/none relationship,
+and publishes `ProximityDetected` when two unrelated players come within 6 m.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 — no Node.js and no local Redis. User Management is mocked with fixed test
+data until it's reachable.
+
+```bash
+cd map-service
+cp .env.example .env        # then set a real Redis password
+docker compose up -d --build
+curl http://localhost:8085/health
+# {"status":"ok","service":"map-service"}
+```
+
+Interactive API docs: <http://localhost:8085/docs>.
+
+### Monster Raid Service
+
+**What it does:** runs cooperative guild raids against a shared monster —
+creation (called by Package Registry on activation), joining with a
+Tamagotchi, idempotent attacks, and the reward payout on a kill or failure
+when the timer runs out.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 — Compose starts PostgreSQL and Redis, and the service runs its versioned
+database migrations on start-up. Guild, Tamagotchi and User Management are
+mocked with fixed test data until they're reachable.
+
+```bash
+cd monster-raid-service
+cp .env.example .env        # then set real passwords
+docker compose up -d --build
+curl http://localhost:8086/health
+# {"status":"ok","service":"monster-raid-service"}
+```
+
+Interactive API docs: <http://localhost:8086/docs>.
+
+In both, `docker compose down` stops the stack and keeps the data;
+`docker compose down -v` also deletes it.
 
 ### User Management Service
 
@@ -1251,28 +1424,20 @@ It takes the same `stop` / `clean` / `logs` / `test` commands and the same
 
 ## Running the Whole System
 
-[`docker-compose.yml`](docker-compose.yml) in this repository brings up every
-published service together with the database it owns. Services run from their
-published Docker Hub images, so this needs no source checkout of any service
-repo — just Docker.
+[`docker-compose.yml`](docker-compose.yml) in this repository runs every
+published service together with the database(s) it owns, from their Docker Hub
+images — no source checkout of any service repo, just Docker.
 
 ```bash
-cp .env.example .env     # then fill in the values
+cp .env.example .env     # then replace every change_me
 docker compose up -d
-```
-
-Check what came up:
-
-```bash
-docker compose ps
-curl http://localhost:8081/health     # user management
-curl http://localhost:8082/health     # battle
+docker compose ps        # wait until everything is healthy
 ```
 
 | Command | What it does |
 |---|---|
 | `docker compose up -d` | Start everything in the background |
-| `docker compose ps` | Show what is running |
+| `docker compose ps` | Show what's running and whether it's healthy |
 | `docker compose logs -f <service>` | Follow one service's logs |
 | `docker compose down` | Stop everything, **keeping** all database data |
 | `docker compose down -v` | Stop everything and **delete** every database volume |
@@ -1323,37 +1488,64 @@ entry locally rather than committing one, so we do not fight over `5432`.
 Before merging, claim your host port in the table above and add your variables
 to `.env.example` with placeholder values only.
 
+**Credentials** come only from `.env`, which is git-ignored.
+[`.env.example`](.env.example) holds placeholders and is what gets committed —
+never put a real password in it. Variables are prefixed with their service
+(`MAP_…`, `MONSTER_RAID_…`) so entries can't collide.
+
+**Adding your service:** follow the conventions at the top of
+`docker-compose.yml` (service/database/volume names, env prefix, a pinned
+published image — never a `build:` context), claim a port in the table above,
+and add your variables to `.env.example` with placeholder values only.
+
 ## API Collections
 
-[`collections/`](collections) holds a Postman collection per service, each with
-a request for every endpoint that service exposes. This is how you verify a
-service works without cloning its repo or reading its source.
+[`collections/`](collections) holds a Postman collection per service, covering
+every endpoint including the failure paths. This is how you check a service
+works without cloning its repo.
 
 | Collection | Service | Targets |
 |---|---|---|
 | [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management | `http://localhost:8081` |
 | [`battle-service`](collections/battle-service.postman_collection.json) | Battle | `http://localhost:8082` |
+| [`map-service`](collections/map-service.postman_collection.json) | Map | `http://localhost:8085` |
+| [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid | `http://localhost:8086` |
 
-Start the service (see above), then in Postman use *File → Import*, select the
-`.json`, and press **Run**. Each collection runs top to bottom as a complete
-scenario, captures ids into collection variables as it goes, asserts on both
-the success and the rejection paths, and cleans up after itself — so it can be
-run repeatedly against the same instance.
-
-They can also be run headlessly:
+Start the service, then in Postman use *File → Import*, select the `.json` and
+press **Run** — each collection runs top to bottom as one scenario, capturing
+ids into collection variables as it goes. They also run headlessly:
 
 ```bash
 npx newman run collections/user-management-service.postman_collection.json
 npx newman run collections/battle-service.postman_collection.json
+npx newman run collections/map-service.postman_collection.json
+npx newman run collections/monster-raid-service.postman_collection.json
 ```
 
-Point one at a different host by overriding its variable:
+Adding yours: export in Postman **v2.1** format, name it
+`<service-name>.postman_collection.json`, and add a row to the table.
 
-```bash
-npx newman run collections/battle-service.postman_collection.json \
-    --env-var baseUrl=http://some-host:8082
-```
+## Docker Hub Images
 
-Adding yours: export from Postman in **v2.1** format, name the file
-`<service-name>.postman_collection.json`, cover every endpoint including the
-failure paths, and add a row to the table above.
+Every service is published as a **public** Docker Hub image, tagged with its
+version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
+
+| Service | Image | Needs | Port |
+|---|---|---|---|
+| User Management | [`pshasuleiman/user-management-service:v1.1.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
+| Battle | [`pshasuleiman/battle-service:v1.1.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
+| Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
+| Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
+
+**Requirements for running them:**
+
+- Docker with Compose v2 (`docker compose version`) — no language toolchain or
+  local database needed.
+- A `.env` created from [`.env.example`](.env.example) with real values for
+  every `change_me`. Passwords are embedded in connection URLs, so use URL-safe
+  characters (`openssl rand -hex 16`).
+- The host ports above free on your machine (override with the `*_PORT`
+  variables if not).
+
+Each image exposes `GET /health` and carries a Docker `HEALTHCHECK`, so
+`docker compose ps` reports it as `healthy` once it's serving.

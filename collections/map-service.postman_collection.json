@@ -1,0 +1,467 @@
+{
+  "info": {
+    "name": "Map Service (Team 14)",
+    "description": "Geolocation updates, nearby-user queries, and proximity detection.\n\nOwner: Dackohn. Default port: 8085.\n\nStart the service first (see map-service/README.md), then run the requests top to bottom. Update Location for u1 and u2 first so Get Nearby has something to find.\n\nThe WebSocket stream endpoint cannot be stored in Postman's collection file format; see the `Live Location Stream (WebSocket)` folder for how to add it in the Postman app.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8085"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Liveness check. Returns { status: ok, service: map-service }."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Location — u1",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is updated', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u1\",\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/map/location",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "map",
+            "location"
+          ]
+        },
+        "description": "Uses Postman's {{$isoTimestamp}} dynamic variable so this stays fresh no matter when the collection is run — a hardcoded timestamp would go stale and always get rejected."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Location — u2 (nearby u1)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is updated', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u2\",\n  \"lat\": 47.0201,\n  \"lng\": 28.8301,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/map/location",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "map",
+            "location"
+          ]
+        },
+        "description": "~13m from u1 — within nearby-query range. Use this pair to demonstrate the Redis GEO distance calculation."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Nearby — u1",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('returns an array', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/map/nearby/u1",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "map",
+            "nearby",
+            "u1"
+          ]
+        },
+        "description": "Run the two Update Location requests above first so there's something to find."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Location — u3 (a friend of u1)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is updated', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u3\",\n  \"lat\": 47.0203,\n  \"lng\": 28.8302,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/map/location",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "map",
+            "location"
+          ]
+        },
+        "description": "Mock data: u3 is a friend of u1."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Location — u5 (an enemy of u1)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is updated', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u5\",\n  \"lat\": 47.0198,\n  \"lng\": 28.8297,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/map/location",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "map",
+            "location"
+          ]
+        },
+        "description": "Mock data: u5 is an enemy of u1."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Nearby — u1 sees friend and enemy",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const byUser = Object.fromEntries(pm.response.json().map(u => [u.userId, u.relationship]));",
+              "pm.test('u3 is a friend', function () { pm.expect(byUser.u3).to.eql('friend'); });",
+              "pm.test('u5 is an enemy', function () { pm.expect(byUser.u5).to.eql('enemy'); });",
+              "pm.test('u2 is unrelated', function () { pm.expect(byUser.u2).to.eql('none'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/map/nearby/u1",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "map",
+            "nearby",
+            "u1"
+          ]
+        },
+        "description": "Relationships come from User Management Service — mocked with fixed data until it is reachable (see src/clients/mock-data.ts). Set USER_MANAGEMENT_URL to use the real one."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Location — u6 (2 m from u1 → ProximityDetected)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status is updated', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u6\",\n  \"lat\": 47.02002,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/map/location",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "map",
+            "location"
+          ]
+        },
+        "description": "u6 and u1 are unrelated (mock data) and now within the 6 m threshold, so the service publishes a ProximityDetected event for Notification Service. There is no broker yet, so it is logged as a JSON line — check `docker compose logs map-service`. Repeats are suppressed while the pair stays in range."
+      },
+      "response": []
+    },
+    {
+      "name": "[debug] List all tracked locations",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/map/debug/all",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "map",
+            "debug",
+            "all"
+          ]
+        },
+        "description": "Dev-only telemetry endpoint — not part of the CPR communication contract. Lists every user with a currently-fresh location."
+      },
+      "response": []
+    },
+    {
+      "name": "Error cases",
+      "description": "Requests that are expected to fail — they demonstrate the validation rules.",
+      "item": [
+        {
+          "name": "Stale timestamp (200, rejected_stale)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('status is rejected_stale', function () { pm.expect(pm.response.json().status).to.eql('rejected_stale'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u1\",\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"2000-01-01T00:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/map/location",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            },
+            "description": "Timestamp is far outside the 2-minute staleness window — accepted as a request but the location isn't stored."
+          },
+          "response": []
+        },
+        {
+          "name": "Invalid latitude (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u1\",\n  \"lat\": 200,\n  \"lng\": 28.83,\n  \"timestamp\": \"2026-01-01T00:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/map/location",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            },
+            "description": "lat must be between -90 and 90."
+          },
+          "response": []
+        },
+        {
+          "name": "Missing userId (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"2026-01-01T00:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/map/location",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            },
+            "description": "userId is required."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Live Location Stream (WebSocket)",
+      "description": "`WS {{baseUrl}}/map/stream` — continuous geolocation streaming.\n\nPostman's collection file format (v2.1) cannot store WebSocket requests, so this one has to be created inside the Postman app:\n\n1. New -> WebSocket Request\n2. URL: ws://localhost:8085/map/stream\n3. Connect.\n4. Send this JSON message:\n   { \"userId\": \"u1\", \"lat\": 47.02, \"lng\": 28.83, \"timestamp\": \"2026-01-01T00:00:00.000Z\" }\n5. The server acks each frame:\n   { \"event\": \"ack\", \"data\": { \"status\": \"updated\" } }\n\nSending invalid JSON gets back { \"event\": \"error\", \"data\": { \"message\": \"invalid JSON\" } }.",
+      "item": []
+    }
+  ]
+}
