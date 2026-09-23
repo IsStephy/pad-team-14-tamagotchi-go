@@ -105,9 +105,89 @@ services:
       - "${MONSTER_RAID_PORT:-8086}:8086"
     restart: unless-stopped
 
+  # --------------------------------------------------------- TypeScript / guild
+  # PostgreSQL for guilds, members and chat; the service runs its migrations
+  # on start-up.
+  guild-service-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${GUILD_DB_NAME:-guild_db}
+      POSTGRES_USER: ${GUILD_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${GUILD_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - guild-service-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  guild-service:
+    image: isstephy1/guild-service:v1.2.0
+    depends_on:
+      guild-service-db:
+        condition: service_healthy
+    environment:
+      PORT: 8087
+      DB_HOST: guild-service-db
+      DB_PORT: 5432
+      DB_NAME: ${GUILD_DB_NAME:-guild_db}
+      DB_USER: ${GUILD_DB_USER:?set it in .env — copy .env.example}
+      DB_PASSWORD: ${GUILD_DB_PASSWORD:?set it in .env — copy .env.example}
+      # Empty = dev tokens from POST /dev/token. Set it and the service
+      # verifies real RS256 tokens against User Management's JWKS instead.
+      USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-}
+    ports:
+      - "${GUILD_PORT:-8087}:8087"
+    restart: unless-stopped
+
+  # ----------------------------------------------- TypeScript / package registry
+  # PostgreSQL for packages, stat definitions, admins and raid configs; the
+  # service runs its migrations on start-up.
+  package-registry-service-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${PACKAGE_REGISTRY_DB_NAME:-package_registry_db}
+      POSTGRES_USER: ${PACKAGE_REGISTRY_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - package-registry-service-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  package-registry-service:
+    image: isstephy1/package-registry-service:v1.2.0
+    depends_on:
+      package-registry-service-db:
+        condition: service_healthy
+    environment:
+      PORT: 8088
+      DB_HOST: package-registry-service-db
+      DB_PORT: 5432
+      DB_NAME: ${PACKAGE_REGISTRY_DB_NAME:-package_registry_db}
+      DB_USER: ${PACKAGE_REGISTRY_DB_USER:?set it in .env — copy .env.example}
+      DB_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD:?set it in .env — copy .env.example}
+      USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-}
+      # POST /admins itself needs an admin, so the first one is seeded here.
+      PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID: ${PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID:-admin-1}
+      # Empty = built-in mock of Monster Raid. Point it at the real service
+      # and send our service key with POST /raids.
+      MONSTER_RAID_URL: ${PACKAGE_REGISTRY_MONSTER_RAID_URL:-}
+      MONSTER_RAID_SERVICE_KEY: ${PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY:-}
+    ports:
+      - "${PACKAGE_REGISTRY_PORT:-8088}:8088"
+    restart: unless-stopped
+
 # Named volumes keep each database's data across restarts and rebuilds.
 # `docker compose down` keeps them; `docker compose down -v` deletes them.
 volumes:
   map-service-db-data:
   monster-raid-service-db-data:
   monster-raid-service-cache-data:
+  guild-service-db-data:
+  package-registry-service-db-data:

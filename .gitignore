@@ -27,3 +27,6 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# ...but .env.example carries placeholders only and must be committed
+!.env.example
