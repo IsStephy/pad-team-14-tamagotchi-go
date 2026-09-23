@@ -48,6 +48,8 @@ image**:
 - **Versioned migration files in the service repo**, run by a migration tool —
   e.g. `node-pg-migrate` (TypeScript) or `golang-migrate` (Go). Plain `.sql`
   files are preferred: anyone can read them.
+- **Numbered sequentially:** `0001_short-name.sql`, `0002_…` — zero-padded and
+  applied in that order. No timestamps; the number is the order.
 - **Applied automatically on start-up**, before the service accepts requests.
   Nobody else ever runs your migrations by hand; pulling your new image and
   running `docker compose up` must be enough.
