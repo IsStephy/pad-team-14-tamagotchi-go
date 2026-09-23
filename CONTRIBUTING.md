@@ -19,7 +19,7 @@ Workflow rules for Team 14 — Tamagotchi Go (CPR + all submodules follow the sa
   - What changed and why
   - Linked issue/task from the GitHub Project, if any
 - **At least 1 approval** required before merging (2 for changes touching a shared contract, e.g. `.gitmodules` or endpoint schemas in the CPR README).
-- Merge strategy: **squash and merge** — keeps `dev`/`main` history linear and one commit per feature.
+- Merge strategy: **merge commit** (no squash, no rebase) — every commit on the branch lands on `dev`/`main` as-is and the merge commit records which PR brought them in, so each commit must follow the commit rules below.
 - CI (when set up) must pass before merge.
 - Delete the branch after merging.
 
