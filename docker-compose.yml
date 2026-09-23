@@ -23,6 +23,7 @@ name: tamagotchi-go
 
 services:
 
+  # --------------------------------------------------------------- Go / user
   user-management-service-db:
     image: postgres:16-alpine
     environment:
@@ -31,9 +32,12 @@ services:
       POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
     volumes:
       - user-management-service-db-data:/var/lib/postgresql/data
-  # --------------------------------------------------------- TypeScript / guild
-  # PostgreSQL for guilds, members and chat; the service runs its migrations
-  # on start-up.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
   user-management-service:
     image: pshasuleiman/user-management-service:v1.3.0
@@ -74,6 +78,12 @@ services:
       POSTGRES_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
     volumes:
       - battle-service-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
   battle-service:
     image: pshasuleiman/battle-service:v1.3.0
@@ -126,8 +136,12 @@ services:
     environment:
       PORT: 8085
       REDIS_URL: redis://:${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}@map-service-db:6379
-      # Empty = built-in mock of User Management (fixed test data).
+      # Empty = built-in mock of User Management (fixed test data), and user
+      # tokens for testing come from POST /auth/mock-token. Set it and the
+      # service verifies real RS256 tokens against User Management's JWKS.
       USER_MANAGEMENT_URL: ${MAP_USER_MANAGEMENT_URL:-}
+      # Sent as X-Service-Key to User Management — the key it knows Map by.
+      USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_MAP:-}
     ports:
       - "${MAP_PORT:-8085}:8085"
     restart: unless-stopped
@@ -182,12 +196,18 @@ services:
       GUILD_SERVICE_URL: ${MONSTER_RAID_GUILD_SERVICE_URL:-}
       TAMAGOTCHI_SERVICE_URL: ${MONSTER_RAID_TAMAGOTCHI_SERVICE_URL:-}
       USER_MANAGEMENT_URL: ${MONSTER_RAID_USER_MANAGEMENT_URL:-}
+      # Sent as X-Service-Key to User Management — the key it knows Monster Raid by.
+      USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
+      # POST /raids accepts only Package Registry's key: the same value
+      # Package Registry sends, so it is set once in .env.
+      SERVICE_KEYS: package-registry-service=${PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY:-}
     ports:
       - "${MONSTER_RAID_PORT:-8086}:8086"
     restart: unless-stopped
 
-  # --------------------------------------------------------------- Go / user
-
+  # --------------------------------------------------------- TypeScript / guild
+  # PostgreSQL for guilds, members and chat; the service runs its migrations
+  # on start-up.
   guild-service-db:
     image: postgres:16-alpine
     environment:
