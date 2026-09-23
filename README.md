@@ -1612,10 +1612,18 @@ ids into collection variables as it goes. They also run headlessly:
 npx newman run collections/user-management-service.postman_collection.json
 npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/map-service.postman_collection.json
-npx newman run collections/monster-raid-service.postman_collection.json
+npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<key>
 npx newman run collections/guild-service.postman_collection.json
 npx newman run collections/package-registry-service.postman_collection.json
 ```
+
+Collections for services that need a user token start with `Get Dev Token`
+requests, which mint test tokens while the service's `USER_MANAGEMENT_URL` is
+unset and save them into collection variables for the requests that follow.
+Monster Raid's `Create Raid` is internal and authenticates with Package
+Registry's service key instead: pass `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY`
+from your `.env` as `packageRegistryServiceKey`, as above, or set that
+collection variable in Postman.
 
 Adding yours: export in Postman **v2.1** format, name it
 `<service-name>.postman_collection.json`, and add a row to the table.
