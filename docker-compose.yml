@@ -36,7 +36,7 @@ services:
   # on start-up.
 
   user-management-service:
-    image: pshasuleiman/user-management-service:v1.2.0
+    image: pshasuleiman/user-management-service:v1.3.0
     depends_on:
       user-management-service-db:
         condition: service_healthy
@@ -53,6 +53,13 @@ services:
       # when unset, so the stack works out of the box; set it in production so
       # the key survives a database reset.
       JWT_PRIVATE_KEY: ${USER_MANAGEMENT_JWT_PRIVATE_KEY:-}
+      # Access rules from the contract's Authentication section. Off until the
+      # team turns them on together: enforcing before every caller sends
+      # credentials would break them.
+      AUTH_ENFORCED: ${AUTH_ENFORCED:-false}
+      SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
+      SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
+      SERVICE_KEY_MAP: ${SERVICE_KEY_MAP:-}
     ports:
       - "${USER_MANAGEMENT_PORT:-8081}:8081"
     restart: unless-stopped
@@ -69,7 +76,7 @@ services:
       - battle-service-db-data:/var/lib/postgresql/data
 
   battle-service:
-    image: pshasuleiman/battle-service:v1.2.0
+    image: pshasuleiman/battle-service:v1.3.0
     depends_on:
       battle-service-db:
         condition: service_healthy
@@ -88,6 +95,9 @@ services:
       USER_MANAGEMENT_SERVICE_URL: ${BATTLE_USER_MANAGEMENT_URL:-http://user-management-service:8081}
       TAMAGOTCHI_SERVICE_URL: ${BATTLE_TAMAGOTCHI_SERVICE_URL:-}
       PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-}
+      AUTH_ENFORCED: ${AUTH_ENFORCED:-false}
+      # The key this service presents to the Service-only endpoints it calls.
+      SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
     ports:
       - "${BATTLE_PORT:-8082}:8082"
 
