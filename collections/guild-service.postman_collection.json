@@ -1,0 +1,960 @@
+{
+  "info": {
+    "name": "Guild Service (Team 14)",
+    "description": "Guild identity, membership, roles and real-time guild chat.\n\nOwner: IsStephy. Default port: 8087.\n\nEvery endpoint except /health and /docs needs a user token, sent as `Authorization: Bearer <token>`. Identity is the token's `sub` claim, and guild roles are checked by this service against its own data, per the CPR's authentication contract.\n\nRun the requests top to bottom: `Get Dev Token` mints a token, and `Create Guild` saves the new guildId - so every later request works without copy-pasting anything.\n\nThe WebSocket chat endpoint cannot be stored in Postman's collection file format; see the `Guild Chat (WebSocket)` folder for how to add it in the app.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8087"
+    },
+    {
+      "key": "guildId",
+      "value": ""
+    },
+    {
+      "key": "ownerId",
+      "value": "u-owner-1"
+    },
+    {
+      "key": "memberId",
+      "value": "u-member-2"
+    },
+    {
+      "key": "inviteeId",
+      "value": "u-member-3"
+    },
+    {
+      "key": "ownerToken",
+      "value": ""
+    },
+    {
+      "key": "memberToken",
+      "value": ""
+    },
+    {
+      "key": "inviteeToken",
+      "value": ""
+    },
+    {
+      "key": "unknownUserId",
+      "value": "unknown-user-99"
+    },
+    {
+      "key": "unknownToken",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Liveness check. Returns { status: ok, service: guild-service }."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (owner)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('ownerToken', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{ownerId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "description": "Mints a user token for testing. This endpoint exists only while USER_MANAGEMENT_URL is unset - it stands in for User Management's POST /users/login, which will issue the real RS256 token. The service verifies tokens the same way either way.\n\nRun this FIRST: every other request sends the token as Authorization: Bearer."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (member)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('memberToken', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{memberId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "description": "A second player, so self-join and membership rules can be exercised."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (invitee)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('inviteeToken', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{inviteeId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "description": "A third player, used to show that an ordinary member cannot invite."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (unknown user)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('unknownToken', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{unknownUserId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "description": "A token whose sub is a user User Management does not know. The token is valid, so the request gets past authentication - and is then rejected with 404 when the service resolves the identity."
+      },
+      "response": []
+    },
+    {
+      "name": "Create Guild",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "const body = pm.response.json();",
+              "pm.test('returns guildId and name', function () {",
+              "    pm.expect(body).to.have.property('guildId');",
+              "    pm.expect(body).to.have.property('name');",
+              "});",
+              "// Save the id so the rest of the collection can use it.",
+              "pm.collectionVariables.set('guildId', body.guildId);",
+              "pm.collectionVariables.set('guildName', body.name);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Night Owls {{$timestamp}}\",\n  \"ownerId\": \"{{ownerId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/guilds",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "guilds"
+          ]
+        },
+        "description": "Creates a new guild. The ownerId becomes the guild's first member with role `owner`.\n\nIdentity is verified against User Management Service (mocked in Lab 1) - an unknown ownerId returns 404."
+      },
+      "response": []
+    },
+    {
+      "name": "Search Guilds",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('returns an array', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/guilds/search?query=night&limit=10&offset=0",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "guilds",
+            "search"
+          ],
+          "query": [
+            {
+              "key": "query",
+              "value": "night",
+              "description": "Case-insensitive substring of the guild name."
+            },
+            {
+              "key": "limit",
+              "value": "10",
+              "description": "Page size, integer 1-100. Defaults to 20."
+            },
+            {
+              "key": "offset",
+              "value": "0",
+              "description": "Rows to skip, integer >= 0. Defaults to 0."
+            }
+          ]
+        },
+        "description": "Searches guilds by name. Each result carries the guild's current memberCount."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Guild",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('has members array', function () { pm.expect(pm.response.json().members).to.be.an('array'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/guilds/{{guildId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "guilds",
+            "{{guildId}}"
+          ]
+        },
+        "description": "Retrieves a guild's details and its full member list with roles."
+      },
+      "response": []
+    },
+    {
+      "name": "Join Guild",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is joined', function () { pm.expect(pm.response.json().status).to.eql('joined'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{memberToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{memberId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/guilds/{{guildId}}/join",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "guilds",
+            "{{guildId}}",
+            "join"
+          ]
+        },
+        "description": "Lets a player self-join an open guild, no invitation required. Joins with role `member`.\n\nRe-sending the same request returns 409 (already a member)."
+      },
+      "response": []
+    },
+    {
+      "name": "Invite/Add Member",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is joined', function () { pm.expect(pm.response.json().status).to.eql('joined'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{inviteeId}}\",\n  \"invitedBy\": \"{{ownerId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/guilds/{{guildId}}/members",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "guilds",
+            "{{guildId}}",
+            "members"
+          ]
+        },
+        "description": "Invites or adds a member to a guild.\n\nOnly an `owner` or `officer` may invite - setting invitedBy to an ordinary member returns 403."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Member Role",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('role is officer', function () { pm.expect(pm.response.json().role).to.eql('officer'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"role\": \"officer\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/guilds/{{guildId}}/members/{{memberId}}/role",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "guilds",
+            "{{guildId}}",
+            "members",
+            "{{memberId}}",
+            "role"
+          ]
+        },
+        "description": "Updates a guild member's role. Allowed values: owner, officer, member."
+      },
+      "response": []
+    },
+    {
+      "name": "List My Guilds",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('returns an array with the joined guild', function () {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body).to.be.an('array');",
+              "    pm.expect(body.length).to.be.above(0);",
+              "    pm.expect(body[0]).to.have.property('role');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{memberToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{memberId}}/guilds",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{memberId}}",
+            "guilds"
+          ]
+        },
+        "description": "Lists every guild a player belongs to, with the role held in each. Lets a client show \"my guild\" on load without already knowing a guildId."
+      },
+      "response": []
+    },
+    {
+      "name": "Remove Member",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is removed', function () { pm.expect(pm.response.json().status).to.eql('removed'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ownerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/guilds/{{guildId}}/members/{{inviteeId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "guilds",
+            "{{guildId}}",
+            "members",
+            "{{inviteeId}}"
+          ]
+        },
+        "description": "Removes a member. Leaving yourself is always allowed; removing someone else requires the caller (X-User-Id) to be an owner or officer, and an officer cannot remove the owner or another officer."
+      },
+      "response": []
+    },
+    {
+      "name": "Error cases",
+      "description": "Requests that are expected to fail - they demonstrate the validation rules.",
+      "item": [
+        {
+          "name": "Join with unknown user (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{unknownToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{unknownUserId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "join"
+              ]
+            },
+            "description": "The token is valid, so authentication passes and sub matches the body. Identity is still owned by User Management: the mock treats any userId starting with 'unknown' as non-existent, so the service answers 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Invite by ordinary member (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{inviteeToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u-member-4\",\n  \"invitedBy\": \"{{inviteeId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members"
+              ]
+            },
+            "description": "Only owners and officers can invite. inviteeId is an ordinary member, so this is refused."
+          },
+          "response": []
+        },
+        {
+          "name": "Invalid role (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"emperor\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}/members/{{memberId}}/role",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members",
+                "{{memberId}}",
+                "role"
+              ]
+            },
+            "description": "Role must be one of owner, officer, member."
+          },
+          "response": []
+        },
+        {
+          "name": "Get unknown guild (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/guilds/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": "A guildId that does not exist returns 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Duplicate guild name (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{guildName}}\",\n  \"ownerId\": \"{{ownerId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/guilds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds"
+              ]
+            },
+            "description": "Guild names are unique, case-insensitively. Reuses the name created by Create Guild."
+          },
+          "response": []
+        },
+        {
+          "name": "Remove member without a token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}/members/{{memberId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members",
+                "{{memberId}}"
+              ]
+            },
+            "description": "Every guild endpoint needs a user token. Without one the service cannot tell who is asking, so it answers 401 per the contract."
+          },
+          "response": []
+        },
+        {
+          "name": "Invite a user marked as enemy (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u-enemy-7\",\n  \"invitedBy\": \"{{ownerId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members"
+              ]
+            },
+            "description": "Invitation rules resolve the relationship of users, not just identity. The mocked User Management treats any id containing \"enemy\" as an enemy."
+          },
+          "response": []
+        },
+        {
+          "name": "Demote the sole owner (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"member\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}/members/{{ownerId}}/role",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members",
+                "{{ownerId}}",
+                "role"
+              ]
+            },
+            "description": "A guild always keeps exactly one owner - demotion is only possible by promoting someone else, which transfers ownership."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Guild Chat (WebSocket)",
+      "description": "`WS {{baseUrl}}/guilds/{guildId}/chat` - real-time guild chat.\n\nPostman's collection file format (v2.1) cannot store WebSocket requests, so this one has to be created inside the Postman app:\n\n1. New -> WebSocket Request\n2. URL: ws://localhost:8087/guilds/<paste a guildId>/chat\n3. Connect. The server immediately sends the existing history:\n   { \"type\": \"history\", \"messages\": [] }\n4. Send this JSON message:\n   { \"authorId\": \"u-owner-1\", \"message\": \"hello guild\" }\n5. The server stamps it and broadcasts it to every connected member:\n   { \"authorId\": \"u-owner-1\", \"message\": \"hello guild\", \"timestamp\": \"2026-09-22T12:11:03.692Z\" }\n\nRules: connecting to an unknown guildId closes the socket with code 1008. Only existing members of the guild may post - anyone else gets { \"error\": \"author is not a member of this guild\" }.\n\nTo demonstrate the broadcast, open two WebSocket tabs on the same guild and send from one of them.",
+      "item": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Guard against running a request before the one that sets its variable.",
+          "const url = pm.request.url.toString();",
+          "const headers = JSON.stringify(pm.request.headers);",
+          "const needed = [",
+          "    { name: 'guildId', setBy: 'Create Guild' },",
+          "    { name: 'ownerToken', setBy: 'Get Dev Token (owner)' },",
+          "    { name: 'memberToken', setBy: 'Get Dev Token (member)' },",
+          "    { name: 'unknownToken', setBy: 'Get Dev Token (unknown user)' },",
+          "    { name: 'inviteeToken', setBy: 'Get Dev Token (invitee)' },",
+          "];",
+          "",
+          "needed.forEach(function (v) {",
+          "    const token = '{{' + v.name + '}}';",
+          "    if (url.indexOf(token) === -1 && headers.indexOf(token) === -1) return;",
+          "    if (!pm.collectionVariables.get(v.name)) {",
+          "        throw new Error(",
+          "            'Collection variable {{' + v.name + '}} is empty. Run \"' + v.setBy +",
+          "            '\" first, or use Run Collection so the requests execute in order.'",
+          "        );",
+          "    }",
+          "});"
+        ]
+      }
+    }
+  ]
+}
