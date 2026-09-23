@@ -1322,3 +1322,38 @@ entry locally rather than committing one, so we do not fight over `5432`.
 
 Before merging, claim your host port in the table above and add your variables
 to `.env.example` with placeholder values only.
+
+## API Collections
+
+[`collections/`](collections) holds a Postman collection per service, each with
+a request for every endpoint that service exposes. This is how you verify a
+service works without cloning its repo or reading its source.
+
+| Collection | Service | Targets |
+|---|---|---|
+| [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management | `http://localhost:8081` |
+| [`battle-service`](collections/battle-service.postman_collection.json) | Battle | `http://localhost:8082` |
+
+Start the service (see above), then in Postman use *File → Import*, select the
+`.json`, and press **Run**. Each collection runs top to bottom as a complete
+scenario, captures ids into collection variables as it goes, asserts on both
+the success and the rejection paths, and cleans up after itself — so it can be
+run repeatedly against the same instance.
+
+They can also be run headlessly:
+
+```bash
+npx newman run collections/user-management-service.postman_collection.json
+npx newman run collections/battle-service.postman_collection.json
+```
+
+Point one at a different host by overriding its variable:
+
+```bash
+npx newman run collections/battle-service.postman_collection.json \
+    --env-var baseUrl=http://some-host:8082
+```
+
+Adding yours: export from Postman in **v2.1** format, name the file
+`<service-name>.postman_collection.json`, cover every endpoint including the
+failure paths, and add a row to the table above.
