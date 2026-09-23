@@ -23,6 +23,7 @@ name: tamagotchi-go
 
 services:
 
+  # --------------------------------------------------------------- Go / user
   user-management-service-db:
     image: postgres:16-alpine
     environment:
@@ -31,9 +32,12 @@ services:
       POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
     volumes:
       - user-management-service-db-data:/var/lib/postgresql/data
-  # --------------------------------------------------------- TypeScript / guild
-  # PostgreSQL for guilds, members and chat; the service runs its migrations
-  # on start-up.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
   user-management-service:
     image: pshasuleiman/user-management-service:v1.3.0
@@ -74,6 +78,12 @@ services:
       POSTGRES_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
     volumes:
       - battle-service-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
   battle-service:
     image: pshasuleiman/battle-service:v1.3.0
@@ -186,8 +196,9 @@ services:
       - "${MONSTER_RAID_PORT:-8086}:8086"
     restart: unless-stopped
 
-  # --------------------------------------------------------------- Go / user
-
+  # --------------------------------------------------------- TypeScript / guild
+  # PostgreSQL for guilds, members and chat; the service runs its migrations
+  # on start-up.
   guild-service-db:
     image: postgres:16-alpine
     environment:
