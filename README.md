@@ -855,6 +855,19 @@ Published on kill or on timeout.
 
 #### Guild Service (`guild-registry`, TypeScript)
 
+**Guild Service Health**
+
+`GET` `/health` — Description: Liveness check. Used by the Docker Compose healthcheck and handy for confirming a container is up.
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: ok)",
+  "service": "string"
+}
+```
+
 **Search Guilds**
 
 `GET` `/guilds/search` — Description: Searches guilds by name.
@@ -1021,6 +1034,19 @@ Message shape (client ↔ server):
 > **Guild → Raid joining, resolved:** a member's client calls Monster Raid Service's `POST /raids/{raidId}/join` directly with their own `tamagotchiId` — Guild Service does **not** proxy this call. Eligibility (is this user actually in the raid's guild?) is checked on Monster Raid Service's side, which calls this service's `GET /guilds/{guildId}` to verify membership before accepting a join. See the Monster Raid Service section.
 
 #### Package Registry Service (`guild-registry`, TypeScript)
+
+**Package Registry Service Health**
+
+`GET` `/health` — Description: Liveness check. Used by the Docker Compose healthcheck and handy for confirming a container is up.
+
+Success Response (200 OK):
+
+```json
+{
+  "status": "string (enum: ok)",
+  "service": "string"
+}
+```
 
 **List Packages**
 
@@ -1308,8 +1334,8 @@ Claim a free one when you wire up your service and add it here.
 | Notification | — |
 | Map | `8085` |
 | Monster Raid | `8086` |
-| Guild | — |
-| Package Registry | — |
+| Guild | `8087` |
+| Package Registry | `8088` |
 
 ### Map Service
 
@@ -1401,8 +1427,10 @@ settlement (currency, XP, the loser's primary Tamagotchi) when a match ends.
 
 **Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
 v2 (`docker compose version`). Nothing else. This service owns no user or
-Tamagotchi records and calls no other service in this milestone — the combat
-stats it needs are supplied at match creation, so it runs standalone.
+Tamagotchi records: it reads combat stats from Tamagotchi Service, package stat
+definitions from Package Registry, and settles rewards through User Management.
+Each of those falls back to an in-process mock while its URL is unset, so it
+still runs standalone.
 
 **Run it:**
 
@@ -1421,6 +1449,50 @@ curl http://localhost:8082/health
 
 It takes the same `stop` / `clean` / `logs` / `test` commands and the same
 `PORT` override as above.
+### Guild Service
+
+**What it does:** owns guild identity, membership and roles
+(owner/officer/member), guild search, and real-time guild chat over WebSocket.
+Answers the membership question Monster Raid Service asks before accepting a
+raid join.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 — Compose starts PostgreSQL, and the service runs its versioned database
+migrations on start-up. User Management is mocked with fixed test data until
+it's reachable.
+
+```bash
+cd guild-service
+cp .env.example .env        # then set a real password
+docker compose up -d --build
+curl http://localhost:8087/health
+# {"status":"ok","service":"guild-service"}
+```
+
+Interactive API docs: <http://localhost:8087/docs>. Guild chat is a WebSocket
+at `ws://localhost:8087/guilds/{guildId}/chat` — see the service README.
+
+### Package Registry Service
+
+**What it does:** maintains the registry of client packages, their
+package-local Tamagotchi stat definitions (read by Battle and Tamagotchi
+Services), and the Monster Raid configurations admins design, activate,
+deactivate and cancel.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 — Compose starts PostgreSQL, and the service runs its versioned database
+migrations on start-up. Monster Raid and User Management are mocked with fixed
+test data until they're reachable.
+
+```bash
+cd package-registry-service
+cp .env.example .env        # then set a real password
+docker compose up -d --build
+curl http://localhost:8088/health
+# {"status":"ok","service":"package-registry-service"}
+```
+
+Interactive API docs: <http://localhost:8088/docs>.
 
 ## Running the Whole System
 
@@ -1510,6 +1582,8 @@ works without cloning its repo.
 | [`battle-service`](collections/battle-service.postman_collection.json) | Battle | `http://localhost:8082` |
 | [`map-service`](collections/map-service.postman_collection.json) | Map | `http://localhost:8085` |
 | [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid | `http://localhost:8086` |
+| [`guild-service`](collections/guild-service.postman_collection.json) | Guild | `http://localhost:8087` |
+| [`package-registry-service`](collections/package-registry-service.postman_collection.json) | Package Registry | `http://localhost:8088` |
 
 Start the service, then in Postman use *File → Import*, select the `.json` and
 press **Run** — each collection runs top to bottom as one scenario, capturing
@@ -1520,6 +1594,8 @@ npx newman run collections/user-management-service.postman_collection.json
 npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json
+npx newman run collections/guild-service.postman_collection.json
+npx newman run collections/package-registry-service.postman_collection.json
 ```
 
 Adding yours: export in Postman **v2.1** format, name it
@@ -1536,6 +1612,8 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 | Battle | [`pshasuleiman/battle-service:v1.2.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
 | Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
 | Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
+| Guild | [`isstephy1/guild-service:v1.2.0`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
+| Package Registry | [`isstephy1/package-registry-service:v1.2.0`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
 
 **Requirements for running them:**
 

@@ -1,0 +1,1085 @@
+{
+  "info": {
+    "name": "Package Registry Service (Team 14)",
+    "description": "Registry of client packages, their package-local Tamagotchi stat definitions, and Monster Raid configuration.\n\nOwner: IsStephy. Default port: 8088.\n\n`GET /packages`, `GET /packages/{id}`, `/health` and `/docs` are public. Everything else needs a user token, sent as `Authorization: Bearer <token>`; admin and package-moderator roles are checked by this service against its own data, per the CPR's authentication contract.\n\nThe first admin is seeded from PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID, so run `Get Dev Token (admin)` with that same user id.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8088"
+    },
+    {
+      "key": "packageId",
+      "value": ""
+    },
+    {
+      "key": "raidConfigId",
+      "value": ""
+    },
+    {
+      "key": "moderatorId",
+      "value": "mod-1"
+    },
+    {
+      "key": "adminId",
+      "value": "admin-1"
+    },
+    {
+      "key": "userId",
+      "value": "u-owner-1"
+    },
+    {
+      "key": "guildId",
+      "value": "guild-demo-1"
+    },
+    {
+      "key": "noGuildConfigId",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "moderatorToken",
+      "value": ""
+    },
+    {
+      "key": "userToken",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Liveness check. Returns { status: ok, service: package-registry-service }."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (admin)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('adminToken', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{adminId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "description": "Mints a user token for testing. This endpoint exists only while USER_MANAGEMENT_URL is unset - it stands in for User Management's POST /users/login, which will issue the real RS256 token. The service verifies tokens the same way either way.\n\nRun this FIRST: every other request sends the token as Authorization: Bearer."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (moderator)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('moderatorToken', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{moderatorId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "description": "The package's moderator, who may define its stat definitions."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (player)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('userToken', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/dev/token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "dev",
+            "token"
+          ]
+        },
+        "description": "An ordinary player, used for self-registration and the 403 cases."
+      },
+      "response": []
+    },
+    {
+      "name": "Grant Admin",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 200 the first time, 409 on later runs - both mean admin-2 exists.",
+              "pm.test('200 OK or 409 already an admin', function () {",
+              "    pm.expect([200, 409]).to.include(pm.response.code);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"admin-2\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/admins",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admins"
+          ]
+        },
+        "description": "Grants global admin status to a second user. The caller must already be an admin - the first one is seeded from PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID at startup, which is why this request uses the admin token."
+      },
+      "response": []
+    },
+    {
+      "name": "Register Package",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "const body = pm.response.json();",
+              "pm.test('returns packageId and status', function () {",
+              "    pm.expect(body).to.have.property('packageId');",
+              "    pm.expect(body.status).to.eql('active');",
+              "});",
+              "// Save the id so the rest of the collection can use it.",
+              "pm.collectionVariables.set('packageId', body.packageId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Tamagotchi Go Classic\",\n  \"version\": \"1.0.{{$timestamp}}\",\n  \"description\": \"Base package with hunger and happiness stats\",\n  \"moderatorIds\": [\"{{moderatorId}}\"]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/packages",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "packages"
+          ]
+        },
+        "description": "Registers a new client package. New packages start with status `active` and empty stat definitions."
+      },
+      "response": []
+    },
+    {
+      "name": "List Packages",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('returns an array', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/packages",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "packages"
+          ]
+        },
+        "description": "Lists every registered package, for discovery - a caller no longer needs to already know a packageId."
+      },
+      "response": []
+    },
+    {
+      "name": "Update Stat Definitions",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('stat definitions were stored', function () {",
+              "    pm.expect(pm.response.json().statDefinitions).to.have.property('hunger');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{moderatorToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"statDefinitions\": {\n    \"hunger\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 80,\n      \"bonusMultiplier\": 1.2\n    },\n    \"happiness\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 60,\n      \"bonusMultiplier\": 1.1\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/packages/{{packageId}}/stat-definitions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "packages",
+            "{{packageId}}",
+            "stat-definitions"
+          ]
+        },
+        "description": "A moderator defines this package's local Tamagotchi stats.\n\nPackages are intentionally non-normalized - another package may define energy/mood/discipline instead. Battle Service reads these definitions to compute package-specific combat bonuses, so each one is validated: maxValue > 0, bonusThreshold between 0 and maxValue, bonusMultiplier > 0."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Package",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('returns the contract fields', function () {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body).to.have.all.keys('packageId', 'name', 'version', 'status', 'statDefinitions');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/packages/{{packageId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "packages",
+            "{{packageId}}"
+          ]
+        },
+        "description": "Retrieves a package's details, including its current stat definitions. This is the endpoint Battle Service and Tamagotchi Service pull from."
+      },
+      "response": []
+    },
+    {
+      "name": "Add Package Moderator",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is moderator', function () { pm.expect(pm.response.json().status).to.eql('moderator'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{moderatorToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"mod-2\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/packages/{{packageId}}/moderators",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "packages",
+            "{{packageId}}",
+            "moderators"
+          ]
+        },
+        "description": "Grants moderator status on an existing package. Only an existing moderator of that package can add another."
+      },
+      "response": []
+    },
+    {
+      "name": "Register User to Package",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is registered', function () { pm.expect(pm.response.json().status).to.eql('registered'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{userToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/packages/{{packageId}}/users",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "packages",
+            "{{packageId}}",
+            "users"
+          ]
+        },
+        "description": "Records that a player belongs to this package. Sending the same userId twice returns 409."
+      },
+      "response": []
+    },
+    {
+      "name": "Create Raid Config",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+              "const body = pm.response.json();",
+              "pm.test('returns raidConfigId', function () { pm.expect(body).to.have.property('raidConfigId'); });",
+              "// Save the id so Activate Raid Config can use it.",
+              "pm.collectionVariables.set('raidConfigId', body.raidConfigId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Frost Wyrm\",\n  \"maxHp\": 50000,\n  \"duration\": 3600,\n  \"rewards\": {\n    \"coins\": 500,\n    \"items\": [\"frost-shard\"]\n  },\n  \"createdByAdminId\": \"{{adminId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/raid-configs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raid-configs"
+          ]
+        },
+        "description": "An admin designs a Monster Raid. `duration` is in seconds. The config is created with status `draft` - it is not live until activated.\n\n`guildId` scopes the raid to one guild: Monster Raid Service requires it when the raid is created, and only that guild's members may join."
+      },
+      "response": []
+    },
+    {
+      "name": "Activate Raid Config",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "const body = pm.response.json();",
+              "pm.test('returns a raidId and active status', function () {",
+              "    pm.expect(body).to.have.property('raidId');",
+              "    pm.expect(body.status).to.eql('active');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/raid-configs/{{raidConfigId}}/activate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raid-configs",
+            "{{raidConfigId}}",
+            "activate"
+          ]
+        },
+        "description": "Activates a raid configuration, spinning up a live raid.\n\nThe live raid is created by Monster Raid Service via its internal POST /raids, and that service owns the raidId - this service returns the id it was given. Reactivating a paused config reuses the same raid.\n\nMonster Raid Service is mocked in Lab 1; a monster name starting with 'unavailable' makes the mock refuse, returning 502."
+      },
+      "response": []
+    },
+    {
+      "name": "Deactivate Raid Config",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is inactive', function () { pm.expect(pm.response.json().status).to.eql('inactive'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/raid-configs/{{raidConfigId}}/deactivate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raid-configs",
+            "{{raidConfigId}}",
+            "deactivate"
+          ]
+        },
+        "description": "Pauses an active raid without ending it. The raid instance id is kept, so reactivating resumes the same raid rather than creating a new one."
+      },
+      "response": []
+    },
+    {
+      "name": "Cancel Raid Config",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('status is cancelled', function () { pm.expect(pm.response.json().status).to.eql('cancelled'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/raid-configs/{{raidConfigId}}/cancel",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "raid-configs",
+            "{{raidConfigId}}",
+            "cancel"
+          ]
+        },
+        "description": "Permanently cancels the config. Any live raid instance is force-ended without rewards, and the config can never be activated again."
+      },
+      "response": []
+    },
+    {
+      "name": "Error cases",
+      "description": "Requests that are expected to fail - they demonstrate the validation rules.",
+      "item": [
+        {
+          "name": "Stat definition threshold above max (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{moderatorToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statDefinitions\": {\n    \"hunger\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 150,\n      \"bonusMultiplier\": 1.2\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}/stat-definitions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}",
+                "stat-definitions"
+              ]
+            },
+            "description": "A bonusThreshold above maxValue could never be reached, so it is rejected rather than silently stored."
+          },
+          "response": []
+        },
+        {
+          "name": "Register same user twice (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}",
+                "users"
+              ]
+            },
+            "description": "Run this after `Register User to Package` - the same user cannot be registered twice."
+          },
+          "response": []
+        },
+        {
+          "name": "Activate twice (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs/{{raidConfigId}}/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs",
+                "{{raidConfigId}}",
+                "activate"
+              ]
+            },
+            "description": "Run this after `Activate Raid Config` - a config that is already active cannot be activated again."
+          },
+          "response": []
+        },
+        {
+          "name": "Raid config with invalid maxHp (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"monsterName\": \"Broken Monster\",\n  \"maxHp\": -5,\n  \"duration\": 3600,\n  \"rewards\": {},\n  \"createdByAdminId\": \"{{adminId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs"
+              ]
+            },
+            "description": "maxHp must be a number greater than 0."
+          },
+          "response": []
+        },
+        {
+          "name": "Get unknown package (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": "A packageId that does not exist returns 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Stat definitions by non-moderator (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statDefinitions\": {\n    \"hunger\": { \"maxValue\": 100, \"bonusThreshold\": 80, \"bonusMultiplier\": 1.2 }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}/stat-definitions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}",
+                "stat-definitions"
+              ]
+            },
+            "description": "Only a moderator of this package may define its stats."
+          },
+          "response": []
+        },
+        {
+          "name": "Raid config without a token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"monsterName\": \"Nameless\",\n  \"maxHp\": 100,\n  \"duration\": 60,\n  \"rewards\": {},\n  \"createdByAdminId\": \"{{adminId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs"
+              ]
+            },
+            "description": "Raid configuration is admin-only, so without a token the service answers 401 per the contract."
+          },
+          "response": []
+        },
+        {
+          "name": "Activate a cancelled config (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs/{{raidConfigId}}/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs",
+                "{{raidConfigId}}",
+                "activate"
+              ]
+            },
+            "description": "Run after Cancel Raid Config - cancelling is permanent."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Raid Config without guildId (setup)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('noGuildConfigId', pm.response.json().raidConfigId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"monsterName\": \"Unscoped Beast\",\n  \"maxHp\": 100,\n  \"duration\": 600,\n  \"rewards\": {},\n  \"createdByAdminId\": \"{{adminId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs"
+              ]
+            },
+            "description": "Sets up the 409 case below - a config deliberately created without a guildId."
+          },
+          "response": []
+        },
+        {
+          "name": "Activate a config with no guildId (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });",
+                  "// This request creates its own config without a guildId, then activates it."
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs/{{noGuildConfigId}}/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs",
+                "{{noGuildConfigId}}",
+                "activate"
+              ]
+            },
+            "description": "A raid is scoped to a guild, so a config without a guildId cannot be activated."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Guard against running a request before the one that sets its variable.",
+          "const url = pm.request.url.toString();",
+          "const headers = JSON.stringify(pm.request.headers);",
+          "const needed = [",
+          "    { name: 'packageId', setBy: 'Register Package' },",
+          "    { name: 'raidConfigId', setBy: 'Create Raid Config' },",
+          "    { name: 'adminToken', setBy: 'Get Dev Token (admin)' },",
+          "    { name: 'moderatorToken', setBy: 'Get Dev Token (moderator)' },",
+          "    { name: 'userToken', setBy: 'Get Dev Token (player)' },",
+          "];",
+          "",
+          "needed.forEach(function (v) {",
+          "    const token = '{{' + v.name + '}}';",
+          "    if (url.indexOf(token) === -1 && headers.indexOf(token) === -1) return;",
+          "    if (!pm.collectionVariables.get(v.name)) {",
+          "        throw new Error(",
+          "            'Collection variable {{' + v.name + '}} is empty. Run \"' + v.setBy +",
+          "            '\" first, or use Run Collection so the requests execute in order.'",
+          "        );",
+          "    }",
+          "});"
+        ]
+      }
+    }
+  ]
+}
