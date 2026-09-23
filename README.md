@@ -72,6 +72,102 @@ The team works in **2 languages**, split by repo/member pair:
 
 All cross-service reads (e.g. Battle Service checking a user's currency) go through that owning service's REST API — never direct DB access.
 
+### Authentication & authorization
+
+> **Status:** agreed target contract, not yet enforced. In Lab 1 services still take `userId` from the request as given; each service adopts the rules below as User Management ships the key endpoint.
+
+There are two kinds of caller, and they never share credentials:
+
+- **Players** (client apps) carry a **user token** issued at login.
+- **Services** calling each other's internal endpoints carry a **service key**. A player token is never accepted there.
+
+#### User tokens
+
+- **Issued by** User Management's `POST /users/login`: a JWT signed with **RS256**, valid for `JWT_TTL` (default 24 h). Claims: `sub` (the `userId`), `iat` and `exp`. Nothing else — roles are *not* in the token (see below).
+- **Sent as** `Authorization: Bearer <token>`. WebSocket clients can't set headers, so they pass it on the connect URL instead: `?token=<token>`.
+- **Verified locally** by every service using User Management's public key from `GET /.well-known/jwks.json` (fetched once and cached). No service ever holds the signing secret, and no request needs a round-trip to User Management.
+- **Identity comes from `sub`.** Where an endpoint also carries a `userId` (path or body), it must equal `sub`, or the request is rejected. The `userId` fields stay in the payloads for compatibility, but the token is the source of truth.
+- **Roles are checked by the service that owns them**, against its own data and the caller's `sub`: guild roles by Guild Service, admins and package moderators by Package Registry. That's why the token doesn't carry roles, and no role data has to be synchronised between services. Since `POST /admins` itself needs an admin, Package Registry seeds the first admin from configuration (e.g. `PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID` in `.env`).
+
+#### Service keys
+
+Endpoints marked **Service** below are internal: only the listed callers may use them. The caller sends `X-Service-Key: <key>`. Every caller gets its own key, configured through `.env` on both sides (placeholders only in `.env.example`), so one caller's access can be revoked without touching the others.
+
+#### Errors
+
+| Situation | HTTP | WebSocket |
+|---|---|---|
+| Token/key missing, malformed, expired or badly signed | `401 Unauthorized` | connection closed with `1008` |
+| Valid token, but acting as someone else or lacking the role | `403 Forbidden` | connection closed with `1008` |
+
+#### Access per endpoint
+
+| Access | Meaning |
+|---|---|
+| **Public** | No credentials |
+| **Player** | Any valid user token |
+| **Player (self)** | Valid user token whose `sub` is the user in the path/body (the actor) |
+| **Player + role** | Valid user token, and the role shown, checked by the owning service |
+| **Service** | Service key of one of the listed callers; user tokens are rejected |
+
+| Service | Endpoint | Access |
+|---|---|---|
+| User Management | `POST /users/register` | Public |
+| | `POST /users/login` | Public |
+| | `GET /.well-known/jwks.json` | Public |
+| | `GET /users/{userId}` | Player |
+| | `GET /users/{userId}/currency` | Player (self) |
+| | `POST /users/{userId}/currency/adjust` | **Service** — Battle, Monster Raid (rewards) |
+| | `POST /users/{userId}/friends/{targetId}` | Player (self) |
+| | `GET /users/{userId}/friends` | Player (self) |
+| | `DELETE /users/{userId}/friends/{targetId}` | Player (self) |
+| | `POST /users/{userId}/enemies/{targetId}` | Player (self) |
+| | `GET /users/{userId}/relationship/{targetId}` | Player (self), or **Service** — Map |
+| Battle | `POST /battles/challenge` | Player (self — the challenger) |
+| | `POST /battles/{battleId}/accept` | Player (self — the challenged player) |
+| | `GET /battles/{battleId}` | Player |
+| | `POST /battles/{battleId}/action` | Player (self — a participant) |
+| | `WS /battles/{battleId}/live` | Player |
+| Tamagotchi | `GET /types/advantages` | Public |
+| | `POST /tamagotchis` | Player (self — the owner) |
+| | `GET /tamagotchis/{id}` | Player |
+| | `GET /users/{userId}/tamagotchis` | Player |
+| | `PATCH /users/{userId}/tamagotchis/{id}/set-primary` | Player (self — the owner) |
+| | `PATCH /tamagotchis/{id}/stats` | Player (self — the owner) |
+| | `POST /tamagotchis/{id}/xp` | **Service** — Battle |
+| | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle |
+| Notification | `POST /notifications/register-device` | Player (self) |
+| | `GET /notifications/{userId}` | Player (self) |
+| | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
+| Map | `POST /map/location` | Player (self) |
+| | `GET /map/nearby/{userId}` | Player (self) — locations are private |
+| | `WS /map/stream` | Player (self — every frame's `userId` must be `sub`) |
+| Monster Raid | `POST /raids` | **Service** — Package Registry |
+| | `POST /raids/{raidId}/join` | Player (self) + member of the raid's guild |
+| | `POST /raids/{raidId}/attack` | Player (self — a participant) |
+| | `GET /raids/{raidId}` | Player |
+| Guild | `GET /guilds/search` | Player |
+| | `POST /guilds` | Player (self — the owner) |
+| | `POST /guilds/{guildId}/join` | Player (self) |
+| | `POST /guilds/{guildId}/members` | Player + role: owner or officer (`invitedBy` = `sub`) |
+| | `DELETE /guilds/{guildId}/members/{userId}` | Player (self) to leave; Player + role: owner or officer to remove others |
+| | `GET /users/{userId}/guilds` | Player |
+| | `GET /guilds/{guildId}` | Player |
+| | `PATCH /guilds/{guildId}/members/{userId}/role` | Player + role: owner |
+| | `WS /guilds/{guildId}/chat` | Player + role: member of the guild (`authorId` = `sub`) |
+| Package Registry | `GET /packages` | Public — needed before registering |
+| | `GET /packages/{packageId}` | Public |
+| | `POST /packages` | Player + role: admin |
+| | `PUT /packages/{packageId}/stat-definitions` | Player + role: moderator of that package, or admin |
+| | `POST /packages/{packageId}/users` | Player (self) |
+| | `POST /packages/{packageId}/moderators` | Player + role: moderator of that package, or admin |
+| | `POST /admins` | Player + role: admin |
+| | `POST /raid-configs` | Player + role: admin |
+| | `POST /raid-configs/{id}/activate` | Player + role: admin |
+| | `POST /raid-configs/{id}/deactivate` | Player + role: admin |
+| | `POST /raid-configs/{id}/cancel` | Player + role: admin |
+| Every service | `GET /health`, `/docs` | Public |
+
 ### Endpoints
 
 Each field below is annotated with its type (`string`, `int`, `float`, `bool`, `object`, `array<T>`, ISO 8601 timestamp, etc.).
@@ -103,7 +199,7 @@ Success Response (201 Created):
 
 **Login**
 
-`POST` `/users/login` — Description: Authenticates a player and returns a JWT. Payload:
+`POST` `/users/login` — Description: Authenticates a player and returns a user token: an RS256-signed JWT whose `sub` is the `userId`, expiring after `JWT_TTL`. Clients send it as `Authorization: Bearer <token>` (see [Authentication & authorization](#authentication--authorization)). Payload:
 
 ```json
 {
@@ -118,6 +214,27 @@ Success Response (200 OK):
 {
   "token": "string",
   "userId": "string"
+}
+```
+
+**Token Signing Keys**
+
+`GET` `/.well-known/jwks.json` — Description: Publishes the public key(s) user tokens are signed with, in standard JWKS format, so every other service can verify tokens locally without the signing secret. Public; safe to cache.
+
+Success Response (200 OK):
+
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "kid": "string",
+      "use": "sig",
+      "alg": "RS256",
+      "n": "string",
+      "e": "string"
+    }
+  ]
 }
 ```
 
