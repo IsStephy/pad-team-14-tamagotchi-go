@@ -1,0 +1,1067 @@
+{
+  "info": {
+    "name": "User Management Service (Team 14)",
+    "description": "Every endpoint of the User Management Service, in an order that runs top to bottom as a complete scenario: two players register, become friends, earn currency, fall out, and are deleted again.\n\nStart the service first with `./run.sh` in the user-management-service repo, then hit Run to verify it works. `baseUrl` defaults to http://localhost:8081.\n\nIds and the login token are captured into collection variables as the run progresses, so nothing needs to be filled in by hand. Usernames are generated per run, so the collection can be run repeatedly.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
+      "key": "packageId",
+      "value": "pkg-demo",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "correct-horse-battery",
+      "type": "string"
+    },
+    {
+      "key": "username1",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "username2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "targetUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "missingId",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Liveness probe. Answers as soon as the service is up and migrated."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"reports this service\", function () {",
+              "    pm.expect(pm.response.json().service).to.eql(\"user-management-service\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Register player one",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "register"
+          ]
+        },
+        "description": "Creates an account. The username is generated per run so the collection can be re-run.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username1}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{username1}}@tamagotchi.go\",\n  \"packageId\": \"{{packageId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const suffix = Date.now().toString().slice(-9);",
+              "pm.collectionVariables.set(\"username1\", \"trainer_\" + suffix);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 201\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"returns the new user id\", function () {",
+              "    pm.expect(body.userId).to.be.a(\"string\").and.not.empty;",
+              "});",
+              "pm.test(\"never echoes the password\", function () {",
+              "    pm.expect(body).to.not.have.property(\"password\");",
+              "});",
+              "pm.collectionVariables.set(\"userId\", body.userId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Register player two",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "register"
+          ]
+        },
+        "description": "A second account, so the friend/enemy endpoints have someone to point at.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username2}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{username2}}@tamagotchi.go\",\n  \"packageId\": \"{{packageId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const suffix = Date.now().toString().slice(-9);",
+              "pm.collectionVariables.set(\"username2\", \"rival_\" + suffix);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 201\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "pm.collectionVariables.set(\"targetUserId\", pm.response.json().userId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Register a duplicate username (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "register"
+          ]
+        },
+        "description": "Usernames are unique; re-using one is a 409 rather than a silent overwrite.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username1}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"someone-else@tamagotchi.go\",\n  \"packageId\": \"{{packageId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 409\", function () {",
+              "    pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Log in",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "login"
+          ]
+        },
+        "description": "Exchanges credentials for a signed token.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username1}}\",\n  \"password\": \"{{password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"returns a token for this user\", function () {",
+              "    pm.expect(body.token).to.be.a(\"string\").and.not.empty;",
+              "    pm.expect(body.userId).to.eql(pm.collectionVariables.get(\"userId\"));",
+              "});",
+              "pm.collectionVariables.set(\"token\", body.token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Log in with a wrong password (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "login"
+          ]
+        },
+        "description": "A wrong password and an unknown username answer identically, so the endpoint does not reveal which usernames exist.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username1}}\",\n  \"password\": \"definitely-not-the-password\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 401\", function () {",
+              "    pm.response.to.have.status(401);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get user",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Reads the profile other services resolve identity against."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"is the account we registered\", function () {",
+              "    pm.expect(pm.response.json().username).to.eql(pm.collectionVariables.get(\"username1\"));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Update profile",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Partial update: omitted fields are left untouched.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"profile\": \"Gym leader in training\",\n  \"level\": 7\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"applies the supplied fields\", function () {",
+              "    pm.expect(body.profile).to.eql(\"Gym leader in training\");",
+              "    pm.expect(body.level).to.eql(7);",
+              "});",
+              "pm.test(\"leaves untouched fields alone\", function () {",
+              "    pm.expect(body.username).to.eql(pm.collectionVariables.get(\"username1\"));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get currency",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/currency",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "currency"
+          ]
+        },
+        "description": "Both balances. A fresh account starts at zero."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"a new account starts empty\", function () {",
+              "    pm.expect(body.localCurrency).to.eql(0);",
+              "    pm.expect(body.globalCurrency).to.eql(0);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Adjust currency (credit a battle reward)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/currency/adjust",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "currency",
+            "adjust"
+          ]
+        },
+        "description": "Deltas may be positive or negative. The balance change and its ledger entry are written in one transaction.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"globalCurrencyDelta\": 250,\n  \"localCurrencyDelta\": 10,\n  \"reason\": \"battle reward\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"returns the resulting balance\", function () {",
+              "    pm.expect(body.globalCurrency).to.eql(250);",
+              "    pm.expect(body.localCurrency).to.eql(10);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Adjust currency beyond the balance (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/currency/adjust",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "currency",
+            "adjust"
+          ]
+        },
+        "description": "An adjustment that would overdraw is refused and leaves the balance untouched.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"globalCurrencyDelta\": -9999,\n  \"reason\": \"battle loss\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 409\", function () {",
+              "    pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Balance survived the rejected adjustment",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/currency",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "currency"
+          ]
+        },
+        "description": "Confirms the refused adjustment above changed nothing."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"still holds the credited reward\", function () {",
+              "    pm.expect(pm.response.json().globalCurrency).to.eql(250);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Send a friend request",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/friends/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "friends",
+            "{{targetUserId}}"
+          ]
+        },
+        "description": "Creates one direction of the edge. It stays pending until the other player reciprocates."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"is pending until reciprocated\", function () {",
+              "    pm.expect(pm.response.json().status).to.eql(\"pending\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reciprocate the friend request",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{targetUserId}}/friends/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{targetUserId}}",
+            "friends",
+            "{{userId}}"
+          ]
+        },
+        "description": "The mirror request promotes both directions to a friendship."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"becomes a friendship\", function () {",
+              "    pm.expect(pm.response.json().status).to.eql(\"friend\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List friends",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/friends",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "friends"
+          ]
+        },
+        "description": "Every outgoing edge, including pending requests and enemies."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"lists the new friend\", function () {",
+              "    pm.expect(body).to.be.an(\"array\").with.lengthOf(1);",
+              "    pm.expect(body[0].userId).to.eql(pm.collectionVariables.get(\"targetUserId\"));",
+              "    pm.expect(body[0].status).to.eql(\"friend\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get relationship",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "relationship",
+            "{{targetUserId}}"
+          ]
+        },
+        "description": "How this user relates to another. This is the question other services ask."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"reads back as a friendship\", function () {",
+              "    pm.expect(pm.response.json().relationship).to.eql(\"friend\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Mark the other player as an enemy",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "relationship",
+            "{{targetUserId}}"
+          ]
+        },
+        "description": "Forces the edge to a given kind. Enemies are one-directional by design.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"enemy\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"the edge is now an enmity\", function () {",
+              "    pm.expect(pm.response.json().relationship).to.eql(\"enemy\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Set an unknown relationship (rejected)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "relationship",
+            "{{targetUserId}}"
+          ]
+        },
+        "description": "Only pending, friend and enemy are settable.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"nemesis\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 400\", function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Remove the relationship",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/friends/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "friends",
+            "{{targetUserId}}"
+          ]
+        },
+        "description": "Clears both directions, which is what unfriending means for a mutual friendship."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 204\", function () {",
+              "    pm.response.to.have.status(204);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Relationship is gone",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "relationship",
+            "{{targetUserId}}"
+          ]
+        },
+        "description": "Confirms the removal cleared the edge."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"reads back as none\", function () {",
+              "    pm.expect(pm.response.json().relationship).to.eql(\"none\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get an unknown user (rejected)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{missingId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{missingId}}"
+          ]
+        },
+        "description": "An id that matches no account is a 404."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 404\", function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete player two",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{targetUserId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{targetUserId}}"
+          ]
+        },
+        "description": "Removes the account along with its balance and relationship edges."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 204\", function () {",
+              "    pm.response.to.have.status(204);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete player one",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Leaves the database as the run found it."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 204\", function () {",
+              "    pm.response.to.have.status(204);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Deleted user is gone",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Confirms the delete took effect."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 404\", function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1328,8 +1328,8 @@ Claim a free one when you wire up your service and add it here.
 
 | Service | Port |
 |---|---|
-| User Management | — |
-| Battle | — |
+| User Management | `8081` |
+| Battle | `8082` |
 | Tamagotchi | — |
 | Notification | — |
 | Map | `8085` |
@@ -1382,6 +1382,73 @@ Interactive API docs: <http://localhost:8086/docs>.
 In both, `docker compose down` stops the stack and keeps the data;
 `docker compose down -v` also deletes it.
 
+### User Management Service
+
+**What it does:** owns player identity — registration, login, profiles, the
+friend/enemy graph, and both in-game currencies. This is the service everyone
+else asks "who is this user?", "are these two friends?" and "can this user
+afford it?".
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 (`docker compose version`). Nothing else — no Go toolchain and no local
+Postgres; Compose starts the database and the schema is applied on start-up.
+
+**Run it:**
+
+```bash
+cd user-management-service
+./run.sh
+```
+
+It builds the image, starts the service with its database, and waits until the
+API answers. When it prints
+`user-management-service is running on http://localhost:8081` you are ready:
+
+```bash
+curl http://localhost:8081/health
+# {"service":"user-management-service","status":"ok"}
+```
+
+| Command | What it does |
+|---|---|
+| `./run.sh` | Build and start, waiting until healthy |
+| `./run.sh stop` | Stop the stack, keeping the database contents |
+| `./run.sh clean` | Stop the stack and delete the database volume |
+| `./run.sh logs` | Follow the service logs |
+| `./run.sh test` | Run the unit tests (needs Go, no database required) |
+
+Set `PORT` to run somewhere else: `PORT=9081 ./run.sh`.
+
+### Battle Service
+
+**What it does:** runs turn-based PvP matches — damage from Tamagotchi levels,
+the elemental type matchup and equipped boosts, turn tracking, and the reward
+settlement (currency, XP, the loser's primary Tamagotchi) when a match ends.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 (`docker compose version`). Nothing else. This service owns no user or
+Tamagotchi records: it reads combat stats from Tamagotchi Service, package stat
+definitions from Package Registry, and settles rewards through User Management.
+Each of those falls back to an in-process mock while its URL is unset, so it
+still runs standalone.
+
+**Run it:**
+
+```bash
+cd battle-service
+./run.sh
+```
+
+When it prints `battle-service is running on http://localhost:8082` you are
+ready:
+
+```bash
+curl http://localhost:8082/health
+# {"service":"battle-service","status":"ok"}
+```
+
+It takes the same `stop` / `clean` / `logs` / `test` commands and the same
+`PORT` override as above.
 ### Guild Service
 
 **What it does:** owns guild identity, membership and roles
@@ -1447,6 +1514,52 @@ docker compose ps        # wait until everything is healthy
 | `docker compose down` | Stop everything, **keeping** all database data |
 | `docker compose down -v` | Stop everything and **delete** every database volume |
 
+### Credentials
+
+Configuration is read from the environment, never from committed files.
+[`.env.example`](.env.example) holds placeholders only and is the file that
+gets committed; `.env` holds the real values and is git-ignored. Never commit
+`.env`, and never put a real password in `.env.example`.
+
+Variables are prefixed with the service they belong to
+(`USER_MANAGEMENT_DB_PASSWORD`, `BATTLE_DB_PASSWORD`, …), so entries from
+different services cannot collide.
+
+### Data persistence
+
+Each database gets its own named volume, so data survives container restarts
+and rebuilds. `docker compose down` keeps the volumes; only `down -v` deletes
+them.
+
+> Postgres creates its user only when it initialises an **empty** data
+> directory. If you change a `*_DB_USER` or `*_DB_PASSWORD` after the volume
+> exists, the change has no effect and connections are refused. Delete that
+> volume (`docker compose down -v`) to reset it.
+
+### Adding your service
+
+Conventions, so entries do not collide — please follow them:
+
+| Thing | Convention | Example |
+|---|---|---|
+| Service entry | the repo name | `guild-service` |
+| Database entry | `<service>-db` | `guild-service-db` |
+| Volume | `<service>-db-data` | `guild-service-db-data` |
+| Env prefix | `<SERVICE>_` | `GUILD_DB_PASSWORD` |
+| Image | your published image, pinned to a version tag | `you/guild-service:v1.0.0` |
+
+Reference your **published image**, never a `build:` context — the point is
+that a teammate can run your service without your source. Pin a version tag
+rather than `:latest`, so the file always describes a combination known to
+work.
+
+Databases deliberately publish no host port: services reach them over the
+Compose network by service name. If you want `psql` access, add a `ports:`
+entry locally rather than committing one, so we do not fight over `5432`.
+
+Before merging, claim your host port in the table above and add your variables
+to `.env.example` with placeholder values only.
+
 **Credentials** come only from `.env`, which is git-ignored.
 [`.env.example`](.env.example) holds placeholders and is what gets committed —
 never put a real password in it. Variables are prefixed with their service
@@ -1465,6 +1578,8 @@ works without cloning its repo.
 
 | Collection | Service | Targets |
 |---|---|---|
+| [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management | `http://localhost:8081` |
+| [`battle-service`](collections/battle-service.postman_collection.json) | Battle | `http://localhost:8082` |
 | [`map-service`](collections/map-service.postman_collection.json) | Map | `http://localhost:8085` |
 | [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid | `http://localhost:8086` |
 | [`guild-service`](collections/guild-service.postman_collection.json) | Guild | `http://localhost:8087` |
@@ -1475,6 +1590,8 @@ press **Run** — each collection runs top to bottom as one scenario, capturing
 ids into collection variables as it goes. They also run headlessly:
 
 ```bash
+npx newman run collections/user-management-service.postman_collection.json
+npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json
 npx newman run collections/guild-service.postman_collection.json
@@ -1491,6 +1608,8 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 
 | Service | Image | Needs | Port |
 |---|---|---|---|
+| User Management | [`pshasuleiman/user-management-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
+| Battle | [`pshasuleiman/battle-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
 | Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
 | Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
 | Guild | [`isstephy1/guild-service:v1.2.0`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |

@@ -23,6 +23,85 @@ name: tamagotchi-go
 
 services:
 
+  user-management-service-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${USER_MANAGEMENT_DB_NAME:-user_management_db}
+      POSTGRES_USER: ${USER_MANAGEMENT_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - user-management-service-db-data:/var/lib/postgresql/data
+  # --------------------------------------------------------- TypeScript / guild
+  # PostgreSQL for guilds, members and chat; the service runs its migrations
+  # on start-up.
+
+  user-management-service:
+    image: pshasuleiman/user-management-service:v1.3.0
+    depends_on:
+      user-management-service-db:
+        condition: service_healthy
+    environment:
+      PORT: 8081
+      DB_HOST: user-management-service-db
+      DB_PORT: 5432
+      DB_NAME: ${USER_MANAGEMENT_DB_NAME:-user_management_db}
+      DB_USER: ${USER_MANAGEMENT_DB_USER:?set it in .env — copy .env.example}
+      DB_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
+      DB_SSLMODE: disable
+      JWT_TTL: ${USER_MANAGEMENT_JWT_TTL:-24h}
+      # RS256 signing key. Generated on start-up and persisted in the database
+      # when unset, so the stack works out of the box; set it in production so
+      # the key survives a database reset.
+      JWT_PRIVATE_KEY: ${USER_MANAGEMENT_JWT_PRIVATE_KEY:-}
+      # Access rules from the contract's Authentication section. Off until the
+      # team turns them on together: enforcing before every caller sends
+      # credentials would break them.
+      AUTH_ENFORCED: ${AUTH_ENFORCED:-false}
+      SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
+      SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
+      SERVICE_KEY_MAP: ${SERVICE_KEY_MAP:-}
+    ports:
+      - "${USER_MANAGEMENT_PORT:-8081}:8081"
+    restart: unless-stopped
+
+  # ------------------------------------------------------------- Go / battle
+
+  battle-service-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${BATTLE_DB_NAME:-battle_db}
+      POSTGRES_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - battle-service-db-data:/var/lib/postgresql/data
+
+  battle-service:
+    image: pshasuleiman/battle-service:v1.3.0
+    depends_on:
+      battle-service-db:
+        condition: service_healthy
+      user-management-service:
+        condition: service_started
+    environment:
+      PORT: 8082
+      DB_HOST: battle-service-db
+      DB_PORT: 5432
+      DB_NAME: ${BATTLE_DB_NAME:-battle_db}
+      DB_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
+      DB_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
+      DB_SSLMODE: disable
+      # Each dependency falls back to an in-process mock while its URL is
+      # empty, so this service runs before the others are published.
+      USER_MANAGEMENT_SERVICE_URL: ${BATTLE_USER_MANAGEMENT_URL:-http://user-management-service:8081}
+      TAMAGOTCHI_SERVICE_URL: ${BATTLE_TAMAGOTCHI_SERVICE_URL:-}
+      PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-}
+      AUTH_ENFORCED: ${AUTH_ENFORCED:-false}
+      # The key this service presents to the Service-only endpoints it calls.
+      SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
+    ports:
+      - "${BATTLE_PORT:-8082}:8082"
+
+
   # ---------------------------------------------------------- TypeScript / map
   # Redis (geospatial) with append-only persistence.
   map-service-db:
@@ -55,6 +134,7 @@ services:
 
   # --------------------------------------------------- TypeScript / monster raid
   # PostgreSQL for raid records; the service runs its migrations on start-up.
+
   monster-raid-service-db:
     image: postgres:16-alpine
     environment:
@@ -71,6 +151,7 @@ services:
     restart: unless-stopped
 
   # Redis for live monster HP and idempotency keys.
+
   monster-raid-service-cache:
     image: redis:7-alpine
     environment:
@@ -105,9 +186,8 @@ services:
       - "${MONSTER_RAID_PORT:-8086}:8086"
     restart: unless-stopped
 
-  # --------------------------------------------------------- TypeScript / guild
-  # PostgreSQL for guilds, members and chat; the service runs its migrations
-  # on start-up.
+  # --------------------------------------------------------------- Go / user
+
   guild-service-db:
     image: postgres:16-alpine
     environment:
@@ -145,6 +225,7 @@ services:
   # ----------------------------------------------- TypeScript / package registry
   # PostgreSQL for packages, stat definitions, admins and raid configs; the
   # service runs its migrations on start-up.
+
   package-registry-service-db:
     image: postgres:16-alpine
     environment:
@@ -186,6 +267,8 @@ services:
 # Named volumes keep each database's data across restarts and rebuilds.
 # `docker compose down` keeps them; `docker compose down -v` deletes them.
 volumes:
+  user-management-service-db-data:
+  battle-service-db-data:
   map-service-db-data:
   monster-raid-service-db-data:
   monster-raid-service-cache-data:
