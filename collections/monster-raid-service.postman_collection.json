@@ -1,9 +1,40 @@
 {
   "info": {
     "name": "Monster Raid Service (Team 14)",
-    "description": "Cooperative guild raids against a shared monster.\n\nOwner: Dackohn. Default port: 8086.\n\nStart the service first (see monster-raid-service/README.md), then run the requests top to bottom — `Create Raid` saves the new raidId into the `raidId` collection variable, so every later request works without copy-pasting ids.",
+    "description": "Cooperative guild raids against a shared monster.\n\nOwner: Dackohn. Default port: 8086.\n\nPlayer endpoints need a user token, sent as `Authorization: Bearer <token>`; join and attack must be made as the user in the body. `POST /raids` is internal: it takes Package Registry's service key in `X-Service-Key` instead, per the CPR's authentication contract.\n\nRun the requests top to bottom: the `Get Dev Token` requests mint a token per test user, and `Create Raid` saves the new raidId - so every later request works without copy-pasting anything. Set {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from the shared stack's .env first (newman: `--env-var packageRegistryServiceKey=<key>`).\n\nThe users, guilds and Tamagotchis come from the service's built-in mocks: guild-1 = u1 (owner), u2 (officer), u3 (member); guild-2 = u4 (owner), u5; Tamagotchi tN belongs to uN.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Guard against running a request before the one that sets its variable.",
+          "const url = pm.request.url.toString();",
+          "const headers = JSON.stringify(pm.request.headers);",
+          "const needed = [",
+          "    { name: 'raidId', setBy: 'Create Raid (internal)' },",
+          "    { name: 'u1Token', setBy: 'Get Dev Token (u1)' },",
+          "    { name: 'u2Token', setBy: 'Get Dev Token (u2)' },",
+          "    { name: 'u3Token', setBy: 'Get Dev Token (u3)' },",
+          "    { name: 'u4Token', setBy: 'Get Dev Token (u4)' },",
+          "];",
+          "",
+          "needed.forEach(function (v) {",
+          "    const token = '{{' + v.name + '}}';",
+          "    if (url.indexOf(token) === -1 && headers.indexOf(token) === -1) return;",
+          "    if (!pm.collectionVariables.get(v.name)) {",
+          "        throw new Error(",
+          "            'Collection variable {{' + v.name + '}} is empty. Run \"' + v.setBy +",
+          "            '\" first, or use Run Collection so the requests execute in order.'",
+          "        );",
+          "    }",
+          "});"
+        ]
+      }
+    }
+  ],
   "variable": [
     {
       "key": "baseUrl",
@@ -11,6 +42,26 @@
     },
     {
       "key": "raidId",
+      "value": ""
+    },
+    {
+      "key": "packageRegistryServiceKey",
+      "value": "change_me"
+    },
+    {
+      "key": "u1Token",
+      "value": ""
+    },
+    {
+      "key": "u2Token",
+      "value": ""
+    },
+    {
+      "key": "u3Token",
+      "value": ""
+    },
+    {
+      "key": "u4Token",
       "value": ""
     }
   ],
@@ -40,7 +91,167 @@
             "health"
           ]
         },
-        "description": "Liveness check. Returns { status: ok, service: monster-raid-service }."
+        "description": "Liveness check. Returns { status: ok }. Needs no token."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u1)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u1Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u1\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Mints a user token for testing. This endpoint exists only while USER_MANAGEMENT_URL is unset - it stands in for User Management's POST /users/login, which will issue the real RS256 token. The service verifies tokens the same way either way.\n\nRun this FIRST: every other request sends the token as Authorization: Bearer."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u2)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u2Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u2\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Token for u2 - guild-1 officer, owns Tamagotchi t2. Saved into {{u2Token}}."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u3)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u3Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u3\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Token for u3 - guild-1 member, owns Tamagotchi t3. Saved into {{u3Token}}."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u4)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u4Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u4\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Token for u4 - guild-2 owner, not in guild-1. Saved into {{u4Token}}."
       },
       "response": []
     },
@@ -70,11 +281,15 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "X-Service-Key",
+            "value": "{{packageRegistryServiceKey}}"
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Overdue Assignment\",\n  \"maxHp\": 100,\n  \"duration\": 3600,\n  \"rewards\": { \"currency\": 10, \"xp\": 5 }\n}"
+          "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Overdue Assignment\",\n  \"maxHp\": 100,\n  \"duration\": 3600,\n  \"rewards\": {\n    \"currency\": 10,\n    \"xp\": 5\n  }\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/raids",
@@ -85,7 +300,7 @@
             "raids"
           ]
         },
-        "description": "Not client-facing in production — Package Registry calls this internally on raid-config activation. Exposed directly here for testing."
+        "description": "Internal endpoint: only Package Registry may call it, with its service key in X-Service-Key - a player token is never accepted. The key is the {{packageRegistryServiceKey}} collection variable; it must equal PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY in the shared stack's .env (run with `--env-var packageRegistryServiceKey=<key>` in newman, or edit the variable in Postman)."
       },
       "response": []
     },
@@ -109,6 +324,10 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u1Token}}"
           }
         ],
         "body": {
@@ -126,7 +345,7 @@
             "join"
           ]
         },
-        "description": "idempotencyKey lets a retry after a dropped connection avoid double-joining — send this same request twice and confirm participantCount stays at 1."
+        "description": "u1 joins with their own Tamagotchi t1. Guild membership and Tamagotchi ownership are checked against Guild and Tamagotchi Service (mocked in Lab 1)."
       },
       "response": []
     },
@@ -150,6 +369,10 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u1Token}}"
           }
         ],
         "body": {
@@ -167,7 +390,7 @@
             "attack"
           ]
         },
-        "description": "Required idempotencyKey — resend with the same key to confirm the damage isn't reapplied."
+        "description": "Damage scales with the Tamagotchi's level. Retrying with the same idempotencyKey never double-counts."
       },
       "response": []
     },
@@ -187,7 +410,12 @@
       ],
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u3Token}}"
+          }
+        ],
         "url": {
           "raw": "{{baseUrl}}/raids/{{raidId}}",
           "host": [
@@ -197,7 +425,8 @@
             "raids",
             "{{raidId}}"
           ]
-        }
+        },
+        "description": "Any player may read a raid - here u3, who hasn't joined."
       },
       "response": []
     },
@@ -216,7 +445,12 @@
       ],
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u1Token}}"
+          }
+        ],
         "url": {
           "raw": "{{baseUrl}}/raids/debug/active",
           "host": [
@@ -228,13 +462,13 @@
             "active"
           ]
         },
-        "description": "Dev-only telemetry endpoint — not part of the CPR communication contract."
+        "description": "Dev-only endpoint - not part of the CPR communication contract."
       },
       "response": []
     },
     {
       "name": "Error cases",
-      "description": "Requests that are expected to fail — they demonstrate the validation rules.",
+      "description": "Requests that are expected to fail - they demonstrate the validation and authorization rules.",
       "item": [
         {
           "name": "Join by a non-member of the guild (403)",
@@ -255,6 +489,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u4Token}}"
               }
             ],
             "body": {
@@ -272,7 +510,7 @@
                 "join"
               ]
             },
-            "description": "Mock data: u4 belongs to guild-2, not guild-1. Membership comes from Guild Service (mocked until reachable; set GUILD_SERVICE_URL to use the real one)."
+            "description": "u4 is in guild-2, the raid belongs to guild-1."
           },
           "response": []
         },
@@ -295,6 +533,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u2Token}}"
               }
             ],
             "body": {
@@ -312,7 +554,7 @@
                 "join"
               ]
             },
-            "description": "Mock data: t1 belongs to u1. Ownership comes from Tamagotchi Service (mocked until reachable; set TAMAGOTCHI_SERVICE_URL to use the real one)."
+            "description": "t1 belongs to u1."
           },
           "response": []
         },
@@ -335,11 +577,15 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u3Token}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"ghost\",\n  \"idempotencyKey\": \"attack-key-99\"\n}"
+              "raw": "{\n  \"userId\": \"u3\",\n  \"idempotencyKey\": \"attack-key-u3\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/raids/{{raidId}}/attack",
@@ -352,7 +598,7 @@
                 "attack"
               ]
             },
-            "description": "Run this after Create Raid — a user who never joined cannot attack."
+            "description": "u3 is in the guild but never joined this raid."
           },
           "response": []
         },
@@ -371,7 +617,12 @@
           ],
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u1Token}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/raids/00000000-0000-0000-0000-000000000000",
               "host": [
@@ -381,8 +632,7 @@
                 "raids",
                 "00000000-0000-0000-0000-000000000000"
               ]
-            },
-            "description": "A raidId that does not exist returns 404."
+            }
           },
           "response": []
         },
@@ -405,6 +655,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{packageRegistryServiceKey}}"
               }
             ],
             "body": {
@@ -419,8 +673,164 @@
               "path": [
                 "raids"
               ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create raid with a player token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u1Token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Sneaky Monster\",\n  \"maxHp\": 10,\n  \"duration\": 3600,\n  \"rewards\": {}\n}"
             },
-            "description": "maxHp must be a positive integer."
+            "url": {
+              "raw": "{{baseUrl}}/raids",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids"
+              ]
+            },
+            "description": "POST /raids is internal: it only accepts Package Registry's service key, never a player token."
+          },
+          "response": []
+        },
+        {
+          "name": "Create raid with an unknown service key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "not-a-real-key"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Sneaky Monster\",\n  \"maxHp\": 10,\n  \"duration\": 3600,\n  \"rewards\": {}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raids",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Attack as someone else (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u2Token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u1\",\n  \"idempotencyKey\": \"attack-key-intruder\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raids/{{raidId}}/attack",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "attack"
+              ]
+            },
+            "description": "u2's token with u1 in the body - you can only act as yourself."
+          },
+          "response": []
+        },
+        {
+          "name": "Read a raid without a token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/raids/{{raidId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}"
+              ]
+            },
+            "description": "Every raid endpoint needs a user token. Without one the service cannot tell who is asking, so it answers 401 per the contract."
           },
           "response": []
         }
