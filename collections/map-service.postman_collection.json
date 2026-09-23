@@ -1,13 +1,64 @@
 {
   "info": {
     "name": "Map Service (Team 14)",
-    "description": "Geolocation updates, nearby-user queries, and proximity detection.\n\nOwner: Dackohn. Default port: 8085.\n\nStart the service first (see map-service/README.md), then run the requests top to bottom. Update Location for u1 and u2 first so Get Nearby has something to find.\n\nThe WebSocket stream endpoint cannot be stored in Postman's collection file format; see the `Live Location Stream (WebSocket)` folder for how to add it in the Postman app.",
+    "description": "Geolocation updates, nearby-user queries, and proximity detection.\n\nOwner: Dackohn. Default port: 8085.\n\nEvery endpoint except /health and /docs needs a user token, sent as `Authorization: Bearer <token>`. Identity is the token's `sub` claim: the userId in the path or body must be that user, per the CPR's authentication contract.\n\nRun the requests top to bottom: the `Get Dev Token` requests mint a token per test user, so every later request works without copy-pasting anything. The user ids come from the service's built-in mock of User Management: u1-u3 are friends, u1-u5 are enemies, everyone else is unrelated.\n\nThe WebSocket stream endpoint cannot be stored in Postman's collection file format; see the `Live Location Stream (WebSocket)` folder for how to add it in the app.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Guard against running a request before the one that sets its variable.",
+          "const url = pm.request.url.toString();",
+          "const headers = JSON.stringify(pm.request.headers);",
+          "const needed = [",
+          "    { name: 'u1Token', setBy: 'Get Dev Token (u1)' },",
+          "    { name: 'u2Token', setBy: 'Get Dev Token (u2)' },",
+          "    { name: 'u3Token', setBy: 'Get Dev Token (u3)' },",
+          "    { name: 'u5Token', setBy: 'Get Dev Token (u5)' },",
+          "    { name: 'u6Token', setBy: 'Get Dev Token (u6)' },",
+          "];",
+          "",
+          "needed.forEach(function (v) {",
+          "    const token = '{{' + v.name + '}}';",
+          "    if (url.indexOf(token) === -1 && headers.indexOf(token) === -1) return;",
+          "    if (!pm.collectionVariables.get(v.name)) {",
+          "        throw new Error(",
+          "            'Collection variable {{' + v.name + '}} is empty. Run \"' + v.setBy +",
+          "            '\" first, or use Run Collection so the requests execute in order.'",
+          "        );",
+          "    }",
+          "});"
+        ]
+      }
+    }
+  ],
   "variable": [
     {
       "key": "baseUrl",
       "value": "http://localhost:8085"
+    },
+    {
+      "key": "u1Token",
+      "value": ""
+    },
+    {
+      "key": "u2Token",
+      "value": ""
+    },
+    {
+      "key": "u3Token",
+      "value": ""
+    },
+    {
+      "key": "u5Token",
+      "value": ""
+    },
+    {
+      "key": "u6Token",
+      "value": ""
     }
   ],
   "item": [
@@ -36,7 +87,207 @@
             "health"
           ]
         },
-        "description": "Liveness check. Returns { status: ok, service: map-service }."
+        "description": "Liveness check. Returns { status: ok }. Needs no token."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u1)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u1Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u1\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Mints a user token for testing. This endpoint exists only while USER_MANAGEMENT_URL is unset - it stands in for User Management's POST /users/login, which will issue the real RS256 token. The service verifies tokens the same way either way.\n\nRun this FIRST: every other request sends the token as Authorization: Bearer."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u2)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u2Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u2\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Token for u2 - unrelated to u1. Saved into {{u2Token}}."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u3)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u3Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u3\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Token for u3 - a friend of u1. Saved into {{u3Token}}."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u5)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u5Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u5\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Token for u5 - an enemy of u1. Saved into {{u5Token}}."
+      },
+      "response": []
+    },
+    {
+      "name": "Get Dev Token (u6)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.collectionVariables.set('u6Token', pm.response.json().token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"u6\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/mock-token",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "mock-token"
+          ]
+        },
+        "description": "Token for u6 - unrelated to u1, used to trigger a proximity event. Saved into {{u6Token}}."
       },
       "response": []
     },
@@ -60,6 +311,10 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u1Token}}"
           }
         ],
         "body": {
@@ -76,7 +331,7 @@
             "location"
           ]
         },
-        "description": "Uses Postman's {{$isoTimestamp}} dynamic variable so this stays fresh no matter when the collection is run — a hardcoded timestamp would go stale and always get rejected."
+        "description": "Stores the user's current position. The userId must be the token's user. Timestamps older than 2 minutes are rejected as stale."
       },
       "response": []
     },
@@ -100,6 +355,10 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u2Token}}"
           }
         ],
         "body": {
@@ -115,8 +374,7 @@
             "map",
             "location"
           ]
-        },
-        "description": "~13m from u1 — within nearby-query range. Use this pair to demonstrate the Redis GEO distance calculation."
+        }
       },
       "response": []
     },
@@ -136,7 +394,12 @@
       ],
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u1Token}}"
+          }
+        ],
         "url": {
           "raw": "{{baseUrl}}/map/nearby/u1",
           "host": [
@@ -148,7 +411,7 @@
             "u1"
           ]
         },
-        "description": "Run the two Update Location requests above first so there's something to find."
+        "description": "Users near u1, with distance and relationship. Only u1 may ask for u1's surroundings."
       },
       "response": []
     },
@@ -171,6 +434,10 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u3Token}}"
           }
         ],
         "body": {
@@ -186,8 +453,7 @@
             "map",
             "location"
           ]
-        },
-        "description": "Mock data: u3 is a friend of u1."
+        }
       },
       "response": []
     },
@@ -210,6 +476,10 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u5Token}}"
           }
         ],
         "body": {
@@ -225,8 +495,7 @@
             "map",
             "location"
           ]
-        },
-        "description": "Mock data: u5 is an enemy of u1."
+        }
       },
       "response": []
     },
@@ -248,7 +517,12 @@
       ],
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u1Token}}"
+          }
+        ],
         "url": {
           "raw": "{{baseUrl}}/map/nearby/u1",
           "host": [
@@ -260,7 +534,7 @@
             "u1"
           ]
         },
-        "description": "Relationships come from User Management Service — mocked with fixed data until it is reachable (see src/clients/mock-data.ts). Set USER_MANAGEMENT_URL to use the real one."
+        "description": "Relationships come from User Management (mocked in Lab 1): u1-u3 friends, u1-u5 enemies, everyone else none."
       },
       "response": []
     },
@@ -283,6 +557,10 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u6Token}}"
           }
         ],
         "body": {
@@ -299,7 +577,7 @@
             "location"
           ]
         },
-        "description": "u6 and u1 are unrelated (mock data) and now within the 6 m threshold, so the service publishes a ProximityDetected event for Notification Service. There is no broker yet, so it is logged as a JSON line — check `docker compose logs map-service`. Repeats are suppressed while the pair stays in range."
+        "description": "u6 and u1 are unrelated (mock data) and now within the 6 m threshold, so the service publishes a ProximityDetected event for Notification Service. There is no broker yet, so it is logged as a JSON line - check `docker compose logs map-service`. Repeats are suppressed while the pair stays in range."
       },
       "response": []
     },
@@ -318,7 +596,12 @@
       ],
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{u1Token}}"
+          }
+        ],
         "url": {
           "raw": "{{baseUrl}}/map/debug/all",
           "host": [
@@ -330,13 +613,13 @@
             "all"
           ]
         },
-        "description": "Dev-only telemetry endpoint — not part of the CPR communication contract. Lists every user with a currently-fresh location."
+        "description": "Dev-only telemetry endpoint - not part of the CPR communication contract. Lists every user with a currently-fresh location."
       },
       "response": []
     },
     {
       "name": "Error cases",
-      "description": "Requests that are expected to fail — they demonstrate the validation rules.",
+      "description": "Requests that are expected to fail - they demonstrate the validation and authorization rules.",
       "item": [
         {
           "name": "Stale timestamp (200, rejected_stale)",
@@ -358,6 +641,10 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u1Token}}"
               }
             ],
             "body": {
@@ -374,7 +661,7 @@
                 "location"
               ]
             },
-            "description": "Timestamp is far outside the 2-minute staleness window — accepted as a request but the location isn't stored."
+            "description": "Timestamp is far outside the 2-minute staleness window - accepted as a request but the location isn't stored."
           },
           "response": []
         },
@@ -397,11 +684,15 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u1Token}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"u1\",\n  \"lat\": 200,\n  \"lng\": 28.83,\n  \"timestamp\": \"2026-01-01T00:00:00.000Z\"\n}"
+              "raw": "{\n  \"userId\": \"u1\",\n  \"lat\": 200,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/map/location",
@@ -436,11 +727,15 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u1Token}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"2026-01-01T00:00:00.000Z\"\n}"
+              "raw": "{\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/map/location",
@@ -455,12 +750,130 @@
             "description": "userId is required."
           },
           "response": []
+        },
+        {
+          "name": "Update location without a token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u1\",\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/map/location",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            },
+            "description": "Every map endpoint needs a user token. Without one the service cannot tell who is asking, so it answers 401 per the contract."
+          },
+          "response": []
+        },
+        {
+          "name": "Update someone else's location (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u2Token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"u1\",\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/map/location",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            },
+            "description": "u2's token with u1 in the body - you can only act as yourself."
+          },
+          "response": []
+        },
+        {
+          "name": "Get someone else's nearby users (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{u2Token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/map/nearby/u1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "map",
+                "nearby",
+                "u1"
+              ]
+            },
+            "description": "u2's token asking for u1's surroundings."
+          },
+          "response": []
         }
       ]
     },
     {
       "name": "Live Location Stream (WebSocket)",
-      "description": "`WS {{baseUrl}}/map/stream` — continuous geolocation streaming.\n\nPostman's collection file format (v2.1) cannot store WebSocket requests, so this one has to be created inside the Postman app:\n\n1. New -> WebSocket Request\n2. URL: ws://localhost:8085/map/stream\n3. Connect.\n4. Send this JSON message:\n   { \"userId\": \"u1\", \"lat\": 47.02, \"lng\": 28.83, \"timestamp\": \"2026-01-01T00:00:00.000Z\" }\n5. The server acks each frame:\n   { \"event\": \"ack\", \"data\": { \"status\": \"updated\" } }\n\nSending invalid JSON gets back { \"event\": \"error\", \"data\": { \"message\": \"invalid JSON\" } }.",
+      "description": "`WS {{baseUrl}}/map/stream` - continuous geolocation streaming.\n\nPostman's collection file format (v2.1) cannot store WebSocket requests, so this one has to be created inside the Postman app:\n\n1. Run `Get Dev Token (u1)` and copy the token from its response (or from the u1Token collection variable).\n2. New -> WebSocket Request\n3. URL: ws://localhost:8085/map/stream?token=<token> - WebSocket clients can't set headers, so the token goes on the URL.\n4. Connect.\n5. Send this JSON message (userId must be the token's user):\n   { \"userId\": \"u1\", \"lat\": 47.02, \"lng\": 28.83, \"timestamp\": \"<now, ISO 8601>\" }\n6. The server acks each frame:\n   { \"event\": \"ack\", \"data\": { \"status\": \"updated\" } }\n\nA missing/invalid token, or a frame for another user, closes the connection with code 1008. Sending invalid JSON gets back { \"event\": \"error\", \"data\": { \"message\": \"invalid JSON\" } }.",
       "item": []
     }
   ]
