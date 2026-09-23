@@ -42,8 +42,8 @@ The team works in **2 languages**, split by repo/member pair:
 | `battle-service` | Battle | **Go** (e.g. Gin/Echo) | REST to create/query a match; WebSocket pushes live turn/state updates during a match | Publishes battle-end events (reward/XP/currency change, Tamagotchi transfer) for Notification/Tamagotchi/User Management to consume |
 | `tamagotchi-service` | Tamagotchi | **Go** (e.g. Gin/Echo) | REST CRUD (create/level/read stats) | Publishes Tamagotchi-updated/transferred events |
 | `notification-service` | Notification | **Go** (e.g. Gin/Echo) | REST for device registration only | Purely event-driven: consumes events from every other service and delivers via Firebase push; no service should call it synchronously for delivery |
-| `map-service` | Map | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for nearby-user queries; WebSocket/streaming for continuous geolocation updates | Emits proximity events (async, fire-and-forget) rather than blocking callers |
-| `monster-raid-service` | Monster Raid | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for raid queries/attacks (current HP/status) | Publishes raid-complete/raid-failed events for rewards |
+| `map-service` | Map | **TypeScript** (Node.js 22, Express) | REST for nearby-user queries; WebSocket/streaming for continuous geolocation updates | Emits proximity events (async, fire-and-forget) rather than blocking callers |
+| `monster-raid-service` | Monster Raid | **TypeScript** (Node.js 22, Express) | REST for raid queries/attacks (current HP/status) | Publishes raid-complete/raid-failed events for rewards |
 | `guild-service` | Guild | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for guild/membership CRUD; WebSocket for Guild Chat (real-time, low-latency) | Publishes invite/raid-join events |
 | `package-registry-service` | Package Registry | **TypeScript** (Node.js, e.g. NestJS/Express) | REST for package/moderator/stat-definition CRUD | Publishes raid-config-activated events for Monster Raid Service |
 
@@ -708,15 +708,25 @@ Success Response (200 OK):
 
 **Stream Location**
 
-`WS` `/map/stream/{userId}` — Description: Client continuously streams its geolocation.
+`WS` `/map/stream` — Description: Client continuously streams its geolocation over one connection; each frame carries the user it belongs to and gets the same staleness check as `POST /map/location`.
 
 Client message:
 
 ```json
 {
+  "userId": "string",
   "lat": "float",
   "lng": "float",
   "timestamp": "string (ISO 8601 timestamp)"
+}
+```
+
+Server reply to every frame:
+
+```json
+{
+  "event": "string (enum: ack, error)",
+  "data": { "status": "string (enum: updated, rejected_stale)" }
 }
 ```
 
@@ -762,7 +772,7 @@ Success Response (201 Created):
 
 **Join Raid**
 
-`POST` `/raids/{raidId}/join` — Description: Joins an active raid with a Tamagotchi. A raid is scoped to the guild it was started for (`guildId`, see above); this endpoint verifies the caller is a member of that guild via Guild Service's `GET /guilds/{guildId}` before accepting the join — only *eligible* guild members may contribute, per spec. `idempotencyKey` lets a client safely retry a join after a dropped connection without double-registering as a participant. Payload:
+`POST` `/raids/{raidId}/join` — Description: Joins an active raid with a Tamagotchi. A raid is scoped to the guild it was started for (`guildId`, see above); this endpoint verifies the caller is a member of that guild via Guild Service's `GET /guilds/{guildId}` before accepting the join — only *eligible* guild members may contribute, per spec. It also verifies the Tamagotchi via Tamagotchi Service's `GET /tamagotchis/{id}`: it must exist (else 404) and be owned by `userId` (else 403). Its `level` sets the damage each attack deals (level × 2). `idempotencyKey` lets a client safely retry a join after a dropped connection without double-registering as a participant. Payload:
 
 ```json
 {
@@ -1278,3 +1288,146 @@ Each submodule is an independent service repo — enter it and follow its own RE
 cd user-battle              # or tamagotchi-notification / map-raid / guild-registry
 ```
 
+
+## Running the Services
+
+Each service is an independent submodule with its own database(s) and its own
+start-up command. None of them needs another service running — dependencies
+that aren't available yet are mocked (see each service's README).
+
+### Ports
+
+Each service claims one host port so the whole system can run side by side.
+Claim a free one when you wire up your service and add it here.
+
+| Service | Port |
+|---|---|
+| User Management | — |
+| Battle | — |
+| Tamagotchi | — |
+| Notification | — |
+| Map | `8085` |
+| Monster Raid | `8086` |
+| Guild | — |
+| Package Registry | — |
+
+### Map Service
+
+**What it does:** tracks each player's latest location (Redis geospatial),
+answers "who is near me?" with distance and friend/enemy/none relationship,
+and publishes `ProximityDetected` when two unrelated players come within 6 m.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 — no Node.js and no local Redis. User Management is mocked with fixed test
+data until it's reachable.
+
+```bash
+cd map-service
+cp .env.example .env        # then set a real Redis password
+docker compose up -d --build
+curl http://localhost:8085/health
+# {"status":"ok","service":"map-service"}
+```
+
+Interactive API docs: <http://localhost:8085/docs>.
+
+### Monster Raid Service
+
+**What it does:** runs cooperative guild raids against a shared monster —
+creation (called by Package Registry on activation), joining with a
+Tamagotchi, idempotent attacks, and the reward payout on a kill or failure
+when the timer runs out.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+v2 — Compose starts PostgreSQL and Redis, and the service runs its versioned
+database migrations on start-up. Guild, Tamagotchi and User Management are
+mocked with fixed test data until they're reachable.
+
+```bash
+cd monster-raid-service
+cp .env.example .env        # then set real passwords
+docker compose up -d --build
+curl http://localhost:8086/health
+# {"status":"ok","service":"monster-raid-service"}
+```
+
+Interactive API docs: <http://localhost:8086/docs>.
+
+In both, `docker compose down` stops the stack and keeps the data;
+`docker compose down -v` also deletes it.
+
+## Running the Whole System
+
+[`docker-compose.yml`](docker-compose.yml) in this repository runs every
+published service together with the database(s) it owns, from their Docker Hub
+images — no source checkout of any service repo, just Docker.
+
+```bash
+cp .env.example .env     # then replace every change_me
+docker compose up -d
+docker compose ps        # wait until everything is healthy
+```
+
+| Command | What it does |
+|---|---|
+| `docker compose up -d` | Start everything in the background |
+| `docker compose ps` | Show what's running and whether it's healthy |
+| `docker compose logs -f <service>` | Follow one service's logs |
+| `docker compose down` | Stop everything, **keeping** all database data |
+| `docker compose down -v` | Stop everything and **delete** every database volume |
+
+**Credentials** come only from `.env`, which is git-ignored.
+[`.env.example`](.env.example) holds placeholders and is what gets committed —
+never put a real password in it. Variables are prefixed with their service
+(`MAP_…`, `MONSTER_RAID_…`) so entries can't collide.
+
+**Adding your service:** follow the conventions at the top of
+`docker-compose.yml` (service/database/volume names, env prefix, a pinned
+published image — never a `build:` context), claim a port in the table above,
+and add your variables to `.env.example` with placeholder values only.
+
+## API Collections
+
+[`collections/`](collections) holds a Postman collection per service, covering
+every endpoint including the failure paths. This is how you check a service
+works without cloning its repo.
+
+| Collection | Service | Targets |
+|---|---|---|
+| [`map-service`](collections/map-service.postman_collection.json) | Map | `http://localhost:8085` |
+| [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid | `http://localhost:8086` |
+
+Start the service, then in Postman use *File → Import*, select the `.json` and
+press **Run** — each collection runs top to bottom as one scenario, capturing
+ids into collection variables as it goes. They also run headlessly:
+
+```bash
+npx newman run collections/map-service.postman_collection.json
+npx newman run collections/monster-raid-service.postman_collection.json
+```
+
+Adding yours: export in Postman **v2.1** format, name it
+`<service-name>.postman_collection.json`, and add a row to the table.
+
+## Docker Hub Images
+
+Every service is published as a **public** Docker Hub image, tagged with its
+version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
+
+| Service | Image | Needs | Port |
+|---|---|---|---|
+| Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
+| Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
+
+**Requirements for running them:**
+
+- Docker with Compose v2 (`docker compose version`) — no language toolchain or
+  local database needed.
+- A `.env` created from [`.env.example`](.env.example) with real values for
+  every `change_me`. Passwords are embedded in connection URLs, so use URL-safe
+  characters (`openssl rand -hex 16`).
+- The host ports above free on your machine (override with the `*_PORT`
+  variables if not).
+
+Each image exposes `GET /health` and carries a Docker `HEALTHCHECK`, so
+`docker compose ps` reports it as `healthy` once it's serving.
