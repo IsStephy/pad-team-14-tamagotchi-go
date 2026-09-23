@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
 
   user-management-service:
-    image: pavelcium23/user-management-service:v1.0.0
+    image: pshasuleiman/user-management-service:v1.0.0
     depends_on:
       user-management-service-db:
         condition: service_healthy
@@ -81,7 +81,7 @@ services:
     restart: unless-stopped
 
   battle-service:
-    image: pavelcium23/battle-service:v1.0.0
+    image: pshasuleiman/battle-service:v1.0.0
     depends_on:
       battle-service-db:
         condition: service_healthy
