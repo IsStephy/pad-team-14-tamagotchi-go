@@ -1,0 +1,113 @@
+# Shared stack for Tamagotchi Go (Team 14).
+#
+# Runs the published services, each with the database(s) it owns, straight from
+# their Docker Hub images — no source checkout of any service repo needed.
+#
+#   cp .env.example .env     # then replace every change_me
+#   docker compose up -d
+#
+# Adding your service — conventions, so entries don't collide:
+#
+#   service name   the repo name             e.g. guild-service
+#   database name  <service>-db              e.g. guild-service-db
+#   volume name    <service>-db-data         e.g. guild-service-db-data
+#   env prefix     <SERVICE>_                e.g. GUILD_DB_PASSWORD
+#   image          your published image pinned to a version tag — never a
+#                  build: context, never :latest
+#
+# Databases publish no host port: services reach them over the Compose network
+# by service name. Claim your host port in the README's port table and add your
+# variables to .env.example with placeholder values only.
+
+name: tamagotchi-go
+
+services:
+
+  # ---------------------------------------------------------- TypeScript / map
+  # Redis (geospatial) with append-only persistence.
+  map-service-db:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - map-service-db-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  map-service:
+    image: dackohn/map-service:v1.0.0
+    depends_on:
+      map-service-db:
+        condition: service_healthy
+    environment:
+      PORT: 8085
+      REDIS_URL: redis://:${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}@map-service-db:6379
+      # Empty = built-in mock of User Management (fixed test data).
+      USER_MANAGEMENT_URL: ${MAP_USER_MANAGEMENT_URL:-}
+    ports:
+      - "${MAP_PORT:-8085}:8085"
+    restart: unless-stopped
+
+  # --------------------------------------------------- TypeScript / monster raid
+  # PostgreSQL for raid records; the service runs its migrations on start-up.
+  monster-raid-service-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${MONSTER_RAID_DB_NAME:-monster_raid_db}
+      POSTGRES_USER: ${MONSTER_RAID_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - monster-raid-service-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Redis for live monster HP and idempotency keys.
+  monster-raid-service-cache:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - monster-raid-service-cache-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  monster-raid-service:
+    image: dackohn/monster-raid-service:v1.0.0
+    depends_on:
+      monster-raid-service-db:
+        condition: service_healthy
+      monster-raid-service-cache:
+        condition: service_healthy
+    environment:
+      PORT: 8086
+      DATABASE_URL: postgresql://${MONSTER_RAID_DB_USER}:${MONSTER_RAID_DB_PASSWORD}@monster-raid-service-db:5432/${MONSTER_RAID_DB_NAME:-monster_raid_db}
+      REDIS_URL: redis://:${MONSTER_RAID_REDIS_PASSWORD}@monster-raid-service-cache:6379
+      # Empty = built-in mocks with fixed test data. Point them at the real
+      # services once those are in this file, e.g. http://guild-service:<port>.
+      GUILD_SERVICE_URL: ${MONSTER_RAID_GUILD_SERVICE_URL:-}
+      TAMAGOTCHI_SERVICE_URL: ${MONSTER_RAID_TAMAGOTCHI_SERVICE_URL:-}
+      USER_MANAGEMENT_URL: ${MONSTER_RAID_USER_MANAGEMENT_URL:-}
+    ports:
+      - "${MONSTER_RAID_PORT:-8086}:8086"
+    restart: unless-stopped
+
+# Named volumes keep each database's data across restarts and rebuilds.
+# `docker compose down` keeps them; `docker compose down -v` deletes them.
+volumes:
+  map-service-db-data:
+  monster-raid-service-db-data:
+  monster-raid-service-cache-data:
