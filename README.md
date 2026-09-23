@@ -1243,6 +1243,25 @@ Success Response (200 OK):
 
 ![Architecture Diagram](docs/images/architecture.png)
 
+Every service, the database it owns, and the calls between them.
+
+| | |
+|---|---|
+| **Solid arrow** | synchronous REST/WebSocket call, pointing at the service that owns the data |
+| **Dotted arrow** | asynchronous event |
+| **Colour** | which tier a service belongs to |
+
+The three tiers are the structure worth remembering:
+
+1. **Gameplay** — what a client app talks to directly.
+2. **Game content** — the rules and definitions gameplay reads.
+3. **Platform** — identity, currency and notifications, which everything leans on.
+
+Each service names its own database. No service reads another's store
+directly; that is what the arrows are for. Notification never calls anyone —
+it consumes events and decides what reaches the player.
+
+
 ## Contributing
 
 Workflow rules for Team 14 — Tamagotchi Go (CPR + all submodules follow the same rules).
