@@ -112,6 +112,77 @@ services:
       - "${BATTLE_PORT:-8082}:8082"
 
 
+  # ------------------------------------------------------- Go / tamagotchi
+  # PostgreSQL for Tamagotchis; the service creates its schema on start-up.
+
+  tamagotchi-service-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
+      POSTGRES_USER: ${TAMAGOTCHI_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - tamagotchi-service-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  tamagotchi-service:
+    image: dan1el50/tamagotchi-service:v2
+    depends_on:
+      tamagotchi-service-db:
+        condition: service_healthy
+    environment:
+      PORT: 8083
+      APP_ENV: production
+      DATABASE_URL: postgres://${TAMAGOTCHI_DB_USER}:${TAMAGOTCHI_DB_PASSWORD}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}?sslmode=disable
+    ports:
+      - "${TAMAGOTCHI_PORT:-8083}:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8083/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------------------------------------------------- Go / notification
+  # Redis with append-only persistence; notifications expire after 30 days.
+
+  notification-service-db:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - notification-service-db-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  notification-service:
+    image: dan1el50/notification-service:v2
+    depends_on:
+      notification-service-db:
+        condition: service_healthy
+    environment:
+      PORT: 8084
+      APP_ENV: production
+      REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
+    ports:
+      - "${NOTIFICATION_PORT:-8084}:8084"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8084/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # ---------------------------------------------------------- TypeScript / map
   # Redis (geospatial) with append-only persistence.
   map-service-db:
@@ -289,6 +360,8 @@ services:
 volumes:
   user-management-service-db-data:
   battle-service-db-data:
+  tamagotchi-service-db-data:
+  notification-service-db-data:
   map-service-db-data:
   monster-raid-service-db-data:
   monster-raid-service-cache-data:

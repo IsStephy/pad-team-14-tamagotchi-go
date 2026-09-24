@@ -2,14 +2,14 @@
   "info": {
     "_postman_id": "0525e6ee-5e99-4f34-be06-40d857f9fbab",
     "name": "notification-service",
-    "description": "`baseUrl` defaults to http://localhost:8080; `token` is a demo JWT accepted by the service's mock auth (see README, Authentication) and `userId` an arbitrary well-formed UUID.\n\nHealth Check and Register Device work standalone. List Notifications and Mark Notification as Read do NOT create their own data: the contract has no public \"create\" endpoint by design (see README, Endpoints) - notifications only exist once something publishes an event on the notification-events Redis channel. Before running those two, publish a test event yourself first (see README, Events Consumed, for the exact redis-cli command), then set `notificationId` to the id it returns from List Notifications.",
+    "description": "`baseUrl` defaults to http://localhost:8084; `token` is a demo JWT accepted by the service's mock auth (see README, Authentication) and `userId` an arbitrary well-formed UUID.\n\nHealth Check and Register Device work standalone. List Notifications and Mark Notification as Read do NOT create their own data: the contract has no public \"create\" endpoint by design (see README, Endpoints) - notifications only exist once something publishes an event on the notification-events Redis channel. Before running those two, publish a test event yourself first (see README, Events Consumed, for the exact redis-cli command), then set `notificationId` to the id it returns from List Notifications.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "38273956"
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8080",
+      "value": "http://localhost:8084",
       "type": "string"
     },
     {
