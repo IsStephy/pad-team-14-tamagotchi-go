@@ -1349,12 +1349,48 @@ Claim a free one when you wire up your service and add it here.
 |---|---|
 | User Management | `8081` |
 | Battle | `8082` |
-| Tamagotchi | — |
-| Notification | — |
+| Tamagotchi | `8083` |
+| Notification | `8084` |
 | Map | `8085` |
 | Monster Raid | `8086` |
 | Guild | `8087` |
 | Package Registry | `8088` |
+
+### Tamagotchi Service
+
+Go, PostgreSQL 16. Runs on `8083` in the shared stack. The service creates its
+own schema on start-up.
+
+```bash
+docker compose up -d tamagotchi-service
+curl http://localhost:8083/health
+# {"service":"tamagotchi-service","status":"ok"}
+```
+
+Every endpoint except `GET /health` and `GET /types/advantages` needs an
+`Authorization: Bearer <jwt>` header. For now the token is only checked for
+shape (three parts, a `sub` claim, not expired) — the signature is not
+verified. Owner ids must be valid, non-nil UUIDs and stat keys must be one of
+`hunger`, `tiredness`, `happiness`, `energy`, `cleanliness`, standing in for
+User Management and Package Registry until those are wired in.
+
+### Notification Service
+
+Go, Redis 7. Runs on `8084` in the shared stack. Notifications are created by events published to the Redis
+Pub/Sub channel `notification-events` (there is no public create endpoint) and
+kept for 30 days.
+
+```bash
+docker compose up -d notification-service
+curl http://localhost:8084/health
+# {"service":"notification-service","status":"ok"}
+
+# Simulate an event (Redis password is NOTIFICATION_REDIS_PASSWORD in .env):
+docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning PUBLISH notification-events "{\"type\":\"BattleEnded\",\"userId\":\"11111111-1111-1111-1111-111111111111\",\"payload\":{\"result\":\"won\"}}"'
+```
+
+Its endpoints take the same mock `Authorization: Bearer <jwt>` header as
+above; only `GET /health` is open.
 
 ### Map Service
 
@@ -1599,6 +1635,8 @@ works without cloning its repo.
 |---|---|---|
 | [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management | `http://localhost:8081` |
 | [`battle-service`](collections/battle-service.postman_collection.json) | Battle | `http://localhost:8082` |
+| [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi | `http://localhost:8083` |
+| [`notification-service`](collections/notification-service.postman_collection.json) | Notification | `http://localhost:8084` |
 | [`map-service`](collections/map-service.postman_collection.json) | Map | `http://localhost:8085` |
 | [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid | `http://localhost:8086` |
 | [`guild-service`](collections/guild-service.postman_collection.json) | Guild | `http://localhost:8087` |
@@ -1637,6 +1675,8 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 |---|---|---|---|
 | User Management | [`pshasuleiman/user-management-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
 | Battle | [`pshasuleiman/battle-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
+| Tamagotchi | [`dan1el50/tamagotchi-service:v2`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
+| Notification | [`dan1el50/notification-service:v2`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
 | Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
 | Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
 | Guild | [`isstephy1/guild-service:v1.2.0`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |

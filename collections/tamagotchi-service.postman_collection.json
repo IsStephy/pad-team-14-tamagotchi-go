@@ -2,14 +2,14 @@
   "info": {
     "_postman_id": "1b240c66-06bb-443f-9fef-7f795416b7dc",
     "name": "tamagotchi-service",
-    "description": "Runs the full CRUD/XP/ownership flow top to bottom against a running tamagotchi-service. `baseUrl` defaults to http://localhost:8080; `token` is a demo JWT accepted by the service's mock auth (see README, Authentication) and `ownerId` an arbitrary well-formed UUID. `tamagotchiId`/`secondaryTamagotchiId` are captured automatically as the run progresses.",
+    "description": "Runs the full CRUD/XP/ownership flow top to bottom against a running tamagotchi-service. `baseUrl` defaults to http://localhost:8083; `token` is a demo JWT accepted by the service's mock auth (see README, Authentication) and `ownerId` an arbitrary well-formed UUID. `tamagotchiId`/`secondaryTamagotchiId` are captured automatically as the run progresses.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "38273956"
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8080",
+      "value": "http://localhost:8083",
       "type": "string"
     },
     {
