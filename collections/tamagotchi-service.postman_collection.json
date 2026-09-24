@@ -1,0 +1,329 @@
+{
+  "info": {
+    "_postman_id": "1b240c66-06bb-443f-9fef-7f795416b7dc",
+    "name": "tamagotchi-service",
+    "description": "Runs the full CRUD/XP/ownership flow top to bottom against a running tamagotchi-service. `baseUrl` defaults to http://localhost:8080; `token` is a demo JWT accepted by the service's mock auth (see README, Authentication) and `ownerId` an arbitrary well-formed UUID. `tamagotchiId`/`secondaryTamagotchiId` are captured automatically as the run progresses.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "38273956"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxMTExMTExMS0xMTExLTExMTEtMTExMS0xMTExMTExMTExMTEiLCJleHAiOjQxMDI0NDQ4MDB9.",
+      "type": "string"
+    },
+    {
+      "key": "ownerId",
+      "value": "11111111-1111-1111-1111-111111111111",
+      "type": "string"
+    },
+    {
+      "key": "tamagotchiId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "secondaryTamagotchiId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Type Advantages",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/types/advantages",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "types",
+            "advantages"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Tamagotchi",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();\r\npm.collectionVariables.set(\"tamagotchiId\", body.tamagotchiId);\r\npm.test(\"Status code is 201\", () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"ownerId\": \"{{ownerId}}\",\r\n  \"type\": \"Flame\",\r\n  \"packageId\": \"pkg-1\",\r\n  \"name\": \"Ignis\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/tamagotchis",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tamagotchis"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Tamagotchi (secondary)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();\r\npm.collectionVariables.set(\"secondaryTamagotchiId\", body.tamagotchiId);\r\npm.test(\"Status code is 201\", () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"ownerId\": \"{{ownerId}}\",\r\n  \"type\": \"Water\",\r\n  \"packageId\": \"pkg-1\",\r\n  \"name\": \"Aqua\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/tamagotchis",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tamagotchis"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Tamagotchi",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tamagotchis",
+            "{{tamagotchiId}}"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "List Tamagotchis by Owner",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{ownerId}}/tamagotchis",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{ownerId}}",
+            "tamagotchis"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Update Stats",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"statUpdates\": {\r\n    \"hunger\": 80,\r\n    \"happiness\": 90\r\n  }\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/stats",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tamagotchis",
+            "{{tamagotchiId}}",
+            "stats"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Add XP",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"xpAmount\": 150\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/xp",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tamagotchis",
+            "{{tamagotchiId}}",
+            "xp"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Set Primary Tamagotchi",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/users/{{ownerId}}/tamagotchis/{{secondaryTamagotchiId}}/set-primary",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{ownerId}}",
+            "tamagotchis",
+            "{{secondaryTamagotchiId}}",
+            "set-primary"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Transfer Owner",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"newOwnerId\": \"22222222-2222-2222-2222-222222222222\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/transfer-owner",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tamagotchis",
+            "{{tamagotchiId}}",
+            "transfer-owner"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}
