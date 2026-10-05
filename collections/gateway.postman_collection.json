@@ -1,0 +1,1396 @@
+{
+  "info": {
+    "name": "Gateway (Team 14) - Guild and Package Registry",
+    "description": "The API gateway, and Guild Service and Package Registry Service reached through it.\n\nOwner: IsStephy. Gateway port: 8080.\n\nNeeds the shared stack with the gateway, User Management, Guild and Package Registry running, and the same GATEWAY_KEY on the gateway and both services. Players register and log in through the gateway (User Management issues real RS256 tokens); the gateway verifies each token, strips Authorization and forwards the verified user as X-User-Id.\n\nRe-runnable: usernames carry {{$timestamp}}.\n\nPackage Registry's admin-only success paths are not here: admins are seeded by user id (PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID), and User Management issues fresh UUIDs per run. They are covered by collections/package-registry-service.postman_collection.json against the service on its own.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "password",
+      "value": "Gateway-test-123"
+    },
+    {
+      "key": "monsterRaidServiceKey",
+      "value": "change_me"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "ownerId",
+      "value": ""
+    },
+    {
+      "key": "ownerToken",
+      "value": ""
+    },
+    {
+      "key": "memberId",
+      "value": ""
+    },
+    {
+      "key": "memberToken",
+      "value": ""
+    },
+    {
+      "key": "inviteeId",
+      "value": ""
+    },
+    {
+      "key": "inviteeToken",
+      "value": ""
+    },
+    {
+      "key": "guildId",
+      "value": ""
+    },
+    {
+      "key": "chatUrl",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Gateway",
+      "item": [
+        {
+          "name": "Gateway Health",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fresh id per run keeps usernames unique, so the collection is re-runnable.",
+                  "pm.collectionVariables.set('runId', pm.variables.replaceIn('{{$timestamp}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('it is the gateway', function () { pm.expect(pm.response.json().service).to.eql('gateway'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "The gateway's own liveness check."
+          },
+          "response": []
+        },
+        {
+          "name": "Guild and Package Registry are reachable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const services = pm.response.json().services;",
+                  "pm.test('guild-service is up behind the gateway', function () { pm.expect(services['guild-service'].status).to.eql('ok'); });",
+                  "pm.test('package-registry-service is up behind the gateway', function () { pm.expect(services['package-registry-service'].status).to.eql('ok'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/health/services",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health",
+                "services"
+              ]
+            },
+            "description": "The gateway polls every service's /health. This collection only checks Guild and Package Registry, so the status code (200, or 503 while another service is down) is not asserted."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Log in through the gateway (User Management)",
+      "item": [
+        {
+          "name": "Register (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('ownerId', pm.response.json().userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "Creates a fresh owner account in User Management, through the gateway (a public route). The username carries the run id, so the collection can be re-run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"owner_{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"owner_{{runId}}@example.com\",\n  \"packageId\": \"gateway-collection\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('token belongs to the owner', function () { pm.expect(body.userId).to.eql(pm.collectionVariables.get('ownerId')); });",
+                  "pm.collectionVariables.set('ownerToken', body.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "A real RS256 user token from User Management. The gateway verifies it against User Management's public keys on every request below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"owner_{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (member)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('memberId', pm.response.json().userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "Creates a fresh member account in User Management, through the gateway (a public route). The username carries the run id, so the collection can be re-run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"member_{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"member_{{runId}}@example.com\",\n  \"packageId\": \"gateway-collection\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (member)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('token belongs to the member', function () { pm.expect(body.userId).to.eql(pm.collectionVariables.get('memberId')); });",
+                  "pm.collectionVariables.set('memberToken', body.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "A real RS256 user token from User Management. The gateway verifies it against User Management's public keys on every request below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"member_{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (invitee)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('inviteeId', pm.response.json().userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "Creates a fresh invitee account in User Management, through the gateway (a public route). The username carries the run id, so the collection can be re-run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"invitee_{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"invitee_{{runId}}@example.com\",\n  \"packageId\": \"gateway-collection\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (invitee)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('token belongs to the invitee', function () { pm.expect(body.userId).to.eql(pm.collectionVariables.get('inviteeId')); });",
+                  "pm.collectionVariables.set('inviteeToken', body.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "A real RS256 user token from User Management. The gateway verifies it against User Management's public keys on every request below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"invitee_{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Authorization at the gateway",
+      "item": [
+        {
+          "name": "No token - stopped at the gateway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error mentions \"missing bearer token\"', function () { pm.expect(pm.response.json().error).to.include('missing bearer token'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/search?query=owls",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "owls"
+                }
+              ]
+            },
+            "description": "The gateway rejects the request itself; it never reaches Guild Service."
+          },
+          "response": []
+        },
+        {
+          "name": "Invalid token - stopped at the gateway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error mentions \"invalid token\"', function () { pm.expect(pm.response.json().error).to.include('invalid token'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer not.a.real.token"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/search?query=owls",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "owls"
+                }
+              ]
+            },
+            "description": "A token that does not verify against User Management's keys."
+          },
+          "response": []
+        },
+        {
+          "name": "Forged X-User-Id is ignored",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('the service saw the real caller (the member), not the forged owner', function () {",
+                  "    pm.expect(pm.response.json().error).to.include(pm.collectionVariables.get('memberId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
+              },
+              {
+                "key": "X-Gateway-Key",
+                "value": "guessed-key"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds"
+              ]
+            },
+            "description": "The member sends their own token plus forged identity headers claiming to be the owner. The gateway drops client-sent X-User-Id / X-Gateway-Key and sets its own, so Guild Service sees the member and refuses to create a guild owned by someone else.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Forged {{runId}}\",\n  \"ownerId\": \"{{ownerId}}\"\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Guild Service through the gateway",
+      "item": [
+        {
+          "name": "Create Guild",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('guildId', pm.response.json().guildId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds"
+              ]
+            },
+            "description": "ownerId must be the caller - the gateway's X-User-Id.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Gateway Guild {{runId}}\",\n  \"ownerId\": \"{{ownerId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search Guilds",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('finds the new guild', function () {",
+                  "    const ids = pm.response.json().map(g => g.guildId);",
+                  "    pm.expect(ids).to.include(pm.collectionVariables.get('guildId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/search?query={{runId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "{{runId}}"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get Guild",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the owner is a member with role owner', function () {",
+                  "    const owner = pm.response.json().members.find(m => m.userId === pm.collectionVariables.get('ownerId'));",
+                  "    pm.expect(owner.role).to.eql('owner');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Join Guild (member)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('joined', function () { pm.expect(pm.response.json().status).to.eql('joined'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}/join",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "join"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{memberId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Invite a member (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}/members",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members"
+              ]
+            },
+            "description": "Owners and officers may invite; invitedBy must be the caller.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{inviteeId}}\",\n  \"invitedBy\": \"{{ownerId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Promote member to officer (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('now an officer', function () { pm.expect(pm.response.json().role).to.eql('officer'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}/members/{{memberId}}/role",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members",
+                "{{memberId}}",
+                "role"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"officer\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Officer cannot change roles",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}/members/{{inviteeId}}/role",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members",
+                "{{inviteeId}}",
+                "role"
+              ]
+            },
+            "description": "Only the owner may change roles - checked by Guild Service against its own data.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"officer\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List my guilds",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('routed to Guild Service, not User Management', function () {",
+                  "    const ids = pm.response.json().map(g => g.guildId);",
+                  "    pm.expect(ids).to.include(pm.collectionVariables.get('guildId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{memberId}}/guilds",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{memberId}}",
+                "guilds"
+              ]
+            },
+            "description": "Every other /users/... path belongs to User Management; the gateway routes /users/{id}/guilds to Guild Service."
+          },
+          "response": []
+        },
+        {
+          "name": "Monster Raid reads the guild with its service key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('sees the members', function () { pm.expect(pm.response.json().members).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": "No player token: Monster Raid Service checks raid joiners' membership as itself. The gateway passes X-Service-Key on and adds its own key; Guild Service accepts Monster Raid's key on this one endpoint. Set monsterRaidServiceKey to SERVICE_KEY_MONSTER_RAID from .env."
+          },
+          "response": []
+        },
+        {
+          "name": "A wrong service key is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Service-Key",
+                "value": "not-the-real-key"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": "The gateway forwards it - service keys are checked by the service that owns the endpoint - and Guild Service refuses it."
+          },
+          "response": []
+        },
+        {
+          "name": "Remove the invitee (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('removed', function () { pm.expect(pm.response.json().status).to.eql('removed'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}/members/{{inviteeId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "members",
+                "{{inviteeId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Guild chat (WebSocket negotiation)",
+      "item": [
+        {
+          "name": "Negotiate the chat socket",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('a direct ws:// URL to the chat, carrying a ticket', function () {",
+                  "    pm.expect(body.wsUrl).to.match(/^wss?:\\/\\//);",
+                  "    pm.expect(body.wsUrl).to.include('/guilds/' + pm.collectionVariables.get('guildId') + '/chat');",
+                  "    pm.expect(body.wsUrl).to.include('ticket=');",
+                  "});",
+                  "pm.test('the player token is not in the URL', function () {",
+                  "    pm.expect(body.wsUrl).to.not.include(pm.collectionVariables.get('ownerToken'));",
+                  "});",
+                  "pm.collectionVariables.set('chatUrl', body.wsUrl);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/ws/negotiate?path=/guilds/{{guildId}}/chat",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "ws",
+                "negotiate"
+              ],
+              "query": [
+                {
+                  "key": "path",
+                  "value": "/guilds/{{guildId}}/chat"
+                }
+              ]
+            },
+            "description": "The gateway checks the token and returns guild-service's own WebSocket URL with a single-use ticket (valid 60 s). Open {{chatUrl}} in a Postman WebSocket tab and send {\"authorId\": \"<ownerId>\", \"message\": \"hi\"}: the socket goes to guild-service directly, not through the gateway. A ticket opens one socket only - negotiate again for another."
+          },
+          "response": []
+        },
+        {
+          "name": "Negotiate without a token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/ws/negotiate?path=/guilds/{{guildId}}/chat",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "ws",
+                "negotiate"
+              ],
+              "query": [
+                {
+                  "key": "path",
+                  "value": "/guilds/{{guildId}}/chat"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Chat over plain HTTP is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('error mentions \"/ws/negotiate\"', function () { pm.expect(pm.response.json().error).to.include('/ws/negotiate'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}/chat",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}",
+                "chat"
+              ]
+            },
+            "description": "The gateway never relays the socket; it points the caller at /ws/negotiate."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Package Registry through the gateway",
+      "item": [
+        {
+          "name": "List packages - public, no token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('an array', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/packages",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
+            "description": "Public: the gateway forwards it without asking for a token."
+          },
+          "response": []
+        },
+        {
+          "name": "Get an unknown package - public, no token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/packages/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": "Also public; the 404 comes from Package Registry itself, proving the request got there."
+          },
+          "response": []
+        },
+        {
+          "name": "Register yourself to a package",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/packages/00000000-0000-0000-0000-000000000000/users",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages",
+                "00000000-0000-0000-0000-000000000000",
+                "users"
+              ]
+            },
+            "description": "The identity check passes (userId is the caller); the package does not exist, so 404.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{memberId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register someone else - refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/packages/00000000-0000-0000-0000-000000000000/users",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages",
+                "00000000-0000-0000-0000-000000000000",
+                "users"
+              ]
+            },
+            "description": "userId must be the caller, as identified by the gateway.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{ownerId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create a package - admins only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('error mentions \"admin\"', function () { pm.expect(pm.response.json().error).to.include('admin'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/packages",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"gateway-pkg-{{runId}}\",\n  \"version\": \"1.0.0\",\n  \"description\": \"test\",\n  \"moderatorIds\": [\n    \"{{memberId}}\"\n  ]\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create a raid config - admins only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/raid-configs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raid-configs"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Dragon\",\n  \"maxHp\": 1000,\n  \"duration\": 600,\n  \"rewards\": {\n    \"coins\": 10\n  },\n  \"createdByAdminId\": \"{{memberId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Grant admin - admins only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/admins",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "admins"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{memberId}}\"\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
