@@ -152,7 +152,7 @@ Endpoints marked **Service** below are internal: only the listed callers may use
 | | `POST /guilds/{guildId}/members` | Player + role: owner or officer (`invitedBy` = `sub`) |
 | | `DELETE /guilds/{guildId}/members/{userId}` | Player (self) to leave; Player + role: owner or officer to remove others |
 | | `GET /users/{userId}/guilds` | Player |
-| | `GET /guilds/{guildId}` | Player |
+| | `GET /guilds/{guildId}` | Player, or **Service** — Monster Raid (checks raid joiners' membership) |
 | | `PATCH /guilds/{guildId}/members/{userId}/role` | Player + role: owner |
 | | `WS /guilds/{guildId}/chat` | Player + role: member of the guild (`authorId` = `sub`) |
 | Package Registry | `GET /packages` | Public — needed before registering |
@@ -981,7 +981,7 @@ Success Response (200 OK):
 
 **Get Guild**
 
-`GET` `/guilds/{guildId}` — Description: Retrieves a guild's details and members.
+`GET` `/guilds/{guildId}` — Description: Retrieves a guild's details and members. Called by players, and by Monster Raid Service with its own `X-Service-Key` (through the gateway) to check that a raid joiner is a member of the raid's guild — it no longer has the player's token to forward.
 
 Success Response (200 OK):
 
@@ -1355,6 +1355,7 @@ Claim a free one when you wire up your service and add it here.
 | Monster Raid | `8086` |
 | Guild | `8087` |
 | Package Registry | `8088` |
+| Gateway | `8080` |
 
 ### Tamagotchi Service
 
@@ -1525,7 +1526,20 @@ curl http://localhost:8087/health
 ```
 
 Interactive API docs: <http://localhost:8087/docs>. Guild chat is a WebSocket
-at `ws://localhost:8087/guilds/{guildId}/chat` — see the service README.
+at `ws://localhost:8087/guilds/{guildId}/chat`; clients get its URL with a
+single-use ticket from the gateway's `GET /ws/negotiate?path=/guilds/{guildId}/chat`
+and then connect to the service directly — see the service README.
+
+**Gateway routes:** `/guilds/**` and `/users/{userId}/guilds/**` → Guild;
+`WS /guilds/{guildId}/chat` is negotiated, never proxied.
+
+**Through the gateway only.** Every request needs the gateway's
+`X-Gateway-Key` (`401` otherwise, except `/health` and `/docs`); the player is
+the gateway's `X-User-Id`, and the service never verifies tokens.
+`GET /guilds/{guildId}` also accepts Monster Raid's `X-Service-Key`
+(`SERVICE_KEY_MONSTER_RAID`). Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s),
+`503` + `Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, chat
+sockets capped at `MAX_WS_CONNECTIONS` (500).
 
 ### Package Registry Service
 
@@ -1536,8 +1550,9 @@ deactivate and cancel.
 
 **Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
 v2 — Compose starts PostgreSQL, and the service runs its versioned database
-migrations on start-up. Monster Raid and User Management are mocked with fixed
-test data until they're reachable.
+migrations on start-up. User Management is mocked with fixed test data.
+Monster Raid's `POST /raids` is called for real when `MONSTER_RAID_URL` is set
+(the gateway, in the shared stack) and mocked otherwise.
 
 ```bash
 cd package-registry-service
@@ -1548,6 +1563,17 @@ curl http://localhost:8088/health
 ```
 
 Interactive API docs: <http://localhost:8088/docs>.
+
+**Gateway routes:** `/packages/**`, `/admins/**` and `/raid-configs/**` →
+Package Registry (`GET /packages` and `GET /packages/{packageId}` need no
+token). No WebSocket endpoints.
+
+**Through the gateway only.** Every request needs the gateway's
+`X-Gateway-Key` (`401` otherwise, except `/health` and `/docs`) — the public
+package reads too; the player is the gateway's `X-User-Id`, and the service
+never verifies tokens. Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s), `503` +
+`Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, `502` if Monster
+Raid does not answer within `MONSTER_RAID_TIMEOUT_MS` (5 s).
 
 ## Running the Whole System
 
@@ -1641,6 +1667,7 @@ works without cloning its repo.
 | [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid | `http://localhost:8086` |
 | [`guild-service`](collections/guild-service.postman_collection.json) | Guild | `http://localhost:8087` |
 | [`package-registry-service`](collections/package-registry-service.postman_collection.json) | Package Registry | `http://localhost:8088` |
+| [`gateway`](collections/gateway.postman_collection.json) | Gateway, with Guild and Package Registry behind it | `http://localhost:8080` |
 
 Start the service, then in Postman use *File → Import*, select the `.json` and
 press **Run** — each collection runs top to bottom as one scenario, capturing
@@ -1653,7 +1680,18 @@ npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<key>
 npx newman run collections/guild-service.postman_collection.json
 npx newman run collections/package-registry-service.postman_collection.json
+npx newman run collections/gateway.postman_collection.json
 ```
+
+The **gateway** collection exercises the system the way a client app does:
+players register and log in through the gateway (real User Management tokens),
+the gateway checks every token, and Guild and Package Registry are reached
+only through it. It covers the gateway's own endpoints, its authorization
+(missing, invalid and forged credentials), WebSocket negotiation for guild
+chat, and routing to both services. It needs the gateway, User Management,
+Guild and Package Registry running with the same `GATEWAY_KEY`. Package
+Registry's admin-only success paths stay in that service's own collection:
+admins are seeded by user id, and User Management issues new ids on every run.
 
 Collections for services that need a user token start with `Get Dev Token`
 requests, which mint test tokens while the service's `USER_MANAGEMENT_URL` is
@@ -1662,6 +1700,12 @@ Monster Raid's `Create Raid` is internal and authenticates with Package
 Registry's service key instead: pass `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY`
 from your `.env` as `packageRegistryServiceKey`, as above, or set that
 collection variable in Postman.
+
+The **guild** and **package-registry** collections call their service
+directly, so they play the gateway: they send `X-Gateway-Key` and `X-User-Id`
+themselves instead of minting tokens. Set their `gatewayKey` variable to the
+`GATEWAY_KEY` in your `.env` (the default, `change_me`, matches
+`.env.example`), e.g. `npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<key>`.
 
 Adding yours: export in Postman **v2.1** format, name it
 `<service-name>.postman_collection.json`, and add a row to the table.
