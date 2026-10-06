@@ -1816,8 +1816,8 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 
 | Service | Image | Needs | Port |
 |---|---|---|---|
-| User Management | [`pshasuleiman/user-management-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
-| Battle | [`pshasuleiman/battle-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
+| User Management | [`pshasuleiman/user-management-service:v2.0.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
+| Battle | [`pshasuleiman/battle-service:v2.0.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
 | Tamagotchi | [`dan1el50/tamagotchi-service:v2.0.1`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
 | Notification | [`dan1el50/notification-service:v2.0.1`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
 | Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
