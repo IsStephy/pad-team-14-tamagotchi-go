@@ -200,7 +200,7 @@ services:
     restart: unless-stopped
 
   map-service:
-    image: dackohn/map-service:v2.0.0
+    image: dackohn/map-service:v2
     depends_on:
       map-service-db:
         condition: service_healthy
@@ -258,7 +258,7 @@ services:
     restart: unless-stopped
 
   monster-raid-service:
-    image: dackohn/monster-raid-service:v2.0.0
+    image: dackohn/monster-raid-service:v2
     depends_on:
       monster-raid-service-db:
         condition: service_healthy
