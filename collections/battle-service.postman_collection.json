@@ -148,7 +148,7 @@
         "description": "Starts a match. The top-level Tamagotchi fields are player one's loadout (the shared contract shape); `opponent` is player two's. Player one moves first.",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"fire\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"power_snack\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
+          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"Flame\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"Water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"power_snack\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"Nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -207,7 +207,7 @@
         "description": "Combat types are validated at creation, so a typo fails loudly instead of silently changing the maths.",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"plasma\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"power_snack\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
+          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"plasma\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"Water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"power_snack\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"Nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -231,7 +231,7 @@
       ]
     },
     {
-      "name": "Create a battle with an unknown boost (rejected)",
+      "name": "Create a battle with an unknown boost (ignored)",
       "request": {
         "method": "POST",
         "header": [
@@ -252,7 +252,57 @@
         "description": "Boost ids are checked against the catalogue this service knows how to apply.",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"fire\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"mega_potion\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
+          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"Flame\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"Water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"mega_potion\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"Nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 201 - an unknown boost is accepted\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "pm.test(\"the unknown boost is carried but has no effect\", function () {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.player1.loadout.boosts).to.include(\"mega_potion\");",
+              "    pm.expect(body.player1.packageBonus).to.eql(0);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create a battle with a duplicate boost (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/battles",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "battles"
+          ]
+        },
+        "description": "Boost ids are checked against the catalogue this service knows how to apply.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"Flame\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"Water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"power_snack\",\n    \"power_snack\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"Nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -269,6 +319,9 @@
             "exec": [
               "pm.test(\"responds 400\", function () {",
               "    pm.response.to.have.status(400);",
+              "});",
+              "pm.test(\"names the duplicated boost\", function () {",
+              "    pm.expect(pm.response.json().error).to.include(\"equipped twice\");",
               "});"
             ]
           }
