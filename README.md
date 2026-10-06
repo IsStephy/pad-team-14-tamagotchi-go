@@ -1243,23 +1243,40 @@ Success Response (200 OK):
 
 ![Architecture Diagram](docs/images/architecture.png)
 
-Every service, the database it owns, and the calls between them.
+Every service, the database it owns, and how requests reach them. The
+**API Gateway** is the single entry point: clients never call a service
+directly, and services call each other through it too.
 
 | | |
 |---|---|
-| **Solid arrow** | synchronous REST/WebSocket call, pointing at the service that owns the data |
-| **Dotted arrow** | asynchronous event |
-| **Colour** | which tier a service belongs to |
+| **Dark arrow** | REST: client → Gateway, and the Gateway routing each request to the service that owns the data |
+| **Amber arrow** | service-to-service REST, which also goes through the Gateway, carrying the caller's `X-Service-Key`; the label lists the services it calls |
+| **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to the service directly |
+| **Dotted arrow** | asynchronous event on Redis Pub/Sub, for Notification — not through the Gateway |
+| **Colour** | which tier a service belongs to; the Gateway is amber |
 
-The three tiers are the structure worth remembering:
+The three tiers behind the Gateway are the structure worth remembering:
 
-1. **Gameplay** — what a client app talks to directly.
-2. **Game content** — the rules and definitions gameplay reads.
-3. **Platform** — identity, currency and notifications, which everything leans on.
+1. **Gameplay** (blue) — Battle, Map, Monster Raid and Guild: what players act in, and the four services with WebSockets.
+2. **Game content** (purple) — Tamagotchi and Package Registry: the rules and definitions gameplay reads.
+3. **Platform** (green) — User Management and Notification: identity, currency and notifications, which everything leans on.
 
 Each service names its own database. No service reads another's store
 directly; that is what the arrows are for. Notification never calls anyone —
 it consumes events and decides what reaches the player.
+
+**Editing the diagram.** The source is
+[`docs/images/architecture.mmd`](docs/images/architecture.mmd) (Mermaid), with
+its styling in `architecture.config.json`. After changing it, regenerate the PNG
+— Docker is all you need:
+
+```bash
+docker run --rm -v "$PWD/docs/images:/data" minlag/mermaid-cli   -i /data/architecture.mmd -c /data/architecture.config.json   -o /data/architecture.png -s 3 -b white
+```
+
+In Git Bash on Windows, put `MSYS_NO_PATHCONV=1 ` in front of `docker run`:
+otherwise Git Bash rewrites `/data` into a Windows path and the input is not
+found.
 
 
 ## Contributing
