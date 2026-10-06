@@ -682,7 +682,7 @@
               "    pm.response.to.have.status(200);",
               "});",
               "pm.test(\"becomes a friendship\", function () {",
-              "    pm.expect(pm.response.json().status).to.eql(\"friend\");",
+              "    pm.expect(pm.response.json().status).to.eql(\"friends\");",
               "});"
             ]
           }
