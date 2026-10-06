@@ -1,80 +1,84 @@
 {
   "info": {
     "name": "Monster Raid Service (Team 14)",
-    "description": "Cooperative guild raids against a shared monster.\n\nOwner: Dackohn. Default port: 8086.\n\nPlayer endpoints need a user token, sent as `Authorization: Bearer <token>`; join and attack must be made as the user in the body. `POST /raids` is internal: it takes Package Registry's service key in `X-Service-Key` instead, per the CPR's authentication contract.\n\nRun the requests top to bottom: the `Get Dev Token` requests mint a token per test user, and `Create Raid` saves the new raidId - so every later request works without copy-pasting anything. Set {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from the shared stack's .env first (newman: `--env-var packageRegistryServiceKey=<key>`).\n\nThe users, guilds and Tamagotchis come from the service's built-in mocks: guild-1 = u1 (owner), u2 (officer), u3 (member); guild-2 = u4 (owner), u5; Tamagotchi tN belongs to uN.",
+    "description": "Cooperative guild raids against a shared monster.\n\nOwner: Dackohn. Port: 8086 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`, port 8080): players log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. The service itself accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.\n\nSet {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from .env (newman: `--env-var packageRegistryServiceKey=<key>`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
-  "event": [
-    {
-      "listen": "prerequest",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Guard against running a request before the one that sets its variable.",
-          "const url = pm.request.url.toString();",
-          "const headers = JSON.stringify(pm.request.headers);",
-          "const needed = [",
-          "    { name: 'raidId', setBy: 'Create Raid (internal)' },",
-          "    { name: 'u1Token', setBy: 'Get Dev Token (u1)' },",
-          "    { name: 'u2Token', setBy: 'Get Dev Token (u2)' },",
-          "    { name: 'u3Token', setBy: 'Get Dev Token (u3)' },",
-          "    { name: 'u4Token', setBy: 'Get Dev Token (u4)' },",
-          "];",
-          "",
-          "needed.forEach(function (v) {",
-          "    const token = '{{' + v.name + '}}';",
-          "    if (url.indexOf(token) === -1 && headers.indexOf(token) === -1) return;",
-          "    if (!pm.collectionVariables.get(v.name)) {",
-          "        throw new Error(",
-          "            'Collection variable {{' + v.name + '}} is empty. Run \"' + v.setBy +",
-          "            '\" first, or use Run Collection so the requests execute in order.'",
-          "        );",
-          "    }",
-          "});"
-        ]
-      }
-    }
-  ],
   "variable": [
     {
-      "key": "baseUrl",
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "raidUrl",
       "value": "http://localhost:8086"
+    },
+    {
+      "key": "password",
+      "value": "Secret123!"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "ownerToken",
+      "value": ""
+    },
+    {
+      "key": "ownerId",
+      "value": ""
+    },
+    {
+      "key": "outsiderToken",
+      "value": ""
+    },
+    {
+      "key": "outsiderId",
+      "value": ""
+    },
+    {
+      "key": "guildId",
+      "value": ""
+    },
+    {
+      "key": "tamagotchiId",
+      "value": ""
     },
     {
       "key": "raidId",
       "value": ""
     },
     {
+      "key": "wsUrl",
+      "value": ""
+    },
+    {
       "key": "packageRegistryServiceKey",
       "value": "change_me"
-    },
-    {
-      "key": "u1Token",
-      "value": ""
-    },
-    {
-      "key": "u2Token",
-      "value": ""
-    },
-    {
-      "key": "u3Token",
-      "value": ""
-    },
-    {
-      "key": "u4Token",
-      "value": ""
     }
   ],
   "item": [
     {
-      "name": "Health",
+      "name": "monster-raid-service is up behind the gateway",
       "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Every run starts here with a new runId, so each run registers new players.",
+              "pm.collectionVariables.set('runId', String(Date.now()));"
+            ]
+          }
+        },
         {
           "listen": "test",
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('monster-raid-service is ok', function () { pm.expect(pm.response.json().services['monster-raid-service'].status).to.eql('ok'); });"
             ]
           }
         }
@@ -83,402 +87,196 @@
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{baseUrl}}/health",
+          "raw": "{{gatewayUrl}}/health/services",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
-            "health"
+            "health",
+            "services"
           ]
-        },
-        "description": "Liveness check. Returns { status: ok }. Needs no token."
-      },
-      "response": []
-    },
-    {
-      "name": "Get Dev Token (u1)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.collectionVariables.set('u1Token', pm.response.json().token);"
-            ]
-          }
         }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"u1\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/auth/mock-token",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "auth",
-            "mock-token"
-          ]
-        },
-        "description": "Mints a user token for testing. This endpoint exists only while USER_MANAGEMENT_URL is unset - it stands in for User Management's POST /users/login, which will issue the real RS256 token. The service verifies tokens the same way either way.\n\nRun this FIRST: every other request sends the token as Authorization: Bearer."
       },
       "response": []
     },
     {
-      "name": "Get Dev Token (u2)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.collectionVariables.set('u2Token', pm.response.json().token);"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"u2\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/auth/mock-token",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "auth",
-            "mock-token"
-          ]
-        },
-        "description": "Token for u2 - guild-1 officer, owns Tamagotchi t2. Saved into {{u2Token}}."
-      },
-      "response": []
-    },
-    {
-      "name": "Get Dev Token (u3)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.collectionVariables.set('u3Token', pm.response.json().token);"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"u3\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/auth/mock-token",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "auth",
-            "mock-token"
-          ]
-        },
-        "description": "Token for u3 - guild-1 member, owns Tamagotchi t3. Saved into {{u3Token}}."
-      },
-      "response": []
-    },
-    {
-      "name": "Get Dev Token (u4)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.collectionVariables.set('u4Token', pm.response.json().token);"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"u4\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/auth/mock-token",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "auth",
-            "mock-token"
-          ]
-        },
-        "description": "Token for u4 - guild-2 owner, not in guild-1. Saved into {{u4Token}}."
-      },
-      "response": []
-    },
-    {
-      "name": "Create Raid (internal)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
-              "const body = pm.response.json();",
-              "pm.test('returns an active raid', function () {",
-              "    pm.expect(body).to.have.property('raidId');",
-              "    pm.expect(body.status).to.eql('active');",
-              "});",
-              "// Save the id so the rest of the collection can use it.",
-              "pm.collectionVariables.set('raidId', body.raidId);"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          },
-          {
-            "key": "X-Service-Key",
-            "value": "{{packageRegistryServiceKey}}"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Overdue Assignment\",\n  \"maxHp\": 100,\n  \"duration\": 3600,\n  \"rewards\": {\n    \"currency\": 10,\n    \"xp\": 5\n  }\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/raids",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "raids"
-          ]
-        },
-        "description": "Internal endpoint: only Package Registry may call it, with its service key in X-Service-Key - a player token is never accepted. The key is the {{packageRegistryServiceKey}} collection variable; it must equal PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY in the shared stack's .env (run with `--env-var packageRegistryServiceKey=<key>` in newman, or edit the variable in Postman)."
-      },
-      "response": []
-    },
-    {
-      "name": "Join Raid",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.test('participantCount is 1', function () { pm.expect(pm.response.json().participantCount).to.eql(1); });"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          },
-          {
-            "key": "Authorization",
-            "value": "Bearer {{u1Token}}"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"u1\",\n  \"tamagotchiId\": \"t1\",\n  \"idempotencyKey\": \"join-key-1\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/raids/{{raidId}}/join",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "raids",
-            "{{raidId}}",
-            "join"
-          ]
-        },
-        "description": "u1 joins with their own Tamagotchi t1. Guild membership and Tamagotchi ownership are checked against Guild and Tamagotchi Service (mocked in Lab 1)."
-      },
-      "response": []
-    },
-    {
-      "name": "Attack Raid Monster",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.test('damage was dealt', function () { pm.expect(pm.response.json().damageDealt).to.be.above(0); });"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          },
-          {
-            "key": "Authorization",
-            "value": "Bearer {{u1Token}}"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"u1\",\n  \"idempotencyKey\": \"attack-key-1\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/raids/{{raidId}}/attack",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "raids",
-            "{{raidId}}",
-            "attack"
-          ]
-        },
-        "description": "Damage scales with the Tamagotchi's level. Retrying with the same idempotencyKey never double-counts."
-      },
-      "response": []
-    },
-    {
-      "name": "Get Raid",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.test('has a participants array', function () { pm.expect(pm.response.json().participants).to.be.an('array'); });"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{u3Token}}"
-          }
-        ],
-        "url": {
-          "raw": "{{baseUrl}}/raids/{{raidId}}",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "raids",
-            "{{raidId}}"
-          ]
-        },
-        "description": "Any player may read a raid - here u3, who hasn't joined."
-      },
-      "response": []
-    },
-    {
-      "name": "[debug] List active raids",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "GET",
-        "header": [
-          {
-            "key": "Authorization",
-            "value": "Bearer {{u1Token}}"
-          }
-        ],
-        "url": {
-          "raw": "{{baseUrl}}/raids/debug/active",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "raids",
-            "debug",
-            "active"
-          ]
-        },
-        "description": "Dev-only endpoint - not part of the CPR communication contract."
-      },
-      "response": []
-    },
-    {
-      "name": "Error cases",
-      "description": "Requests that are expected to fail - they demonstrate the validation and authorization rules.",
+      "name": "Players (User Management, through the gateway)",
+      "description": "Real players: registered and logged in through the gateway, which verifies their RS256 tokens from here on.",
       "item": [
         {
-          "name": "Join by a non-member of the guild (403)",
+          "name": "Register (owner)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"owner-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"owner-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('ownerToken', body.token);",
+                  "pm.collectionVariables.set('ownerId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"owner-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (outsider)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"outsider-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"outsider-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (outsider)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('outsiderToken', body.token);",
+                  "pm.collectionVariables.set('outsiderId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"outsider-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Setup: a guild and a Tamagotchi",
+      "description": "A raid belongs to a guild, and a player fights with their own Tamagotchi. Both are real, created through the gateway.",
+      "item": [
+        {
+          "name": "Owner creates a guild (Guild)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('guildId', pm.response.json().guildId);"
                 ]
               }
             }
@@ -492,37 +290,35 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{u4Token}}"
+                "value": "Bearer {{ownerToken}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"u4\",\n  \"tamagotchiId\": \"t4\",\n  \"idempotencyKey\": \"join-key-u4\"\n}"
+              "raw": "{\n  \"name\": \"Raiders {{runId}}\",\n  \"ownerId\": \"{{ownerId}}\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/raids/{{raidId}}/join",
+              "raw": "{{gatewayUrl}}/guilds",
               "host": [
-                "{{baseUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
-                "raids",
-                "{{raidId}}",
-                "join"
+                "guilds"
               ]
-            },
-            "description": "u4 is in guild-2, the raid belongs to guild-1."
+            }
           },
           "response": []
         },
         {
-          "name": "Join with someone else's Tamagotchi (403)",
+          "name": "Owner creates a Tamagotchi (Tamagotchi)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('tamagotchiId', pm.response.json().tamagotchiId);"
                 ]
               }
             }
@@ -536,115 +332,41 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{u2Token}}"
+                "value": "Bearer {{ownerToken}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"u2\",\n  \"tamagotchiId\": \"t1\",\n  \"idempotencyKey\": \"join-key-u2-t1\"\n}"
+              "raw": "{\n  \"ownerId\": \"{{ownerId}}\",\n  \"packageId\": \"p1\",\n  \"name\": \"Raider\",\n  \"type\": \"Flame\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/raids/{{raidId}}/join",
+              "raw": "{{gatewayUrl}}/tamagotchis",
               "host": [
-                "{{baseUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
-                "raids",
-                "{{raidId}}",
-                "join"
+                "tamagotchis"
               ]
             },
-            "description": "t1 belongs to u1."
+            "description": "Needs Tamagotchi Service behind the gateway (accepting X-Gateway-Key / X-User-Id). Until then this and the join/attack requests below fail."
           },
           "response": []
-        },
+        }
+      ]
+    },
+    {
+      "name": "Monster Raid through the gateway",
+      "item": [
         {
-          "name": "Attack without joining (403)",
+          "name": "Package Registry creates a raid (service key)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{u3Token}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"userId\": \"u3\",\n  \"idempotencyKey\": \"attack-key-u3\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/raids/{{raidId}}/attack",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "raids",
-                "{{raidId}}",
-                "attack"
-              ]
-            },
-            "description": "u3 is in the guild but never joined this raid."
-          },
-          "response": []
-        },
-        {
-          "name": "Get unknown raid (404)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{u1Token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/raids/00000000-0000-0000-0000-000000000000",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "raids",
-                "00000000-0000-0000-0000-000000000000"
-              ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Create raid with negative maxHp (400)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('raidId', pm.response.json().raidId);"
                 ]
               }
             }
@@ -663,22 +385,351 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Broken Monster\",\n  \"maxHp\": -5,\n  \"duration\": 3600,\n  \"rewards\": {}\n}"
+              "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/raids",
+              "raw": "{{gatewayUrl}}/raids",
               "host": [
-                "{{baseUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "raids"
+              ]
+            },
+            "description": "A service-to-service call through the gateway: Package Registry's own X-Service-Key, no player token. Set {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from .env."
+          },
+          "response": []
+        },
+        {
+          "name": "Anyone can read the raid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('4 HP, active', function () { const r = pm.response.json(); pm.expect(r.monsterHp).to.eql(4); pm.expect(r.status).to.eql('active'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{outsiderToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}"
               ]
             }
           },
           "response": []
         },
         {
-          "name": "Create raid with a player token (401)",
+          "name": "An outsider can't join (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('error: user is not a member of this raid's guild', function () { pm.expect(pm.response.json().error).to.eql(\"user is not a member of this raid's guild\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{outsiderToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{outsiderId}}\",\n  \"tamagotchiId\": \"any\",\n  \"idempotencyKey\": \"join-{{runId}}-outsider\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}/join",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "join"
+              ]
+            },
+            "description": "Monster Raid asks Guild Service (through the gateway, with its own service key) and the outsider isn't a member."
+          },
+          "response": []
+        },
+        {
+          "name": "Owner joins with their Tamagotchi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('one participant', function () { pm.expect(pm.response.json().participantCount).to.eql(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{ownerId}}\",\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"idempotencyKey\": \"join-{{runId}}-owner\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}/join",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "join"
+              ]
+            },
+            "description": "Guild membership and Tamagotchi ownership are both checked for real."
+          },
+          "response": []
+        },
+        {
+          "name": "Negotiate the live raid socket",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const wsUrl = pm.response.json().wsUrl;",
+                  "pm.test('a direct URL to Monster Raid with a one-time ticket', function () { pm.expect(wsUrl).to.include('/live?ticket='); });",
+                  "pm.collectionVariables.set('wsUrl', wsUrl);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/ws/negotiate?path=/raids/{{raidId}}/live",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "ws",
+                "negotiate"
+              ],
+              "query": [
+                {
+                  "key": "path",
+                  "value": "/raids/{{raidId}}/live"
+                }
+              ]
+            },
+            "description": "See the WebSocket folder to watch the next two attacks live."
+          },
+          "response": []
+        },
+        {
+          "name": "Owner attacks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('damage dealt', function () { pm.expect(pm.response.json().damageDealt).to.be.above(0); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{ownerId}}\",\n  \"idempotencyKey\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}/attack",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "attack"
+              ]
+            },
+            "description": "Damage is the Tamagotchi's level x 2 (a new level-1 Tamagotchi hits for 2)."
+          },
+          "response": []
+        },
+        {
+          "name": "Owner attacks again - the monster falls",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('monster at 0 HP', function () { pm.expect(pm.response.json().monsterHp).to.eql(0); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{ownerId}}\",\n  \"idempotencyKey\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}/attack",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "attack"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The raid is completed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('completed', function () { pm.expect(pm.response.json().status).to.eql('completed'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}"
+              ]
+            },
+            "description": "Rewards (7 currency, 3 xp) were paid through User Management with Monster Raid's service key."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "item": [
+        {
+          "name": "No token - stopped at the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A player can't create raids (401)",
           "event": [
             {
               "listen": "test",
@@ -699,28 +750,28 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{u1Token}}"
+                "value": "Bearer {{ownerToken}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Sneaky Monster\",\n  \"maxHp\": 10,\n  \"duration\": 3600,\n  \"rewards\": {}\n}"
+              "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/raids",
+              "raw": "{{gatewayUrl}}/raids",
               "host": [
-                "{{baseUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "raids"
               ]
             },
-            "description": "POST /raids is internal: it only accepts Package Registry's service key, never a player token."
+            "description": "POST /raids is internal: only Package Registry's service key, never a player."
           },
           "response": []
         },
         {
-          "name": "Create raid with an unknown service key (401)",
+          "name": "A wrong service key (401)",
           "event": [
             {
               "listen": "test",
@@ -746,12 +797,12 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"configId\": \"cfg-1\",\n  \"guildId\": \"guild-1\",\n  \"monsterName\": \"Sneaky Monster\",\n  \"maxHp\": 10,\n  \"duration\": 3600,\n  \"rewards\": {}\n}"
+              "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/raids",
+              "raw": "{{gatewayUrl}}/raids",
               "host": [
-                "{{baseUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "raids"
@@ -761,7 +812,7 @@
           "response": []
         },
         {
-          "name": "Attack as someone else (403)",
+          "name": "Attacking as someone else (403)",
           "event": [
             {
               "listen": "test",
@@ -782,59 +833,138 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{u2Token}}"
+                "value": "Bearer {{outsiderToken}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"u1\",\n  \"idempotencyKey\": \"attack-key-intruder\"\n}"
+              "raw": "{\n  \"userId\": \"{{ownerId}}\",\n  \"idempotencyKey\": \"{{$guid}}\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/raids/{{raidId}}/attack",
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}/attack",
               "host": [
-                "{{baseUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "raids",
                 "{{raidId}}",
                 "attack"
               ]
-            },
-            "description": "u2's token with u1 in the body - you can only act as yourself."
+            }
           },
           "response": []
         },
         {
-          "name": "Read a raid without a token (401)",
+          "name": "An unknown raid (404)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
                 ]
               }
             }
           ],
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
             "url": {
-              "raw": "{{baseUrl}}/raids/{{raidId}}",
+              "raw": "{{gatewayUrl}}/raids/00000000-0000-0000-0000-000000000000",
               "host": [
-                "{{baseUrl}}"
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The live socket over plain HTTP (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{raidId}}/live",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{raidId}}",
+                "live"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Monster Raid without the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: requests must come through the API Gateway', function () { pm.expect(pm.response.json().error).to.eql(\"requests must come through the API Gateway\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{raidUrl}}/raids/{{raidId}}",
+              "host": [
+                "{{raidUrl}}"
               ],
               "path": [
                 "raids",
                 "{{raidId}}"
               ]
             },
-            "description": "Every raid endpoint needs a user token. Without one the service cannot tell who is asking, so it answers 401 per the contract."
+            "description": "Straight to Monster Raid's own port: refused, because only the gateway holds GATEWAY_KEY."
           },
           "response": []
         }
       ]
+    },
+    {
+      "name": "Live raid (WebSocket)",
+      "item": [],
+      "description": "Postman's collection format can't store WebSocket requests, so create it in the app:\n\n1. Run the collection up to `Negotiate the live raid socket`; it saves the URL with a one-time ticket into {{wsUrl}}.\n2. New -> WebSocket, URL {{wsUrl}} (save it in this collection), Connect within 60 s. You get { \"event\": \"raid\", \"data\": <the raid> }.\n3. Run the two attacks: each arrives as { \"event\": \"attack\", ... }, then { \"event\": \"completed\", ... } and the socket closes (1000).\n\nOnly participants may watch; anyone else, or a reused ticket, is closed with 1008."
     }
   ]
 }
