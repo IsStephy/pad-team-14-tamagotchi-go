@@ -100,11 +100,12 @@ services:
       DB_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
       DB_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
       DB_SSLMODE: disable
-      # Each dependency falls back to an in-process mock while its URL is
-      # empty, so this service runs before the others are published.
-      USER_MANAGEMENT_SERVICE_URL: ${BATTLE_USER_MANAGEMENT_URL:-http://user-management-service:8081}
-      TAMAGOTCHI_SERVICE_URL: ${BATTLE_TAMAGOTCHI_SERVICE_URL:-}
-      PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-}
+      # Service-to-service REST goes through the gateway, like client traffic:
+      # currency adjust (User Management), types, xp and transfer-owner
+      # (Tamagotchi) and package stat definitions (Package Registry).
+      USER_MANAGEMENT_SERVICE_URL: ${BATTLE_USER_MANAGEMENT_URL:-http://gateway:8080}
+      TAMAGOTCHI_SERVICE_URL: ${BATTLE_TAMAGOTCHI_SERVICE_URL:-http://gateway:8080}
+      PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-http://gateway:8080}
       AUTH_ENFORCED: ${AUTH_ENFORCED:-false}
       # The key this service presents to the Service-only endpoints it calls.
       SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
