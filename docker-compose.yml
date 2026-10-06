@@ -131,7 +131,7 @@ services:
     restart: unless-stopped
 
   tamagotchi-service:
-    image: dan1el50/tamagotchi-service:v2
+    image: dan1el50/tamagotchi-service:v2.0.0
     depends_on:
       tamagotchi-service-db:
         condition: service_healthy
@@ -166,7 +166,7 @@ services:
     restart: unless-stopped
 
   notification-service:
-    image: dan1el50/notification-service:v2
+    image: dan1el50/notification-service:v2.0.0
     depends_on:
       notification-service-db:
         condition: service_healthy

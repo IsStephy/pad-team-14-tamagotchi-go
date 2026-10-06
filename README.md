@@ -1675,8 +1675,8 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 |---|---|---|---|
 | User Management | [`pshasuleiman/user-management-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
 | Battle | [`pshasuleiman/battle-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
-| Tamagotchi | [`dan1el50/tamagotchi-service:v2`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
-| Notification | [`dan1el50/notification-service:v2`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
+| Tamagotchi | [`dan1el50/tamagotchi-service:v2.0.0`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
+| Notification | [`dan1el50/notification-service:v2.0.0`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
 | Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
 | Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
 | Guild | [`isstephy1/guild-service:v1.2.0`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
