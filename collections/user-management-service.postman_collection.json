@@ -1,14 +1,21 @@
 {
   "info": {
     "name": "User Management Service (Team 14)",
-    "description": "Every endpoint of the User Management Service, in an order that runs top to bottom as a complete scenario: two players register, become friends, earn currency, fall out, and are deleted again.\n\nStart the service first with `./run.sh` in the user-management-service repo, then hit Run to verify it works. `baseUrl` defaults to http://localhost:8081.\n\nIds and the login token are captured into collection variables as the run progresses, so nothing needs to be filled in by hand. Usernames are generated per run, so the collection can be run repeatedly.",
+    "description": "Every endpoint of the User Management Service, reached through the gateway, in an order that runs top to bottom as a complete scenario: two players register and log in, become friends, earn currency, fall out, and are deleted again.\n\nStart the whole system first (`docker compose up -d` in the CPR), then hit Run. Requests go to `{{gatewayUrl}}` (default `http://localhost:8080`) with each player's own token. Currency adjustment is service-only, so it carries Battle's key instead: set `battleServiceKey` to `SERVICE_KEY_BATTLE` from your `.env`, e.g. `npx newman run user-management-service.postman_collection.json --env-var battleServiceKey=<key>`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
-      "key": "baseUrl",
-      "value": "http://localhost:8081",
-      "type": "string"
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "token2",
+      "value": ""
+    },
+    {
+      "key": "battleServiceKey",
+      "value": "change_me"
     },
     {
       "key": "packageId",
@@ -53,17 +60,18 @@
   ],
   "item": [
     {
-      "name": "Health check",
+      "name": "User Management is up behind the gateway",
       "request": {
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{baseUrl}}/health",
+          "raw": "{{gatewayUrl}}/health/services",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
-            "health"
+            "health",
+            "services"
           ]
         },
         "description": "Liveness probe. Answers as soon as the service is up and migrated."
@@ -78,8 +86,8 @@
               "pm.test(\"responds 200\", function () {",
               "    pm.response.to.have.status(200);",
               "});",
-              "pm.test(\"reports this service\", function () {",
-              "    pm.expect(pm.response.json().service).to.eql(\"user-management-service\");",
+              "pm.test(\"user-management-service is up behind the gateway\", function () {",
+              "    pm.expect(pm.response.json().services[\"user-management-service\"].status).to.eql(\"ok\");",
               "});"
             ]
           }
@@ -97,9 +105,9 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/register",
+          "raw": "{{gatewayUrl}}/users/register",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -161,9 +169,9 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/register",
+          "raw": "{{gatewayUrl}}/users/register",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -218,9 +226,9 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/register",
+          "raw": "{{gatewayUrl}}/users/register",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -264,9 +272,9 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/login",
+          "raw": "{{gatewayUrl}}/users/login",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -316,9 +324,9 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/login",
+          "raw": "{{gatewayUrl}}/users/login",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -352,14 +360,96 @@
       ]
     },
     {
-      "name": "Get user",
+      "name": "Log in as player two",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/login",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "login"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username2}}\",\n  \"password\": \"{{password}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"returns a token for player two\", function () {",
+              "    pm.expect(body.userId).to.eql(pm.collectionVariables.get(\"targetUserId\"));",
+              "});",
+              "pm.collectionVariables.set(\"token2\", body.token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get user without a token (rejected by the gateway)",
       "request": {
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 401\", function () {",
+              "    pm.response.to.have.status(401);",
+              "});",
+              "pm.test(\"the gateway refuses it before any service sees it\", function () {",
+              "    pm.expect(pm.response.json().error).to.match(/bearer token/i);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get user",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/{{userId}}",
+          "host": [
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -394,12 +484,16 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -444,11 +538,16 @@
       "name": "Get currency",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/currency",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/currency",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -486,12 +585,16 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "X-Service-Key",
+            "value": "{{battleServiceKey}}"
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/currency/adjust",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/currency/adjust",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -539,12 +642,16 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "X-Service-Key",
+            "value": "{{battleServiceKey}}"
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/currency/adjust",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/currency/adjust",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -583,11 +690,16 @@
       "name": "Balance survived the rejected adjustment",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/currency",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/currency",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -619,11 +731,16 @@
       "name": "Send a friend request",
       "request": {
         "method": "POST",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/friends/{{targetUserId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/friends/{{targetUserId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -656,11 +773,16 @@
       "name": "Reciprocate the friend request",
       "request": {
         "method": "POST",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token2}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{targetUserId}}/friends/{{userId}}",
+          "raw": "{{gatewayUrl}}/users/{{targetUserId}}/friends/{{userId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -693,11 +815,16 @@
       "name": "List friends",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/friends",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/friends",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -732,11 +859,16 @@
       "name": "Get relationship",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -773,12 +905,16 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -824,12 +960,16 @@
           {
             "key": "Content-Type",
             "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -868,11 +1008,16 @@
       "name": "Remove the relationship",
       "request": {
         "method": "DELETE",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/friends/{{targetUserId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/friends/{{targetUserId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -902,11 +1047,16 @@
       "name": "Relationship is gone",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -939,11 +1089,16 @@
       "name": "Get an unknown user (rejected)",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{missingId}}",
+          "raw": "{{gatewayUrl}}/users/{{missingId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -971,11 +1126,16 @@
       "name": "Delete player two",
       "request": {
         "method": "DELETE",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token2}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{targetUserId}}",
+          "raw": "{{gatewayUrl}}/users/{{targetUserId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -1003,11 +1163,16 @@
       "name": "Delete player one",
       "request": {
         "method": "DELETE",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
@@ -1035,11 +1200,16 @@
       "name": "Deleted user is gone",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
         "url": {
-          "raw": "{{baseUrl}}/users/{{userId}}",
+          "raw": "{{gatewayUrl}}/users/{{userId}}",
           "host": [
-            "{{baseUrl}}"
+            "{{gatewayUrl}}"
           ],
           "path": [
             "users",
