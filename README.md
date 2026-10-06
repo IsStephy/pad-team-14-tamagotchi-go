@@ -1822,8 +1822,44 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 | Notification | [`dan1el50/notification-service:v2.0.1`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
 | Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
 | Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
-| Guild | [`isstephy1/guild-service:v1.2.0`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
-| Package Registry | [`isstephy1/package-registry-service:v1.2.0`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
+| Guild | [`isstephy1/guild-service:latest`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
+| Package Registry | [`isstephy1/package-registry-service:latest`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
+| Gateway | [`isstephy1/gateway:latest`](https://hub.docker.com/r/isstephy1/gateway) | — | `8080` |
+
+### Image tags
+
+Images are tagged **`vX.Y.Z`**, and every release also moves **`latest`**.
+The team's rule, applied by each repo's release workflow
+(`.github/workflows/release.yml`):
+
+| Part | Changes when | Example |
+|---|---|---|
+| **X** | by hand: `MAJOR` in the workflow, e.g. `3` for Lab 3; the next release is `vX.0.0` | `v2.4.1` → `v3.0.0` |
+| **Y** | a `feature/*` branch is merged into `dev` | `v2.0.3` → `v2.1.0` |
+| **Z** | any other branch is merged into `dev`: `fix/*`, `chore/*`, `docs/*`, `ci/*`, `refactor/*`, `test/*`, `perf/*` | `v2.1.0` → `v2.1.1` |
+
+- **Merge into `dev`:** the tests run, the image is built and pushed as the
+  new `vX.Y.Z`, and only then is the git tag `vX.Y.Z` created on the commit.
+  The branch prefixes are CONTRIBUTING's change types; a direct push to `dev`,
+  or a branch that follows none of them, publishes nothing.
+- **Merge `dev` into `main`:** `latest` is pointed at the version that was
+  merged — the same image built and tested on `dev`, not a rebuild.
+- **Every image is published for `linux/amd64` and `linux/arm64`** under the
+  same tag (Intel/AMD machines and Apple Silicon Macs); Docker picks the right
+  one, so `docker-compose.yml` needs no per-platform changes.
+- **A version is never overwritten**, so `vX.Y.Z` always means the same image.
+  The previous version is read from the repo's git tags, and the merged branch
+  from GitHub's merge commit (`Merge pull request #N from <user>/feature/...`) —
+  one more reason PRs are merged with a merge commit.
+- **In `docker-compose.yml`, Guild, Package Registry and the Gateway use
+  `latest`**: the stack follows each new release to `main` without a CPR
+  change. Run `docker compose pull` to fetch a new release; to reproduce an
+  older stack, pin an exact `vX.Y.Z` instead. The other services pin an exact
+  version.
+
+Older tags (`v1.x.y` from Lab 1, and the single `v2` tag Guild and Package
+Registry used briefly in Lab 2) stay on Docker Hub; new releases follow the
+rule above.
 
 **Requirements for running them:**
 

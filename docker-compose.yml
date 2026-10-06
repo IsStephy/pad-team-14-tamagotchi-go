@@ -317,7 +317,9 @@ services:
     restart: unless-stopped
 
   guild-service:
-    image: isstephy1/guild-service:v2
+    # :latest = the newest version released to main (moved by the repo's release
+    # workflow). Run `docker compose pull` to get a new release.
+    image: isstephy1/guild-service:latest
     depends_on:
       guild-service-db:
         condition: service_healthy
@@ -360,7 +362,9 @@ services:
     restart: unless-stopped
 
   package-registry-service:
-    image: isstephy1/package-registry-service:v2
+    # :latest = the newest version released to main (moved by the repo's release
+    # workflow). Run `docker compose pull` to get a new release.
+    image: isstephy1/package-registry-service:latest
     depends_on:
       package-registry-service-db:
         condition: service_healthy
@@ -393,7 +397,9 @@ services:
   # Authorization and forwards the verified user as X-User-Id + X-Gateway-Key.
   # Service URLs default to http://<service-name>:<port>, matching this file.
   gateway:
-    image: isstephy1/gateway:v2
+    # :latest = the newest version released to main (moved by the repo's release
+    # workflow). Run `docker compose pull` to get a new release.
+    image: isstephy1/gateway:latest
     depends_on:
       - user-management-service
       - battle-service
