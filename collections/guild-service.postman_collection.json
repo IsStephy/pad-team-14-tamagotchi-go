@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Guild Service (Team 14)",
-    "description": "Guild identity, membership, roles and real-time guild chat.\n\nOwner: IsStephy. Default port: 8087.\n\nEvery endpoint except /health and /docs needs a user token, sent as `Authorization: Bearer <token>`. Identity is the token's `sub` claim, and guild roles are checked by this service against its own data, per the CPR's authentication contract.\n\nRun the requests top to bottom: `Get Dev Token` mints a token, and `Create Guild` saves the new guildId - so every later request works without copy-pasting anything.\n\nThe WebSocket chat endpoint cannot be stored in Postman's collection file format; see the `Guild Chat (WebSocket)` folder for how to add it in the app.",
+    "description": "Guild identity, membership, roles and real-time guild chat.\n\nOwner: IsStephy. Default port: 8087.\n\nEvery request goes through the gateway in the shared stack: the gateway verifies the player's token, drops it, and forwards `X-Gateway-Key` (proving the request came through it) plus `X-User-Id` (the player). This service never verifies tokens and answers 401 to anything without a valid `X-Gateway-Key`, except /health and /docs.\n\nThis collection talks to the service directly, so it sends those two headers itself - it plays the gateway. Set the `gatewayKey` variable to the GATEWAY_KEY in your .env (the default, `change_me`, matches .env.example). To go through the real gateway with real logins, use collections/gateway.postman_collection.json.\n\nGuild roles are checked by this service against its own data. `GET /guilds/{guildId}` also accepts Monster Raid's `X-Service-Key` instead of a player (set `monsterRaidServiceKey` to SERVICE_KEY_MONSTER_RAID).\n\nRun the requests top to bottom: `Create Guild` saves the new guildId, so every later request works without copy-pasting anything.\n\nThe WebSocket chat endpoint cannot be stored in Postman's collection file format; see the `Guild Chat (WebSocket)` folder for how to open it in the app.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -26,24 +26,16 @@
       "value": "u-member-3"
     },
     {
-      "key": "ownerToken",
-      "value": ""
-    },
-    {
-      "key": "memberToken",
-      "value": ""
-    },
-    {
-      "key": "inviteeToken",
-      "value": ""
-    },
-    {
       "key": "unknownUserId",
       "value": "unknown-user-99"
     },
     {
-      "key": "unknownToken",
-      "value": ""
+      "key": "gatewayKey",
+      "value": "change_me"
+    },
+    {
+      "key": "monsterRaidServiceKey",
+      "value": "change_me"
     }
   ],
   "item": [
@@ -62,166 +54,6 @@
           ]
         },
         "description": "Liveness check. Returns { status: ok, service: guild-service }."
-      },
-      "response": []
-    },
-    {
-      "name": "Get Dev Token (owner)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.collectionVariables.set('ownerToken', pm.response.json().token);"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"{{ownerId}}\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/dev/token",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "dev",
-            "token"
-          ]
-        },
-        "description": "Mints a user token for testing. This endpoint exists only while USER_MANAGEMENT_URL is unset - it stands in for User Management's POST /users/login, which will issue the real RS256 token. The service verifies tokens the same way either way.\n\nRun this FIRST: every other request sends the token as Authorization: Bearer."
-      },
-      "response": []
-    },
-    {
-      "name": "Get Dev Token (member)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.collectionVariables.set('memberToken', pm.response.json().token);"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"{{memberId}}\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/dev/token",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "dev",
-            "token"
-          ]
-        },
-        "description": "A second player, so self-join and membership rules can be exercised."
-      },
-      "response": []
-    },
-    {
-      "name": "Get Dev Token (invitee)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.collectionVariables.set('inviteeToken', pm.response.json().token);"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"{{inviteeId}}\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/dev/token",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "dev",
-            "token"
-          ]
-        },
-        "description": "A third player, used to show that an ordinary member cannot invite."
-      },
-      "response": []
-    },
-    {
-      "name": "Get Dev Token (unknown user)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-              "pm.collectionVariables.set('unknownToken', pm.response.json().token);"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"userId\": \"{{unknownUserId}}\"\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/dev/token",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "dev",
-            "token"
-          ]
-        },
-        "description": "A token whose sub is a user User Management does not know. The token is valid, so the request gets past authentication - and is then rejected with 404 when the service resolves the identity."
       },
       "response": []
     },
@@ -250,12 +82,16 @@
         "method": "POST",
         "header": [
           {
+            "key": "X-Gateway-Key",
+            "value": "{{gatewayKey}}"
+          },
+          {
             "key": "Content-Type",
             "value": "application/json"
           },
           {
-            "key": "Authorization",
-            "value": "Bearer {{ownerToken}}"
+            "key": "X-User-Id",
+            "value": "{{ownerId}}"
           }
         ],
         "body": {
@@ -293,8 +129,12 @@
         "method": "GET",
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{ownerToken}}"
+            "key": "X-Gateway-Key",
+            "value": "{{gatewayKey}}"
+          },
+          {
+            "key": "X-User-Id",
+            "value": "{{ownerId}}"
           }
         ],
         "url": {
@@ -346,8 +186,12 @@
         "method": "GET",
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{ownerToken}}"
+            "key": "X-Gateway-Key",
+            "value": "{{gatewayKey}}"
+          },
+          {
+            "key": "X-User-Id",
+            "value": "{{ownerId}}"
           }
         ],
         "url": {
@@ -382,12 +226,16 @@
         "method": "POST",
         "header": [
           {
+            "key": "X-Gateway-Key",
+            "value": "{{gatewayKey}}"
+          },
+          {
             "key": "Content-Type",
             "value": "application/json"
           },
           {
-            "key": "Authorization",
-            "value": "Bearer {{memberToken}}"
+            "key": "X-User-Id",
+            "value": "{{memberId}}"
           }
         ],
         "body": {
@@ -427,12 +275,16 @@
         "method": "POST",
         "header": [
           {
+            "key": "X-Gateway-Key",
+            "value": "{{gatewayKey}}"
+          },
+          {
             "key": "Content-Type",
             "value": "application/json"
           },
           {
-            "key": "Authorization",
-            "value": "Bearer {{ownerToken}}"
+            "key": "X-User-Id",
+            "value": "{{ownerId}}"
           }
         ],
         "body": {
@@ -472,12 +324,16 @@
         "method": "PATCH",
         "header": [
           {
+            "key": "X-Gateway-Key",
+            "value": "{{gatewayKey}}"
+          },
+          {
             "key": "Content-Type",
             "value": "application/json"
           },
           {
-            "key": "Authorization",
-            "value": "Bearer {{ownerToken}}"
+            "key": "X-User-Id",
+            "value": "{{ownerId}}"
           }
         ],
         "body": {
@@ -524,8 +380,12 @@
         "method": "GET",
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{memberToken}}"
+            "key": "X-Gateway-Key",
+            "value": "{{gatewayKey}}"
+          },
+          {
+            "key": "X-User-Id",
+            "value": "{{memberId}}"
           }
         ],
         "url": {
@@ -561,8 +421,12 @@
         "method": "DELETE",
         "header": [
           {
-            "key": "Authorization",
-            "value": "Bearer {{ownerToken}}"
+            "key": "X-Gateway-Key",
+            "value": "{{gatewayKey}}"
+          },
+          {
+            "key": "X-User-Id",
+            "value": "{{ownerId}}"
           }
         ],
         "url": {
@@ -602,12 +466,16 @@
             "method": "POST",
             "header": [
               {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
                 "key": "Content-Type",
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{unknownToken}}"
+                "key": "X-User-Id",
+                "value": "{{unknownUserId}}"
               }
             ],
             "body": {
@@ -625,7 +493,7 @@
                 "join"
               ]
             },
-            "description": "The token is valid, so authentication passes and sub matches the body. Identity is still owned by User Management: the mock treats any userId starting with 'unknown' as non-existent, so the service answers 404."
+            "description": "The gateway names a player User Management does not know. The identity check passes (X-User-Id matches the body), but the mock of User Management treats any userId starting with 'unknown' as non-existent, so the service answers 404."
           },
           "response": []
         },
@@ -646,12 +514,16 @@
             "method": "POST",
             "header": [
               {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
                 "key": "Content-Type",
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{inviteeToken}}"
+                "key": "X-User-Id",
+                "value": "{{inviteeId}}"
               }
             ],
             "body": {
@@ -690,12 +562,16 @@
             "method": "PATCH",
             "header": [
               {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
                 "key": "Content-Type",
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{ownerToken}}"
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
               }
             ],
             "body": {
@@ -736,8 +612,12 @@
             "method": "GET",
             "header": [
               {
-                "key": "Authorization",
-                "value": "Bearer {{ownerToken}}"
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
               }
             ],
             "url": {
@@ -771,12 +651,16 @@
             "method": "POST",
             "header": [
               {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
                 "key": "Content-Type",
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{ownerToken}}"
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
               }
             ],
             "body": {
@@ -797,7 +681,7 @@
           "response": []
         },
         {
-          "name": "Remove member without a token (401)",
+          "name": "Remove member without a player (401)",
           "event": [
             {
               "listen": "test",
@@ -811,7 +695,12 @@
           ],
           "request": {
             "method": "DELETE",
-            "header": [],
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              }
+            ],
             "url": {
               "raw": "{{baseUrl}}/guilds/{{guildId}}/members/{{memberId}}",
               "host": [
@@ -824,7 +713,7 @@
                 "{{memberId}}"
               ]
             },
-            "description": "Every guild endpoint needs a user token. Without one the service cannot tell who is asking, so it answers 401 per the contract."
+            "description": "Through the gateway, but with no X-User-Id - as a service call without a player would arrive. Every guild endpoint except GET /guilds/{guildId} needs a player, so 401."
           },
           "response": []
         },
@@ -845,12 +734,16 @@
             "method": "POST",
             "header": [
               {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
                 "key": "Content-Type",
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{ownerToken}}"
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
               }
             ],
             "body": {
@@ -889,12 +782,16 @@
             "method": "PATCH",
             "header": [
               {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
                 "key": "Content-Type",
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{ownerToken}}"
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
               }
             ],
             "body": {
@@ -917,12 +814,126 @@
             "description": "A guild always keeps exactly one owner - demotion is only possible by promoting someone else, which transfers ownership."
           },
           "response": []
+        },
+        {
+          "name": "Without the gateway key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error mentions \"through the gateway\"', function () { pm.expect(pm.response.json().error).to.include('through the gateway'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": "A made-up X-User-Id sent straight to the service, without the gateway's key. Anyone who can reach the port could do this, so the service refuses it."
+          },
+          "response": []
+        },
+        {
+          "name": "Monster Raid reads a guild with its service key (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": "No player: Monster Raid Service checks that a raid joiner is a member of the raid's guild, asking as itself with its own key (through the gateway, which adds its key too)."
+          },
+          "response": []
+        },
+        {
+          "name": "Wrong service key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "not-the-real-key"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": "Neither a player nor Monster Raid's real key."
+          },
+          "response": []
         }
       ]
     },
     {
       "name": "Guild Chat (WebSocket)",
-      "description": "`WS {{baseUrl}}/guilds/{guildId}/chat` - real-time guild chat.\n\nPostman's collection file format (v2.1) cannot store WebSocket requests, so this one has to be created inside the Postman app:\n\n1. New -> WebSocket Request\n2. URL: ws://localhost:8087/guilds/<paste a guildId>/chat\n3. Connect. The server immediately sends the existing history:\n   { \"type\": \"history\", \"messages\": [] }\n4. Send this JSON message:\n   { \"authorId\": \"u-owner-1\", \"message\": \"hello guild\" }\n5. The server stamps it and broadcasts it to every connected member:\n   { \"authorId\": \"u-owner-1\", \"message\": \"hello guild\", \"timestamp\": \"2026-09-22T12:11:03.692Z\" }\n\nRules: connecting to an unknown guildId closes the socket with code 1008. Only existing members of the guild may post - anyone else gets { \"error\": \"author is not a member of this guild\" }.\n\nTo demonstrate the broadcast, open two WebSocket tabs on the same guild and send from one of them.",
+      "description": "`WS /guilds/{guildId}/chat` - real-time guild chat.\n\nPostman's collection file format (v2.1) cannot store WebSocket requests, so open it inside the Postman app.\n\nThe socket needs a single-use ticket from the gateway - the chat checks it instead of a user token:\n\n1. Through the gateway, as a logged-in player (see collections/gateway.postman_collection.json):\n   GET http://localhost:8080/ws/negotiate?path=/guilds/<guildId>/chat\n   Authorization: Bearer <token>\n   -> { \"wsUrl\": \"ws://localhost:8087/guilds/<guildId>/chat?ticket=<ticket>\" }\n2. New -> WebSocket Request, URL: the wsUrl from step 1. Connect within 60 seconds - the ticket expires, and opens one socket only.\n3. The server immediately sends the existing history:\n   { \"type\": \"history\", \"messages\": [] }\n4. Send this JSON message, with authorId = the player you logged in as:\n   { \"authorId\": \"<your userId>\", \"message\": \"hello guild\" }\n5. The server stamps it and broadcasts it to every connected member:\n   { \"authorId\": \"<your userId>\", \"message\": \"hello guild\", \"timestamp\": \"2026-10-06T12:11:03.692Z\" }\n\nRules: a missing, expired, reused or wrong-path ticket, an unknown guild, or a caller who is not a member closes the socket with 1008; too many open sockets close it with 1013. authorId must be the ticket's player.\n\nTo demonstrate the broadcast, negotiate twice (one ticket per socket) and send from one of the two tabs.",
       "item": []
     }
   ],
@@ -937,10 +948,6 @@
           "const headers = JSON.stringify(pm.request.headers);",
           "const needed = [",
           "    { name: 'guildId', setBy: 'Create Guild' },",
-          "    { name: 'ownerToken', setBy: 'Get Dev Token (owner)' },",
-          "    { name: 'memberToken', setBy: 'Get Dev Token (member)' },",
-          "    { name: 'unknownToken', setBy: 'Get Dev Token (unknown user)' },",
-          "    { name: 'inviteeToken', setBy: 'Get Dev Token (invitee)' },",
           "];",
           "",
           "needed.forEach(function (v) {",

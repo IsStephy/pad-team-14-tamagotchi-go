@@ -1,0 +1,16 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Trebuchet MS, Verdana, Arial, sans-serif",
+    "fontSize": "18px",
+    "edgeLabelBackground": "#ffffff",
+    "lineColor": "#3c4650"
+  },
+  "flowchart": {
+    "nodeSpacing": 45,
+    "rankSpacing": 70,
+    "padding": 18,
+    "curve": "basis",
+    "wrappingWidth": 320
+  }
+}

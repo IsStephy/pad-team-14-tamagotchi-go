@@ -1,0 +1,94 @@
+flowchart TB
+    %% Architecture diagram - the source of architecture.png (render steps in the README).
+    %% Solid dark arrows: REST from clients, routed by the Gateway to the owning service.
+    %% Amber arrows: service-to-service REST, which also goes through the Gateway.
+    %% Thick blue arrows: WebSockets - negotiated by the Gateway, then direct to the service.
+    %% Dotted grey arrows: events on Redis Pub/Sub for Notification Service.
+
+    Client(["Client apps"])
+    GW["<b>API Gateway</b><br/>Python · port 8080<br/>tokens · routing · limits"]
+
+    UM["User Management"]
+    BT["Battle"]
+    TG["Tamagotchi"]
+    NT["Notification"]
+    MP["Map"]
+    MR["Monster Raid"]
+    GD["Guild"]
+    PR["Package Registry"]
+
+    UMdb[("PostgreSQL")]
+    BTdb[("PostgreSQL<br/>Redis")]
+    TGdb[("PostgreSQL")]
+    NTdb[("Redis")]
+    MPdb[("Redis")]
+    MRdb[("PostgreSQL<br/>Redis")]
+    GDdb[("PostgreSQL")]
+    PRdb[("PostgreSQL")]
+
+    %% Clients reach the system only through the Gateway.
+    Client -->|"REST · Bearer token<br/>GET /ws/negotiate"| GW
+
+    %% The Gateway routes every REST request to the service that owns it,
+    %% forwarding X-User-Id + X-Gateway-Key instead of the token.
+    GW --> UM
+    GW --> BT
+    GW --> TG
+    GW --> NT
+    GW --> MP
+    GW --> MR
+    GW --> GD
+    GW --> PR
+
+    %% Service-to-service REST also goes through the Gateway, carrying the
+    %% caller's own X-Service-Key.
+    BT -->|"to User Management,<br/>Tamagotchi, Package Registry"| GW
+    MR -->|"to User Management,<br/>Tamagotchi, Guild"| GW
+    PR -->|"to Monster Raid"| GW
+    MP -->|"to User Management"| GW
+    TG -->|"to Package Registry,<br/>User Management"| GW
+    GD -->|"to User Management"| GW
+
+    %% WebSockets: negotiated by the Gateway, then direct to the service.
+    Client ==>|"WebSocket + ticket"| BT
+    Client ==>|"WebSocket + ticket"| MP
+    Client ==>|"WebSocket + ticket"| MR
+    Client ==>|"WebSocket + ticket"| GD
+
+    %% Events for Notification Service (Redis Pub/Sub, not through the Gateway).
+    UM -.->|events| NT
+    BT -.->|events| NT
+    MP -.->|events| NT
+    MR -.->|events| NT
+    GD -.->|events| NT
+
+    %% Each service owns its data store.
+    UM --- UMdb
+    BT --- BTdb
+    TG --- TGdb
+    NT --- NTdb
+    MP --- MPdb
+    MR --- MRdb
+    GD --- GDdb
+    PR --- PRdb
+
+    classDef client fill:#eef1f4,stroke:#5a6470,stroke-width:2px,color:#1f2933
+    classDef gateway fill:#fdecc8,stroke:#c27c0e,stroke-width:3px,color:#3d2a05
+    classDef blue fill:#dbe8f7,stroke:#2f6db5,stroke-width:2px,color:#10243e
+    classDef purple fill:#e6e1f5,stroke:#5b48a2,stroke-width:2px,color:#1d1638
+    classDef green fill:#dcefe2,stroke:#2e7d4f,stroke-width:2px,color:#0f2d1b
+    classDef db fill:#f4f6f8,stroke:#9aa5b1,color:#3c4650
+
+    class Client client
+    class GW gateway
+    class MR,BT,GD,MP blue
+    class TG,PR purple
+    class UM,NT green
+    class UMdb,BTdb,TGdb,NTdb,MPdb,MRdb,GDdb,PRdb db
+
+    %% Edge colours: client and routed REST dark, service calls amber,
+    %% WebSockets blue, events grey.
+    linkStyle 0,1,2,3,4,5,6,7,8 stroke:#3c4650,stroke-width:2px
+    linkStyle 9,10,11,12,13,14 stroke:#c27c0e,stroke-width:2px
+    linkStyle 15,16,17,18 stroke:#2f6db5,stroke-width:3px
+    linkStyle 19,20,21,22,23 stroke:#8a939c,stroke-width:1.5px

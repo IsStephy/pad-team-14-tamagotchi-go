@@ -205,19 +205,25 @@ services:
     restart: unless-stopped
 
   map-service:
-    image: dackohn/map-service:v1.0.0
+    image: dackohn/map-service:v2
     depends_on:
       map-service-db:
         condition: service_healthy
     environment:
       PORT: 8085
       REDIS_URL: redis://:${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}@map-service-db:6379
-      # Empty = built-in mock of User Management (fixed test data), and user
-      # tokens for testing come from POST /auth/mock-token. Set it and the
-      # service verifies real RS256 tokens against User Management's JWKS.
-      USER_MANAGEMENT_URL: ${MAP_USER_MANAGEMENT_URL:-}
-      # Sent as X-Service-Key to User Management — the key it knows Map by.
+      # Every request must carry this key (X-Gateway-Key); stream tickets are
+      # signed with it too. The service no longer verifies user tokens.
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
+      # Relationships come from User Management, through the gateway, as Map
+      # (X-Service-Key).
+      USER_MANAGEMENT_URL: ${MAP_USER_MANAGEMENT_URL:-http://gateway:8080}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_MAP:-}
+      REQUEST_TIMEOUT_MS: ${MAP_REQUEST_TIMEOUT_MS:-5000}
+      MAX_CONCURRENT_REQUESTS: ${MAP_MAX_CONCURRENT_REQUESTS:-100}
+      UPSTREAM_TIMEOUT_MS: ${MAP_UPSTREAM_TIMEOUT_MS:-3000}
+      REDIS_COMMAND_TIMEOUT_MS: ${MAP_REDIS_COMMAND_TIMEOUT_MS:-2000}
+      MAX_WS_CONNECTIONS: ${MAP_MAX_WS_CONNECTIONS:-1000}
     ports:
       - "${MAP_PORT:-8085}:8085"
     restart: unless-stopped
@@ -257,7 +263,7 @@ services:
     restart: unless-stopped
 
   monster-raid-service:
-    image: dackohn/monster-raid-service:v1.0.0
+    image: dackohn/monster-raid-service:v2
     depends_on:
       monster-raid-service-db:
         condition: service_healthy
@@ -267,16 +273,27 @@ services:
       PORT: 8086
       DATABASE_URL: postgresql://${MONSTER_RAID_DB_USER}:${MONSTER_RAID_DB_PASSWORD}@monster-raid-service-db:5432/${MONSTER_RAID_DB_NAME:-monster_raid_db}
       REDIS_URL: redis://:${MONSTER_RAID_REDIS_PASSWORD}@monster-raid-service-cache:6379
-      # Empty = built-in mocks with fixed test data. Point them at the real
-      # services once those are in this file, e.g. http://guild-service:<port>.
-      GUILD_SERVICE_URL: ${MONSTER_RAID_GUILD_SERVICE_URL:-}
-      TAMAGOTCHI_SERVICE_URL: ${MONSTER_RAID_TAMAGOTCHI_SERVICE_URL:-}
-      USER_MANAGEMENT_URL: ${MONSTER_RAID_USER_MANAGEMENT_URL:-}
-      # Sent as X-Service-Key to User Management — the key it knows Monster Raid by.
+      # Every request must carry this key (X-Gateway-Key); live-raid tickets
+      # are signed with it too. The service no longer verifies user tokens.
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
+      # Guild (membership), Tamagotchi (ownership, attack power) and User
+      # Management (rewards) are called through the gateway, as Monster Raid:
+      # each call carries SERVICE_KEY_MONSTER_RAID as X-Service-Key.
+      GUILD_SERVICE_URL: ${MONSTER_RAID_GUILD_SERVICE_URL:-http://gateway:8080}
+      TAMAGOTCHI_SERVICE_URL: ${MONSTER_RAID_TAMAGOTCHI_SERVICE_URL:-http://gateway:8080}
+      USER_MANAGEMENT_URL: ${MONSTER_RAID_USER_MANAGEMENT_URL:-http://gateway:8080}
+      GUILD_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
+      TAMAGOTCHI_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
       # POST /raids accepts only Package Registry's key: the same value
       # Package Registry sends, so it is set once in .env.
       SERVICE_KEYS: package-registry-service=${PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY:-}
+      REQUEST_TIMEOUT_MS: ${MONSTER_RAID_REQUEST_TIMEOUT_MS:-5000}
+      MAX_CONCURRENT_REQUESTS: ${MONSTER_RAID_MAX_CONCURRENT_REQUESTS:-100}
+      UPSTREAM_TIMEOUT_MS: ${MONSTER_RAID_UPSTREAM_TIMEOUT_MS:-3000}
+      REDIS_COMMAND_TIMEOUT_MS: ${MONSTER_RAID_REDIS_COMMAND_TIMEOUT_MS:-2000}
+      PG_STATEMENT_TIMEOUT_MS: ${MONSTER_RAID_PG_STATEMENT_TIMEOUT_MS:-3000}
+      MAX_WS_CONNECTIONS: ${MONSTER_RAID_MAX_WS_CONNECTIONS:-1000}
     ports:
       - "${MONSTER_RAID_PORT:-8086}:8086"
     restart: unless-stopped
@@ -300,7 +317,7 @@ services:
     restart: unless-stopped
 
   guild-service:
-    image: isstephy1/guild-service:v1.2.0
+    image: isstephy1/guild-service:v2
     depends_on:
       guild-service-db:
         condition: service_healthy
@@ -311,9 +328,14 @@ services:
       DB_NAME: ${GUILD_DB_NAME:-guild_db}
       DB_USER: ${GUILD_DB_USER:?set it in .env — copy .env.example}
       DB_PASSWORD: ${GUILD_DB_PASSWORD:?set it in .env — copy .env.example}
-      # Empty = dev tokens from POST /dev/token. Set it and the service
-      # verifies real RS256 tokens against User Management's JWKS instead.
-      USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-}
+      # Every request must carry this key (X-Gateway-Key); chat tickets are
+      # signed with it too. The service no longer verifies user tokens.
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
+      # Monster Raid's own key: it reads GET /guilds/{guildId} as itself.
+      SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
+      REQUEST_TIMEOUT_MS: ${GUILD_REQUEST_TIMEOUT_MS:-8000}
+      MAX_CONCURRENT_REQUESTS: ${GUILD_MAX_CONCURRENT_REQUESTS:-40}
+      MAX_WS_CONNECTIONS: ${GUILD_MAX_WS_CONNECTIONS:-500}
     ports:
       - "${GUILD_PORT:-8087}:8087"
     restart: unless-stopped
@@ -338,7 +360,7 @@ services:
     restart: unless-stopped
 
   package-registry-service:
-    image: isstephy1/package-registry-service:v1.2.0
+    image: isstephy1/package-registry-service:v2
     depends_on:
       package-registry-service-db:
         condition: service_healthy
@@ -349,15 +371,52 @@ services:
       DB_NAME: ${PACKAGE_REGISTRY_DB_NAME:-package_registry_db}
       DB_USER: ${PACKAGE_REGISTRY_DB_USER:?set it in .env — copy .env.example}
       DB_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD:?set it in .env — copy .env.example}
-      USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-}
+      # Every request must carry this key (X-Gateway-Key). The service no
+      # longer verifies user tokens.
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       # POST /admins itself needs an admin, so the first one is seeded here.
       PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID: ${PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID:-admin-1}
-      # Empty = built-in mock of Monster Raid. Point it at the real service
-      # and send our service key with POST /raids.
-      MONSTER_RAID_URL: ${PACKAGE_REGISTRY_MONSTER_RAID_URL:-}
+      # POST /raids goes through the gateway, like all service-to-service
+      # REST, carrying our service key.
+      MONSTER_RAID_URL: ${PACKAGE_REGISTRY_MONSTER_RAID_URL:-http://gateway:8080}
       MONSTER_RAID_SERVICE_KEY: ${PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY:-}
+      REQUEST_TIMEOUT_MS: ${PACKAGE_REGISTRY_REQUEST_TIMEOUT_MS:-8000}
+      MONSTER_RAID_TIMEOUT_MS: ${PACKAGE_REGISTRY_MONSTER_RAID_TIMEOUT_MS:-5000}
+      MAX_CONCURRENT_REQUESTS: ${PACKAGE_REGISTRY_MAX_CONCURRENT_REQUESTS:-40}
     ports:
       - "${PACKAGE_REGISTRY_PORT:-8088}:8088"
+    restart: unless-stopped
+
+  # ------------------------------------------------------------ Python / gateway
+  # The single entry point: clients, and services calling each other, go
+  # through it. It verifies user tokens against User Management's keys, strips
+  # Authorization and forwards the verified user as X-User-Id + X-Gateway-Key.
+  # Service URLs default to http://<service-name>:<port>, matching this file.
+  gateway:
+    image: isstephy1/gateway:v2
+    depends_on:
+      - user-management-service
+      - battle-service
+      - tamagotchi-service
+      - notification-service
+      - map-service
+      - monster-raid-service
+      - guild-service
+      - package-registry-service
+    environment:
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
+      AUTH_MODE: ${GATEWAY_AUTH_MODE:-gateway}
+      REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
+      MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-100}
+      MAX_CONCURRENT_PER_SERVICE: ${GATEWAY_MAX_CONCURRENT_PER_SERVICE:-50}
+      # What GET /ws/negotiate hands to clients: each service's own host port,
+      # since the socket connects to the service directly.
+      BATTLE_WS_PUBLIC_URL: ws://localhost:${BATTLE_PORT:-8082}
+      MAP_WS_PUBLIC_URL: ws://localhost:${MAP_PORT:-8085}
+      MONSTER_RAID_WS_PUBLIC_URL: ws://localhost:${MONSTER_RAID_PORT:-8086}
+      GUILD_WS_PUBLIC_URL: ws://localhost:${GUILD_PORT:-8087}
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
     restart: unless-stopped
 
 # Named volumes keep each database's data across restarts and rebuilds.
