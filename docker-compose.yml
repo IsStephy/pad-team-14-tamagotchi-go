@@ -139,8 +139,6 @@ services:
     environment:
       PORT: 8083
       APP_ENV: production
-      # Requests are only accepted from the API Gateway (its X-Gateway-Key).
-      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       DATABASE_URL: postgres://${TAMAGOTCHI_DB_USER}:${TAMAGOTCHI_DB_PASSWORD}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}?sslmode=disable
       REQUEST_TIMEOUT_MS: ${TAMAGOTCHI_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${TAMAGOTCHI_MAX_CONCURRENT_REQUESTS:-10}
@@ -185,8 +183,6 @@ services:
     environment:
       PORT: 8084
       APP_ENV: production
-      # Requests are only accepted from the API Gateway (its X-Gateway-Key).
-      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
       REQUEST_TIMEOUT_MS: ${NOTIFICATION_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${NOTIFICATION_MAX_CONCURRENT_REQUESTS:-10}
