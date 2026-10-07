@@ -1816,12 +1816,12 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 
 | Service | Image | Needs | Port |
 |---|---|---|---|
-| User Management | [`pshasuleiman/user-management-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
-| Battle | [`pshasuleiman/battle-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
-| Tamagotchi | [`dan1el50/tamagotchi-service:v2.0.1`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
-| Notification | [`dan1el50/notification-service:v2.0.1`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
-| Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
-| Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
+| User Management | [`pshasuleiman/user-management-service:latest`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
+| Battle | [`pshasuleiman/battle-service:latest`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
+| Tamagotchi | [`dan1el50/tamagotchi-service:latest`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
+| Notification | [`dan1el50/notification-service:latest`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
+| Map | [`dackohn/map-service:latest`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
+| Monster Raid | [`dackohn/monster-raid-service:latest`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
 | Guild | [`isstephy1/guild-service:latest`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
 | Package Registry | [`isstephy1/package-registry-service:latest`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
 | Gateway | [`isstephy1/gateway:latest`](https://hub.docker.com/r/isstephy1/gateway) | — | `8080` |
@@ -1851,11 +1851,10 @@ The team's rule, applied by each repo's release workflow
   The previous version is read from the repo's git tags, and the merged branch
   from GitHub's merge commit (`Merge pull request #N from <user>/feature/...`) —
   one more reason PRs are merged with a merge commit.
-- **In `docker-compose.yml`, Guild, Package Registry and the Gateway use
-  `latest`**: the stack follows each new release to `main` without a CPR
-  change. Run `docker compose pull` to fetch a new release; to reproduce an
-  older stack, pin an exact `vX.Y.Z` instead. The other services pin an exact
-  version.
+- **`docker-compose.yml` runs every service from `latest`**: the stack
+  follows each release to `main` without a CPR change. Run
+  `docker compose pull` to fetch new releases; to reproduce an older stack,
+  pin an exact `vX.Y.Z` instead.
 
 Older tags (`v1.x.y` from Lab 1, and the single `v2` tag Guild and Package
 Registry used briefly in Lab 2) stay on Docker Hub; new releases follow the
