@@ -74,7 +74,7 @@ All cross-service reads (e.g. Battle Service checking a user's currency) go thro
 
 ### Authentication & authorization
 
-> **Status (Lab 2):** enforced at the API Gateway. Map, Monster Raid, Guild and Package Registry run this way; the other services follow as they move behind the gateway.
+> **Status (Lab 2):** enforced at the API Gateway. User Management, Battle, Map, Monster Raid, Guild and Package Registry run this way; the other services follow as they move behind the gateway.
 
 There are two kinds of caller, and they never share credentials:
 
@@ -1419,7 +1419,7 @@ Claim a free one when you wire up your service and add it here.
 
 | Service | Port |
 |---|---|
-| User Management | `8081` |
+| User Management | `8081` (not published: reached only through the gateway) |
 | Battle | `8082` |
 | Tamagotchi | `8083` |
 | Notification | `8084` |
@@ -1578,6 +1578,15 @@ Set `PORT` to run somewhere else: `PORT=9081 ./run.sh`.
 User Management. `POST /users/register`, `POST /users/login` and the JWKS need
 no token. No WebSocket endpoints, and no outgoing calls.
 
+**Through the gateway only.** Every request needs the gateway's
+`X-Gateway-Key` (`401` otherwise), except `/health` and
+`/.well-known/jwks.json`, which the gateway calls itself to probe the service
+and to verify tokens. The player is the gateway's `X-User-Id`; this service
+issues tokens but no longer verifies them. Its access rules stay: acting only
+as yourself (`403` otherwise), `currency/adjust` only with Battle's or Monster
+Raid's `X-Service-Key`, `relationship` also with Map's. Its port is not
+published in the shared stack.
+
 ### Battle Service
 
 **What it does:** runs turn-based PvP matches — damage from Tamagotchi levels,
@@ -1613,6 +1622,14 @@ It takes the same `stop` / `clean` / `logs` / `test` commands and the same
 **Gateway routes:** `/battles/**` → Battle, including the combat reference at
 `GET /battles/reference` (it was `/combat/reference`, which no gateway route
 covers). `WS /battles/{battleId}/live` is negotiated, never proxied.
+
+**Through the gateway only.** Every request needs the gateway's
+`X-Gateway-Key` (`401` otherwise), except `/health` and the live sockets,
+which clients open directly with the gateway's ticket. The player is the
+gateway's `X-User-Id`, and the service no longer verifies tokens. Its own rules
+stay: the actor a request names must be that player, and only the challenged
+player may accept (`403` otherwise). Port `8082` stays published only for the
+live socket.
 
 **Live updates:** clients call the gateway's
 `GET /ws/negotiate?path=/battles/{battleId}/live` with their token and connect
