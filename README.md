@@ -1782,8 +1782,8 @@ works without cloning its repo.
 |---|---|---|
 | [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management, through the gateway | `http://localhost:8080` |
 | [`battle-service`](collections/battle-service.postman_collection.json) | Battle, through the gateway | `http://localhost:8080` |
-| [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi | `http://localhost:8083` |
-| [`notification-service`](collections/notification-service.postman_collection.json) | Notification | `http://localhost:8084` |
+| [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi, through the gateway | `http://localhost:8080` |
+| [`notification-service`](collections/notification-service.postman_collection.json) | Notification, through the gateway | `http://localhost:8080` |
 | [`map-service`](collections/map-service.postman_collection.json) | Map, through the gateway | `http://localhost:8080` |
 | [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid, through the gateway | `http://localhost:8080` |
 | [`guild-service`](collections/guild-service.postman_collection.json) | Guild | `http://localhost:8087` |
@@ -1797,6 +1797,8 @@ ids into collection variables as it goes. They also run headlessly:
 ```bash
 npx newman run collections/user-management-service.postman_collection.json --env-var battleServiceKey=<SERVICE_KEY_BATTLE>
 npx newman run collections/battle-service.postman_collection.json
+npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
+npx newman run collections/notification-service.postman_collection.json
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY>
 npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
@@ -1829,6 +1831,19 @@ that the winner was paid in User Management, which Battle reaches through the
 gateway. User Management's two currency adjustments are service-only, so they
 send Battle's key (`battleServiceKey`).
 
+The **tamagotchi-service** and **notification-service** collections go through
+the gateway the same way, with new players on every run. Battle (`xp`,
+`transfer-owner`) and Monster Raid (`GET /tamagotchis/{id}`) are played with
+their service keys. Stat updates are checked against Package Registry, so the
+Tamagotchi collection first registers a package directly at Package Registry
+as the seeded admin (`packageAdminId`, `admin-1` by default), the one step that
+skips the gateway. Both show what the services refuse (no token, acting as
+someone else, forged identity headers, a player or the wrong service key on
+Battle's endpoints, a direct call). Notifications only come from Redis events,
+so a new player's inbox is empty and "Mark my notification as read" is
+skipped; publish an event for that player (Notification's README, Events
+Consumed) to see it run.
+
 **Keys.** Some collections send a key, which has to match the value in your
 `.env`. Pass it with `--env-var`, as above, or set the collection variable in
 Postman:
@@ -1836,9 +1851,10 @@ Postman:
 | Collection | Variable | Value from `.env` |
 |---|---|---|
 | guild-service, package-registry-service | `gatewayKey` | `GATEWAY_KEY` (they call their service directly, so they play the gateway) |
-| guild-service, gateway | `monsterRaidServiceKey` | `SERVICE_KEY_MONSTER_RAID` |
+| tamagotchi-service | `gatewayKey` | `GATEWAY_KEY` (its setup step registers a package directly at Package Registry) |
+| guild-service, gateway, tamagotchi-service | `monsterRaidServiceKey` | `SERVICE_KEY_MONSTER_RAID` |
 | monster-raid-service | `packageRegistryServiceKey` | `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY` |
-| user-management-service | `battleServiceKey` | `SERVICE_KEY_BATTLE` |
+| user-management-service, tamagotchi-service | `battleServiceKey` | `SERVICE_KEY_BATTLE` |
 
 Adding yours: export in Postman **v2.1** format, name it
 `<service-name>.postman_collection.json`, and add a row to the table.
