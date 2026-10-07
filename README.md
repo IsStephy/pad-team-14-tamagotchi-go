@@ -1810,9 +1810,7 @@ players, logs them in at User Management, and uses real data — friendships
 and an enemy from User Management for Map; a guild from Guild and a Tamagotchi
 from Tamagotchi for Monster Raid. They also show what the services refuse
 (no token, acting as someone else, a player on an internal endpoint, a direct
-call that skips the gateway). Monster Raid's join and attack requests need
-Tamagotchi Service behind the gateway; until then they fail at "Owner creates a
-Tamagotchi".
+call that skips the gateway).
 
 The **gateway** collection exercises the system the way a client app does:
 players register and log in through the gateway (real User Management tokens),
