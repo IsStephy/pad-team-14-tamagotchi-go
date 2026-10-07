@@ -1440,12 +1440,19 @@ curl http://localhost:8083/health
 # {"service":"tamagotchi-service","status":"ok"}
 ```
 
-Every endpoint except `GET /health` and `GET /types/advantages` needs an
-`Authorization: Bearer <jwt>` header. For now the token is only checked for
-shape (three parts, a `sub` claim, not expired) — the signature is not
-verified. Owner ids must be valid, non-nil UUIDs and stat keys must be one of
-`hunger`, `tiredness`, `happiness`, `energy`, `cleanliness`, standing in for
-User Management and Package Registry until those are wired in.
+**In the shared stack** it's reached only through the gateway: every endpoint
+except `GET /health` needs the gateway's `X-Gateway-Key`, players are
+identified by `X-User-Id`, and Battle (`xp`, `transfer-owner`) and Monster Raid
+(`GET /tamagotchis/{id}`) by their `X-Service-Key` (`SERVICE_KEY_BATTLE`,
+`SERVICE_KEY_MONSTER_RAID`). Access per endpoint is in the table above.
+
+Stat updates are checked against the package's stat definitions, which it reads
+from Package Registry through the gateway (`GET /packages/{packageId}`): an
+undefined key or an unregistered package is `400`, and Package Registry being
+down is `502`.
+
+Without the gateway, call it with the gateway's headers yourself
+(`X-Gateway-Key` from `.env`, `X-User-Id`); the service's README has examples.
 
 ### Notification Service
 
@@ -1462,8 +1469,10 @@ curl http://localhost:8084/health
 docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning PUBLISH notification-events "{\"type\":\"BattleEnded\",\"userId\":\"11111111-1111-1111-1111-111111111111\",\"payload\":{\"result\":\"won\"}}"'
 ```
 
-Its endpoints take the same mock `Authorization: Bearer <jwt>` header as
-above; only `GET /health` is open.
+**In the shared stack** it's reached only through the gateway: every endpoint
+except `GET /health` needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
+player can only register their own device and read their own notifications.
+Without the gateway, send those headers yourself, as for Tamagotchi above.
 
 ### Map Service
 
@@ -1818,8 +1827,8 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 |---|---|---|---|
 | User Management | [`pshasuleiman/user-management-service:v2.0.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
 | Battle | [`pshasuleiman/battle-service:v2.0.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
-| Tamagotchi | [`dan1el50/tamagotchi-service:v2.0.1`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
-| Notification | [`dan1el50/notification-service:v2.0.1`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
+| Tamagotchi | [`dan1el50/tamagotchi-service:v2.1.1`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
+| Notification | [`dan1el50/notification-service:v2.1.1`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
 | Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
 | Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
 | Guild | [`isstephy1/guild-service:latest`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
