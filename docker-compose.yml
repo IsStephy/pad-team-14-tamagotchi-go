@@ -12,8 +12,8 @@
 #   database name  <service>-db              e.g. guild-service-db
 #   volume name    <service>-db-data         e.g. guild-service-db-data
 #   env prefix     <SERVICE>_                e.g. GUILD_DB_PASSWORD
-#   image          your published image pinned to a version tag — never a
-#                  build: context, never :latest
+#   image          your published Docker Hub image, never a build: context;
+#                  the stack uses :latest - the newest release to main
 #
 # Databases publish no host port: services reach them over the Compose network
 # by service name. Claim your host port in the README's port table and add your
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
   user-management-service:
-    image: pshasuleiman/user-management-service:v1.3.0
+    image: pshasuleiman/user-management-service:latest
     depends_on:
       user-management-service-db:
         condition: service_healthy
@@ -86,7 +86,7 @@ services:
     restart: unless-stopped
 
   battle-service:
-    image: pshasuleiman/battle-service:v1.3.0
+    image: pshasuleiman/battle-service:latest
     depends_on:
       battle-service-db:
         condition: service_healthy
@@ -132,13 +132,15 @@ services:
     restart: unless-stopped
 
   tamagotchi-service:
-    image: dan1el50/tamagotchi-service:v2.1.1
+    image: dan1el50/tamagotchi-service:latest
     depends_on:
       tamagotchi-service-db:
         condition: service_healthy
     environment:
       PORT: 8083
       APP_ENV: production
+      # Requests are only accepted from the API Gateway (its X-Gateway-Key).
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       DATABASE_URL: postgres://${TAMAGOTCHI_DB_USER}:${TAMAGOTCHI_DB_PASSWORD}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}?sslmode=disable
       REQUEST_TIMEOUT_MS: ${TAMAGOTCHI_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${TAMAGOTCHI_MAX_CONCURRENT_REQUESTS:-10}
@@ -176,13 +178,15 @@ services:
     restart: unless-stopped
 
   notification-service:
-    image: dan1el50/notification-service:v2.1.1
+    image: dan1el50/notification-service:latest
     depends_on:
       notification-service-db:
         condition: service_healthy
     environment:
       PORT: 8084
       APP_ENV: production
+      # Requests are only accepted from the API Gateway (its X-Gateway-Key).
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
       REQUEST_TIMEOUT_MS: ${NOTIFICATION_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${NOTIFICATION_MAX_CONCURRENT_REQUESTS:-10}
@@ -215,7 +219,7 @@ services:
     restart: unless-stopped
 
   map-service:
-    image: dackohn/map-service:v2
+    image: dackohn/map-service:latest
     depends_on:
       map-service-db:
         condition: service_healthy
@@ -273,7 +277,7 @@ services:
     restart: unless-stopped
 
   monster-raid-service:
-    image: dackohn/monster-raid-service:v2
+    image: dackohn/monster-raid-service:latest
     depends_on:
       monster-raid-service-db:
         condition: service_healthy
