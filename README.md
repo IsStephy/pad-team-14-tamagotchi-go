@@ -1795,13 +1795,13 @@ press **Run** — each collection runs top to bottom as one scenario, capturing
 ids into collection variables as it goes. They also run headlessly:
 
 ```bash
-npx newman run collections/user-management-service.postman_collection.json --env-var battleServiceKey=<key>
+npx newman run collections/user-management-service.postman_collection.json --env-var battleServiceKey=<SERVICE_KEY_BATTLE>
 npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/map-service.postman_collection.json
-npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<key>
-npx newman run collections/guild-service.postman_collection.json
-npx newman run collections/package-registry-service.postman_collection.json
-npx newman run collections/gateway.postman_collection.json
+npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY>
+npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
+npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY>
+npx newman run collections/gateway.postman_collection.json --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 ```
 
 The **map-service** and **monster-raid-service** collections run the whole
@@ -1810,10 +1810,9 @@ players, logs them in at User Management, and uses real data — friendships
 and an enemy from User Management for Map; a guild from Guild and a Tamagotchi
 from Tamagotchi for Monster Raid. They also show what the services refuse
 (no token, acting as someone else, a player on an internal endpoint, a direct
-call that skips the gateway). Monster Raid's needs Package Registry's key:
-`--env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY>`.
-Its join and attack requests need Tamagotchi Service behind the gateway; until
-then they fail at "Owner creates a Tamagotchi".
+call that skips the gateway). Monster Raid's join and attack requests need
+Tamagotchi Service behind the gateway; until then they fail at "Owner creates a
+Tamagotchi".
 
 The **gateway** collection exercises the system the way a client app does:
 players register and log in through the gateway (real User Management tokens),
@@ -1825,27 +1824,23 @@ Guild and Package Registry running with the same `GATEWAY_KEY`. Package
 Registry's admin-only success paths stay in that service's own collection:
 admins are seeded by user id, and User Management issues new ids on every run.
 
-Collections for services that need a user token start with `Get Dev Token`
-requests, which mint test tokens while the service's `USER_MANAGEMENT_URL` is
-unset and save them into collection variables for the requests that follow.
-Monster Raid's `Create Raid` is internal and authenticates with Package
-Registry's service key instead: pass `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY`
-from your `.env` as `packageRegistryServiceKey`, as above, or set that
-collection variable in Postman.
-
 The **user-management-service** and **battle-service** collections go through
 the gateway like a client app: their players register and log in through User
 Management, and each acts with their own token. Battle's run ends by checking
 that the winner was paid in User Management, which Battle reaches through the
 gateway. User Management's two currency adjustments are service-only, so they
-send Battle's key: pass `SERVICE_KEY_BATTLE` from your `.env` as
-`battleServiceKey`, as above.
+send Battle's key (`battleServiceKey`).
 
-The **guild** and **package-registry** collections call their service
-directly, so they play the gateway: they send `X-Gateway-Key` and `X-User-Id`
-themselves instead of minting tokens. Set their `gatewayKey` variable to the
-`GATEWAY_KEY` in your `.env` (the default, `change_me`, matches
-`.env.example`), e.g. `npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<key>`.
+**Keys.** Some collections send a key, which has to match the value in your
+`.env`. Pass it with `--env-var`, as above, or set the collection variable in
+Postman:
+
+| Collection | Variable | Value from `.env` |
+|---|---|---|
+| guild-service, package-registry-service | `gatewayKey` | `GATEWAY_KEY` (they call their service directly, so they play the gateway) |
+| guild-service, gateway | `monsterRaidServiceKey` | `SERVICE_KEY_MONSTER_RAID` |
+| monster-raid-service | `packageRegistryServiceKey` | `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY` |
+| user-management-service | `battleServiceKey` | `SERVICE_KEY_BATTLE` |
 
 Adding yours: export in Postman **v2.1** format, name it
 `<service-name>.postman_collection.json`, and add a row to the table.
