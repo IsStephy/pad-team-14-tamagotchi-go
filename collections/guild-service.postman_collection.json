@@ -635,6 +635,46 @@
           "response": []
         },
         {
+          "name": "Get a guild with a non-UUID id (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('error is \"guild not found\"', function () { pm.expect(pm.response.json().error).to.eql('guild not found'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/guilds/g1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "g1"
+              ]
+            },
+            "description": "guild_id is a UUID column; an id in any other format (like the ones Monster Raid may send) is a guild that cannot exist, so 404 - not a 500 from the database."
+          },
+          "response": []
+        },
+        {
           "name": "Duplicate guild name (409)",
           "event": [
             {
