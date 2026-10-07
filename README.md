@@ -1454,6 +1454,13 @@ down is `502`.
 Without the gateway, call it with the gateway's headers yourself
 (`X-Gateway-Key` from `.env`, `X-User-Id`); the service's README has examples.
 
+**Gateway routes:** `/tamagotchis/**`, `/types/**` and
+`/users/{userId}/tamagotchis/**` → Tamagotchi (the gateway matches the last one
+before User Management's `/users/**`). `GET /types/advantages` needs no token.
+No WebSocket endpoints. Its one outgoing call, Package Registry's
+`GET /packages/{packageId}`, goes through the gateway too
+(`TAMAGOTCHI_PACKAGE_REGISTRY_URL`, `http://gateway:8080` when empty).
+
 ### Notification Service
 
 Go, Redis 7. Runs on `8084` in the shared stack. Notifications are created by events published to the Redis
@@ -1473,6 +1480,10 @@ docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD
 except `GET /health` needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
 player can only register their own device and read their own notifications.
 Without the gateway, send those headers yourself, as for Tamagotchi above.
+
+**Gateway routes:** `/notifications/**` → Notification. No WebSocket endpoints
+and no outgoing calls; events arrive on the Redis channel
+`notification-events`, not through the gateway.
 
 ### Map Service
 
