@@ -165,7 +165,7 @@ Every error body is `{"error": "..."}`.
 | | `POST /battles/{battleId}/accept` | Player (self — the challenged player) |
 | | `GET /battles/{battleId}` | Player |
 | | `POST /battles/{battleId}/action` | Player (self — a participant) |
-| | `WS /battles/{battleId}/live` | Player |
+| | `WS /battles/{battleId}/live` | Player — gateway ticket |
 | Tamagotchi | `GET /types/advantages` | Public |
 | | `POST /tamagotchis` | Player (self — the owner) |
 | | `GET /tamagotchis/{id}` | Player, or **Service** — Monster Raid (ownership and attack power on raid joins) |
@@ -480,7 +480,7 @@ Success Response (200 OK):
 
 **Live Battle Updates**
 
-`WS` `/battles/{battleId}/live` — Description: Server pushes live turn/state updates for a battle.
+`WS` `/battles/{battleId}/live` — Description: Server pushes live turn/state updates for a battle. The URL comes from the gateway's WebSocket negotiation, with a one-time ticket for this path; a bad, expired, reused or wrong-path ticket, or an unknown battle, is closed with `1008`. The first frame is the battle as it is now; `payload` has the shape of `GET /battles/{battleId}`. After `battle_end` the socket closes with `1000`.
 
 Server push message:
 
@@ -1585,7 +1585,8 @@ the elemental type matchup and equipped boosts, turn tracking, and the reward
 settlement (currency, XP, the loser's primary Tamagotchi) when a match ends.
 
 **Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
-v2 (`docker compose version`). Nothing else. This service owns no user or
+v2 (`docker compose version`). Nothing else: Compose starts its PostgreSQL and
+its Redis. This service owns no user or
 Tamagotchi records: it reads combat stats from Tamagotchi Service, package stat
 definitions from Package Registry, and settles rewards through User Management.
 Each of those falls back to an in-process mock while its URL is unset, so it
@@ -1612,6 +1613,15 @@ It takes the same `stop` / `clean` / `logs` / `test` commands and the same
 **Gateway routes:** `/battles/**` → Battle, including the combat reference at
 `GET /battles/reference` (it was `/combat/reference`, which no gateway route
 covers). `WS /battles/{battleId}/live` is negotiated, never proxied.
+
+**Live updates:** clients call the gateway's
+`GET /ws/negotiate?path=/battles/{battleId}/live` with their token and connect
+to the returned `ws://localhost:8082/battles/{battleId}/live?ticket=…` within 60
+seconds. Battle checks the ticket against `GATEWAY_KEY`, keeps used ticket ids
+in its own Redis (`battle-service-cache`) so each opens one socket, and sends
+`turn_update` frames (on connect, then after every turn) and a final
+`battle_end`. `BATTLE_MAX_WS_CONNECTIONS` (500) caps open sockets; the next one
+is closed with `1013`.
 
 **Outgoing calls go through the gateway** too: in the shared stack
 `USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
@@ -1858,7 +1868,7 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 | Service | Image | Needs | Port |
 |---|---|---|---|
 | User Management | [`pshasuleiman/user-management-service:latest`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
-| Battle | [`pshasuleiman/battle-service:latest`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
+| Battle | [`pshasuleiman/battle-service:latest`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 + Redis 7 | `8082` |
 | Tamagotchi | [`dan1el50/tamagotchi-service:latest`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
 | Notification | [`dan1el50/notification-service:latest`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
 | Map | [`dackohn/map-service:latest`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
