@@ -1572,6 +1572,12 @@ curl http://localhost:8081/health
 
 Set `PORT` to run somewhere else: `PORT=9081 ./run.sh`.
 
+**Gateway routes:** `/users/**` → User Management, except
+`/users/{userId}/tamagotchis/**` (Tamagotchi) and `/users/{userId}/guilds/**`
+(Guild), which the gateway matches first; `GET /.well-known/jwks.json` →
+User Management. `POST /users/register`, `POST /users/login` and the JWKS need
+no token. No WebSocket endpoints, and no outgoing calls.
+
 ### Battle Service
 
 **What it does:** runs turn-based PvP matches — damage from Tamagotchi levels,
@@ -1602,6 +1608,24 @@ curl http://localhost:8082/health
 
 It takes the same `stop` / `clean` / `logs` / `test` commands and the same
 `PORT` override as above.
+
+**Gateway routes:** `/battles/**` → Battle, including the combat reference at
+`GET /battles/reference` (it was `/combat/reference`, which no gateway route
+covers). `WS /battles/{battleId}/live` is negotiated, never proxied.
+
+**Outgoing calls go through the gateway** too: in the shared stack
+`USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
+`PACKAGE_REGISTRY_SERVICE_URL` all default to `http://gateway:8080`, and every
+call carries Battle's own `X-Service-Key` (`SERVICE_KEY_BATTLE`), never a
+player's token:
+
+| Call | Owner |
+|---|---|
+| `POST /users/{userId}/currency/adjust` | User Management — **Service**: Battle |
+| `GET /types/advantages` | Tamagotchi — Public |
+| `GET /tamagotchis/{id}`, `GET /users/{userId}/tamagotchis` | Tamagotchi — reading combat stats and equipped boosts |
+| `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` | Tamagotchi — **Service**: Battle |
+| `GET /packages/{packageId}` | Package Registry — Public |
 ### Guild Service
 
 **What it does:** owns guild identity, membership and roles
@@ -1756,8 +1780,8 @@ works without cloning its repo.
 
 | Collection | Service | Targets |
 |---|---|---|
-| [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management | `http://localhost:8081` |
-| [`battle-service`](collections/battle-service.postman_collection.json) | Battle | `http://localhost:8082` |
+| [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management, through the gateway | `http://localhost:8080` |
+| [`battle-service`](collections/battle-service.postman_collection.json) | Battle, through the gateway | `http://localhost:8080` |
 | [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi | `http://localhost:8083` |
 | [`notification-service`](collections/notification-service.postman_collection.json) | Notification | `http://localhost:8084` |
 | [`map-service`](collections/map-service.postman_collection.json) | Map, through the gateway | `http://localhost:8080` |
@@ -1771,7 +1795,7 @@ press **Run** — each collection runs top to bottom as one scenario, capturing
 ids into collection variables as it goes. They also run headlessly:
 
 ```bash
-npx newman run collections/user-management-service.postman_collection.json
+npx newman run collections/user-management-service.postman_collection.json --env-var battleServiceKey=<key>
 npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<key>
@@ -1809,6 +1833,14 @@ Registry's service key instead: pass `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY`
 from your `.env` as `packageRegistryServiceKey`, as above, or set that
 collection variable in Postman.
 
+The **user-management-service** and **battle-service** collections go through
+the gateway like a client app: their players register and log in through User
+Management, and each acts with their own token. Battle's run ends by checking
+that the winner was paid in User Management, which Battle reaches through the
+gateway. User Management's two currency adjustments are service-only, so they
+send Battle's key: pass `SERVICE_KEY_BATTLE` from your `.env` as
+`battleServiceKey`, as above.
+
 The **guild** and **package-registry** collections call their service
 directly, so they play the gateway: they send `X-Gateway-Key` and `X-User-Id`
 themselves instead of minting tokens. Set their `gatewayKey` variable to the
@@ -1825,12 +1857,12 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 
 | Service | Image | Needs | Port |
 |---|---|---|---|
-| User Management | [`pshasuleiman/user-management-service:v2.0.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
-| Battle | [`pshasuleiman/battle-service:v2.0.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
-| Tamagotchi | [`dan1el50/tamagotchi-service:v2.1.1`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
-| Notification | [`dan1el50/notification-service:v2.1.1`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
-| Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
-| Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
+| User Management | [`pshasuleiman/user-management-service:latest`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
+| Battle | [`pshasuleiman/battle-service:latest`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
+| Tamagotchi | [`dan1el50/tamagotchi-service:latest`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
+| Notification | [`dan1el50/notification-service:latest`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
+| Map | [`dackohn/map-service:latest`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
+| Monster Raid | [`dackohn/monster-raid-service:latest`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
 | Guild | [`isstephy1/guild-service:latest`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
 | Package Registry | [`isstephy1/package-registry-service:latest`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
 | Gateway | [`isstephy1/gateway:latest`](https://hub.docker.com/r/isstephy1/gateway) | — | `8080` |
@@ -1860,11 +1892,10 @@ The team's rule, applied by each repo's release workflow
   The previous version is read from the repo's git tags, and the merged branch
   from GitHub's merge commit (`Merge pull request #N from <user>/feature/...`) —
   one more reason PRs are merged with a merge commit.
-- **In `docker-compose.yml`, Guild, Package Registry and the Gateway use
-  `latest`**: the stack follows each new release to `main` without a CPR
-  change. Run `docker compose pull` to fetch a new release; to reproduce an
-  older stack, pin an exact `vX.Y.Z` instead. The other services pin an exact
-  version.
+- **`docker-compose.yml` runs every service from `latest`**: the stack
+  follows each release to `main` without a CPR change. Run
+  `docker compose pull` to fetch new releases; to reproduce an older stack,
+  pin an exact `vX.Y.Z` instead.
 
 Older tags (`v1.x.y` from Lab 1, and the single `v2` tag Guild and Package
 Registry used briefly in Lab 2) stay on Docker Hub; new releases follow the
