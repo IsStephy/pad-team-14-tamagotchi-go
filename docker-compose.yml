@@ -131,7 +131,7 @@ services:
     restart: unless-stopped
 
   tamagotchi-service:
-    image: dan1el50/tamagotchi-service:v2.0.2
+    image: dan1el50/tamagotchi-service:v2.1.1
     depends_on:
       tamagotchi-service-db:
         condition: service_healthy
@@ -146,6 +146,8 @@ services:
       # Battle calls xp and transfer-owner; Monster Raid reads GET /tamagotchis/{id}.
       SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
+      # Empty = Package Registry through the gateway (http://gateway:8080).
+      PACKAGE_REGISTRY_URL: ${TAMAGOTCHI_PACKAGE_REGISTRY_URL:-}
     ports:
       - "${TAMAGOTCHI_PORT:-8083}:8083"
     healthcheck:
@@ -173,7 +175,7 @@ services:
     restart: unless-stopped
 
   notification-service:
-    image: dan1el50/notification-service:v2.1.0
+    image: dan1el50/notification-service:v2.1.1
     depends_on:
       notification-service-db:
         condition: service_healthy
