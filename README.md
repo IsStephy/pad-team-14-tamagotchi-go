@@ -74,31 +74,69 @@ All cross-service reads (e.g. Battle Service checking a user's currency) go thro
 
 ### Authentication & authorization
 
-> **Status:** agreed target contract, not yet enforced. In Lab 1 services still take `userId` from the request as given; each service adopts the rules below as User Management ships the key endpoint.
+> **Status (Lab 2):** enforced at the API Gateway. Map, Monster Raid, Guild and Package Registry run this way; the other services follow as they move behind the gateway.
 
 There are two kinds of caller, and they never share credentials:
 
 - **Players** (client apps) carry a **user token** issued at login.
 - **Services** calling each other's internal endpoints carry a **service key**. A player token is never accepted there.
 
+Every request — from a client or from another service — goes through the **API Gateway** (port `8080`).
+
 #### User tokens
 
 - **Issued by** User Management's `POST /users/login`: a JWT signed with **RS256**, valid for `JWT_TTL` (default 24 h). Claims: `sub` (the `userId`), `iat` and `exp`. Nothing else — roles are *not* in the token (see below).
-- **Sent as** `Authorization: Bearer <token>`. WebSocket clients can't set headers, so they pass it on the connect URL instead: `?token=<token>`.
-- **Verified locally** by every service using User Management's public key from `GET /.well-known/jwks.json` (fetched once and cached). No service ever holds the signing secret, and no request needs a round-trip to User Management.
-- **Identity comes from `sub`.** Where an endpoint also carries a `userId` (path or body), it must equal `sub`, or the request is rejected. The `userId` fields stay in the payloads for compatibility, but the token is the source of truth.
-- **Roles are checked by the service that owns them**, against its own data and the caller's `sub`: guild roles by Guild Service, admins and package moderators by Package Registry. That's why the token doesn't carry roles, and no role data has to be synchronised between services. Since `POST /admins` itself needs an admin, Package Registry seeds the first admin from configuration (e.g. `PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID` in `.env`).
+- **Sent to the gateway** as `Authorization: Bearer <token>`.
+- **Verified by the gateway** against User Management's public key from `GET /.well-known/jwks.json` (fetched once and cached). The gateway then **removes `Authorization`** and forwards the request with:
+
+  | Header | Value |
+  |---|---|
+  | `X-User-Id` | The token's `sub` — on player requests |
+  | `X-Gateway-Key` | The shared `GATEWAY_KEY` — on every forwarded request |
+
+  Any copy of these headers a client sends is dropped, so they can't be forged.
+- **Services never verify tokens.** They answer `401` to any request without a valid `X-Gateway-Key` (except `/health` and `/docs`), and take the caller from `X-User-Id`.
+- **Identity comes from `X-User-Id`.** Where an endpoint also carries a `userId` (path or body), it must equal it, or the request is rejected (`403`). The `userId` fields stay in the payloads for compatibility.
+- **Roles are checked by the service that owns them**, against its own data and the caller: guild roles by Guild Service, admins and package moderators by Package Registry. That's why the token doesn't carry roles, and no role data has to be synchronised between services. Since `POST /admins` itself needs an admin, Package Registry seeds the first admin from configuration (`PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID` in `.env`).
 
 #### Service keys
 
-Endpoints marked **Service** below are internal: only the listed callers may use them. The caller sends `X-Service-Key: <key>`. Every caller gets its own key, configured through `.env` on both sides (placeholders only in `.env.example`), so one caller's access can be revoked without touching the others.
+Endpoints marked **Service** below are internal: only the listed callers may use them. Service-to-service calls also go through the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token), the gateway passes it on and adds `X-Gateway-Key`, and the callee checks both — the gateway key proves the call came through the gateway, the service key proves *which* service made it. Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others.
+
+#### WebSockets
+
+The gateway negotiates sockets but never relays them, so a long-lived connection doesn't tie it up:
+
+```http
+GET /ws/negotiate?path=/map/stream
+Authorization: Bearer <token>
+```
+
+```json
+{ "wsUrl": "ws://localhost:8085/map/stream?ticket=<ticket>" }
+```
+
+The client then connects to the service directly. The **ticket** is a JWT the gateway signs with `GATEWAY_KEY` (HS256):
+
+| Claim | Meaning |
+|---|---|
+| `sub` | The player |
+| `path` | The exact socket path it opens, e.g. `/raids/<raidId>/live` |
+| `jti` | A unique id: each ticket opens **one** socket |
+| `exp` | 60 s; services refuse tickets valid for more than 5 minutes |
+
+The service verifies the signature, expiry and path, remembers used `jti`s until they expire, and then applies its own rules (participant, guild member, …).
 
 #### Errors
 
+Every error body is `{"error": "..."}`.
+
 | Situation | HTTP | WebSocket |
 |---|---|---|
-| Token/key missing, malformed, expired or badly signed | `401 Unauthorized` | connection closed with `1008` |
-| Valid token, but acting as someone else or lacking the role | `403 Forbidden` | connection closed with `1008` |
+| Token missing, malformed, expired or badly signed (at the gateway); gateway key or service key missing or wrong (at the service) | `401 Unauthorized` | connection closed with `1008` |
+| Acting as someone else, or lacking the role | `403 Forbidden` | connection closed with `1008` |
+| Concurrent task limit reached | `503 Service Unavailable` + `Retry-After` | connection closed with `1013` |
+| Task timeout — the request, or a service it depends on, took too long | `504 Gateway Timeout` | — |
 
 #### Access per endpoint
 
@@ -130,7 +168,7 @@ Endpoints marked **Service** below are internal: only the listed callers may use
 | | `WS /battles/{battleId}/live` | Player |
 | Tamagotchi | `GET /types/advantages` | Public |
 | | `POST /tamagotchis` | Player (self — the owner) |
-| | `GET /tamagotchis/{id}` | Player |
+| | `GET /tamagotchis/{id}` | Player, or **Service** — Monster Raid (ownership and attack power on raid joins) |
 | | `GET /users/{userId}/tamagotchis` | Player |
 | | `PATCH /users/{userId}/tamagotchis/{id}/set-primary` | Player (self — the owner) |
 | | `PATCH /tamagotchis/{id}/stats` | Player (self — the owner) |
@@ -141,11 +179,12 @@ Endpoints marked **Service** below are internal: only the listed callers may use
 | | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
 | Map | `POST /map/location` | Player (self) |
 | | `GET /map/nearby/{userId}` | Player (self) — locations are private |
-| | `WS /map/stream` | Player (self — every frame's `userId` must be `sub`) |
+| | `WS /map/stream` | Player (self) — gateway ticket; every frame's `userId` must be the ticket's player |
 | Monster Raid | `POST /raids` | **Service** — Package Registry |
 | | `POST /raids/{raidId}/join` | Player (self) + member of the raid's guild |
 | | `POST /raids/{raidId}/attack` | Player (self — a participant) |
 | | `GET /raids/{raidId}` | Player |
+| | `WS /raids/{raidId}/live` | Player — a participant of the raid, gateway ticket |
 | Guild | `GET /guilds/search` | Player |
 | | `POST /guilds` | Player (self — the owner) |
 | | `POST /guilds/{guildId}/join` | Player (self) |
@@ -708,7 +747,7 @@ Success Response (200 OK):
 
 **Stream Location**
 
-`WS` `/map/stream` — Description: Client continuously streams its geolocation over one connection; each frame carries the user it belongs to and gets the same staleness check as `POST /map/location`.
+`WS` `/map/stream` — Description: Client continuously streams its geolocation over one connection; each frame carries the user it belongs to and gets the same staleness check as `POST /map/location`. The URL comes from the gateway's WebSocket negotiation, with a one-time ticket for `/map/stream`; a frame for anyone but the ticket's player, or a bad ticket, closes the socket with `1008`.
 
 Client message:
 
@@ -829,6 +868,22 @@ Success Response (200 OK):
   "expiresAt": "string (ISO 8601 timestamp)"
 }
 ```
+
+**Live Raid (WebSocket)**
+
+`WS` `/raids/{raidId}/live` — Description: Pushes the raid to its participants as it happens. The URL comes from the gateway's WebSocket negotiation, with a one-time ticket for this path. Only participants may watch; anyone else, or a bad ticket, is closed with `1008`.
+
+Messages, in order:
+
+```json
+{ "event": "raid", "data": { "raidId": "string", "guildId": "string", "monsterHp": "int", "maxHp": "int", "participants": "array<object>", "status": "active", "expiresAt": "ISO 8601 timestamp" } }
+{ "event": "joined", "data": { "raidId": "string", "userId": "string", "participantCount": "int" } }
+{ "event": "attack", "data": { "raidId": "string", "userId": "string", "damageDealt": "int", "monsterHp": "int" } }
+{ "event": "completed", "data": { "raidId": "string", "rewards": [{ "userId": "string", "currency": "int", "xp": "int" }] } }
+{ "event": "failed", "data": { "raidId": "string" } }
+```
+
+After `completed` or `failed` the socket is closed (`1000`).
 
 **Raid Completed / Raid Failed (events)**
 
@@ -1243,23 +1298,40 @@ Success Response (200 OK):
 
 ![Architecture Diagram](docs/images/architecture.png)
 
-Every service, the database it owns, and the calls between them.
+Every service, the database it owns, and how requests reach them. The
+**API Gateway** is the single entry point: clients never call a service
+directly, and services call each other through it too.
 
 | | |
 |---|---|
-| **Solid arrow** | synchronous REST/WebSocket call, pointing at the service that owns the data |
-| **Dotted arrow** | asynchronous event |
-| **Colour** | which tier a service belongs to |
+| **Dark arrow** | REST: client → Gateway, and the Gateway routing each request to the service that owns the data |
+| **Amber arrow** | service-to-service REST, which also goes through the Gateway, carrying the caller's `X-Service-Key`; the label lists the services it calls |
+| **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to the service directly |
+| **Dotted arrow** | asynchronous event on Redis Pub/Sub, for Notification — not through the Gateway |
+| **Colour** | which tier a service belongs to; the Gateway is amber |
 
-The three tiers are the structure worth remembering:
+The three tiers behind the Gateway are the structure worth remembering:
 
-1. **Gameplay** — what a client app talks to directly.
-2. **Game content** — the rules and definitions gameplay reads.
-3. **Platform** — identity, currency and notifications, which everything leans on.
+1. **Gameplay** (blue) — Battle, Map, Monster Raid and Guild: what players act in, and the four services with WebSockets.
+2. **Game content** (purple) — Tamagotchi and Package Registry: the rules and definitions gameplay reads.
+3. **Platform** (green) — User Management and Notification: identity, currency and notifications, which everything leans on.
 
 Each service names its own database. No service reads another's store
 directly; that is what the arrows are for. Notification never calls anyone —
 it consumes events and decides what reaches the player.
+
+**Editing the diagram.** The source is
+[`docs/images/architecture.mmd`](docs/images/architecture.mmd) (Mermaid), with
+its styling in `architecture.config.json`. After changing it, regenerate the PNG
+— Docker is all you need:
+
+```bash
+docker run --rm -v "$PWD/docs/images:/data" minlag/mermaid-cli   -i /data/architecture.mmd -c /data/architecture.config.json   -o /data/architecture.png -s 3 -b white
+```
+
+In Git Bash on Windows, put `MSYS_NO_PATHCONV=1 ` in front of `docker run`:
+otherwise Git Bash rewrites `/data` into a Windows path and the input is not
+found.
 
 
 ## Contributing
@@ -1368,12 +1440,19 @@ curl http://localhost:8083/health
 # {"service":"tamagotchi-service","status":"ok"}
 ```
 
-Every endpoint except `GET /health` and `GET /types/advantages` needs an
-`Authorization: Bearer <jwt>` header. For now the token is only checked for
-shape (three parts, a `sub` claim, not expired) — the signature is not
-verified. Owner ids must be valid, non-nil UUIDs and stat keys must be one of
-`hunger`, `tiredness`, `happiness`, `energy`, `cleanliness`, standing in for
-User Management and Package Registry until those are wired in.
+**In the shared stack** it's reached only through the gateway: every endpoint
+except `GET /health` needs the gateway's `X-Gateway-Key`, players are
+identified by `X-User-Id`, and Battle (`xp`, `transfer-owner`) and Monster Raid
+(`GET /tamagotchis/{id}`) by their `X-Service-Key` (`SERVICE_KEY_BATTLE`,
+`SERVICE_KEY_MONSTER_RAID`). Access per endpoint is in the table above.
+
+Stat updates are checked against the package's stat definitions, which it reads
+from Package Registry through the gateway (`GET /packages/{packageId}`): an
+undefined key or an unregistered package is `400`, and Package Registry being
+down is `502`.
+
+Without the gateway, call it with the gateway's headers yourself
+(`X-Gateway-Key` from `.env`, `X-User-Id`); the service's README has examples.
 
 ### Notification Service
 
@@ -1390,47 +1469,65 @@ curl http://localhost:8084/health
 docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning PUBLISH notification-events "{\"type\":\"BattleEnded\",\"userId\":\"11111111-1111-1111-1111-111111111111\",\"payload\":{\"result\":\"won\"}}"'
 ```
 
-Its endpoints take the same mock `Authorization: Bearer <jwt>` header as
-above; only `GET /health` is open.
+**In the shared stack** it's reached only through the gateway: every endpoint
+except `GET /health` needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
+player can only register their own device and read their own notifications.
+Without the gateway, send those headers yourself, as for Tamagotchi above.
 
 ### Map Service
 
 **What it does:** tracks each player's latest location (Redis geospatial),
-answers "who is near me?" with distance and friend/enemy/none relationship,
-and publishes `ProximityDetected` when two unrelated players come within 6 m.
+answers "who is near me?" with distance and friend/enemy/none relationship
+(from User Management), streams locations over a WebSocket, and publishes
+`ProximityDetected` when two unrelated players come within 6 m.
 
-**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
-v2 — no Node.js and no local Redis. User Management is mocked with fixed test
-data until it's reachable.
+**In the shared stack** it's reached only through the gateway, and calls User
+Management through the gateway with `SERVICE_KEY_MAP`:
 
 ```bash
-cd map-service
-cp .env.example .env        # then set a real Redis password
-docker compose up -d --build
-curl http://localhost:8085/health
+docker compose up -d
+curl http://localhost:8085/health          # public, direct
 # {"status":"ok","service":"map-service"}
 ```
 
+**On its own** (development, User Management mocked with fixed test data):
+
+```bash
+cd map-service
+cp .env.example .env        # then set the Redis password and MAP_GATEWAY_KEY
+docker compose up -d --build
+```
+
+Without the gateway, call it with the gateway's headers yourself
+(`X-Gateway-Key`, `X-User-Id`); its own Postman collection does exactly that.
 Interactive API docs: <http://localhost:8085/docs>.
 
 ### Monster Raid Service
 
 **What it does:** runs cooperative guild raids against a shared monster —
-creation (called by Package Registry on activation), joining with a
-Tamagotchi, idempotent attacks, and the reward payout on a kill or failure
-when the timer runs out.
+creation (called by Package Registry on activation), joining with your own
+Tamagotchi (membership checked with Guild, ownership with Tamagotchi),
+idempotent attacks, live HP and hits over a WebSocket, and the reward payout
+on a kill or failure when the timer runs out.
 
-**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
-v2 — Compose starts PostgreSQL and Redis, and the service runs its versioned
-database migrations on start-up. Guild, Tamagotchi and User Management are
-mocked with fixed test data until they're reachable.
+**In the shared stack** it's reached only through the gateway, and calls
+Guild, Tamagotchi and User Management through the gateway with
+`SERVICE_KEY_MONSTER_RAID`. `POST /raids` additionally needs Package
+Registry's key (`PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY`). The service runs
+its versioned database migrations on start-up.
+
+```bash
+docker compose up -d
+curl http://localhost:8086/health          # public, direct
+# {"status":"ok","service":"monster-raid-service"}
+```
+
+**On its own** (development, Guild/Tamagotchi/User Management mocked):
 
 ```bash
 cd monster-raid-service
-cp .env.example .env        # then set real passwords
+cp .env.example .env        # then set real passwords and MONSTER_RAID_GATEWAY_KEY
 docker compose up -d --build
-curl http://localhost:8086/health
-# {"status":"ok","service":"monster-raid-service"}
 ```
 
 Interactive API docs: <http://localhost:8086/docs>.
@@ -1687,8 +1784,8 @@ works without cloning its repo.
 | [`battle-service`](collections/battle-service.postman_collection.json) | Battle, through the gateway | `http://localhost:8080` |
 | [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi | `http://localhost:8083` |
 | [`notification-service`](collections/notification-service.postman_collection.json) | Notification | `http://localhost:8084` |
-| [`map-service`](collections/map-service.postman_collection.json) | Map | `http://localhost:8085` |
-| [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid | `http://localhost:8086` |
+| [`map-service`](collections/map-service.postman_collection.json) | Map, through the gateway | `http://localhost:8080` |
+| [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid, through the gateway | `http://localhost:8080` |
 | [`guild-service`](collections/guild-service.postman_collection.json) | Guild | `http://localhost:8087` |
 | [`package-registry-service`](collections/package-registry-service.postman_collection.json) | Package Registry | `http://localhost:8088` |
 | [`gateway`](collections/gateway.postman_collection.json) | Gateway, with Guild and Package Registry behind it | `http://localhost:8080` |
@@ -1706,6 +1803,17 @@ npx newman run collections/guild-service.postman_collection.json
 npx newman run collections/package-registry-service.postman_collection.json
 npx newman run collections/gateway.postman_collection.json
 ```
+
+The **map-service** and **monster-raid-service** collections run the whole
+system the way a client does, through the gateway: each run registers new
+players, logs them in at User Management, and uses real data — friendships
+and an enemy from User Management for Map; a guild from Guild and a Tamagotchi
+from Tamagotchi for Monster Raid. They also show what the services refuse
+(no token, acting as someone else, a player on an internal endpoint, a direct
+call that skips the gateway). Monster Raid's needs Package Registry's key:
+`--env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY>`.
+Its join and attack requests need Tamagotchi Service behind the gateway; until
+then they fail at "Owner creates a Tamagotchi".
 
 The **gateway** collection exercises the system the way a client app does:
 players register and log in through the gateway (real User Management tokens),
@@ -1751,12 +1859,48 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 |---|---|---|---|
 | User Management | [`pshasuleiman/user-management-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/user-management-service) | PostgreSQL 16 | `8081` |
 | Battle | [`pshasuleiman/battle-service:v1.3.0`](https://hub.docker.com/r/pshasuleiman/battle-service) | PostgreSQL 16 | `8082` |
-| Tamagotchi | [`dan1el50/tamagotchi-service:v2`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
-| Notification | [`dan1el50/notification-service:v2`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
+| Tamagotchi | [`dan1el50/tamagotchi-service:v2.1.1`](https://hub.docker.com/r/dan1el50/tamagotchi-service) | PostgreSQL 16 | `8083` |
+| Notification | [`dan1el50/notification-service:v2.1.1`](https://hub.docker.com/r/dan1el50/notification-service) | Redis 7 | `8084` |
 | Map | [`dackohn/map-service:v1.0.0`](https://hub.docker.com/r/dackohn/map-service) | Redis 7 | `8085` |
 | Monster Raid | [`dackohn/monster-raid-service:v1.0.0`](https://hub.docker.com/r/dackohn/monster-raid-service) | PostgreSQL 16 + Redis 7 | `8086` |
-| Guild | [`isstephy1/guild-service:v1.2.0`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
-| Package Registry | [`isstephy1/package-registry-service:v1.2.0`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
+| Guild | [`isstephy1/guild-service:latest`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
+| Package Registry | [`isstephy1/package-registry-service:latest`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
+| Gateway | [`isstephy1/gateway:latest`](https://hub.docker.com/r/isstephy1/gateway) | — | `8080` |
+
+### Image tags
+
+Images are tagged **`vX.Y.Z`**, and every release also moves **`latest`**.
+The team's rule, applied by each repo's release workflow
+(`.github/workflows/release.yml`):
+
+| Part | Changes when | Example |
+|---|---|---|
+| **X** | by hand: `MAJOR` in the workflow, e.g. `3` for Lab 3; the next release is `vX.0.0` | `v2.4.1` → `v3.0.0` |
+| **Y** | a `feature/*` branch is merged into `dev` | `v2.0.3` → `v2.1.0` |
+| **Z** | any other branch is merged into `dev`: `fix/*`, `chore/*`, `docs/*`, `ci/*`, `refactor/*`, `test/*`, `perf/*` | `v2.1.0` → `v2.1.1` |
+
+- **Merge into `dev`:** the tests run, the image is built and pushed as the
+  new `vX.Y.Z`, and only then is the git tag `vX.Y.Z` created on the commit.
+  The branch prefixes are CONTRIBUTING's change types; a direct push to `dev`,
+  or a branch that follows none of them, publishes nothing.
+- **Merge `dev` into `main`:** `latest` is pointed at the version that was
+  merged — the same image built and tested on `dev`, not a rebuild.
+- **Every image is published for `linux/amd64` and `linux/arm64`** under the
+  same tag (Intel/AMD machines and Apple Silicon Macs); Docker picks the right
+  one, so `docker-compose.yml` needs no per-platform changes.
+- **A version is never overwritten**, so `vX.Y.Z` always means the same image.
+  The previous version is read from the repo's git tags, and the merged branch
+  from GitHub's merge commit (`Merge pull request #N from <user>/feature/...`) —
+  one more reason PRs are merged with a merge commit.
+- **In `docker-compose.yml`, Guild, Package Registry and the Gateway use
+  `latest`**: the stack follows each new release to `main` without a CPR
+  change. Run `docker compose pull` to fetch a new release; to reproduce an
+  older stack, pin an exact `vX.Y.Z` instead. The other services pin an exact
+  version.
+
+Older tags (`v1.x.y` from Lab 1, and the single `v2` tag Guild and Package
+Registry used briefly in Lab 2) stay on Docker Hub; new releases follow the
+rule above.
 
 **Requirements for running them:**
 
