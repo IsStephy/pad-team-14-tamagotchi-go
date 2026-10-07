@@ -143,6 +143,13 @@ services:
       DATABASE_URL: postgres://${TAMAGOTCHI_DB_USER}:${TAMAGOTCHI_DB_PASSWORD}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}?sslmode=disable
       REQUEST_TIMEOUT_MS: ${TAMAGOTCHI_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${TAMAGOTCHI_MAX_CONCURRENT_REQUESTS:-10}
+      # Reached through the gateway: X-User-Id is trusted only with this key.
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
+      # Battle calls xp and transfer-owner; Monster Raid reads GET /tamagotchis/{id}.
+      SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
+      SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
+      # Empty = Package Registry through the gateway (http://gateway:8080).
+      PACKAGE_REGISTRY_URL: ${TAMAGOTCHI_PACKAGE_REGISTRY_URL:-}
     ports:
       - "${TAMAGOTCHI_PORT:-8083}:8083"
     healthcheck:
@@ -183,6 +190,8 @@ services:
       REQUEST_TIMEOUT_MS: ${NOTIFICATION_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${NOTIFICATION_MAX_CONCURRENT_REQUESTS:-10}
       MAX_CONCURRENT_EVENTS: ${NOTIFICATION_MAX_CONCURRENT_EVENTS:-10}
+      # Reached through the gateway: X-User-Id is trusted only with this key.
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
     ports:
       - "${NOTIFICATION_PORT:-8084}:8084"
     healthcheck:
