@@ -160,7 +160,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Register player two",
@@ -210,7 +211,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Log in as player one",
@@ -254,7 +256,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Log in as player two",
@@ -298,7 +301,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Battle reference",
@@ -376,7 +380,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Create battle",
@@ -690,7 +695,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "List battles for a player",
@@ -1215,7 +1221,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Act on a finished battle (rejected)",
@@ -1412,7 +1419,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Delete player one",
@@ -1447,7 +1455,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     }
   ]
 }

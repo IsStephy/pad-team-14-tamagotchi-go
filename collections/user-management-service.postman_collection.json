@@ -401,7 +401,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Get user without a token (rejected by the gateway)",
@@ -434,7 +435,8 @@
             ]
           }
         }
-      ]
+      ],
+      "response": []
     },
     {
       "name": "Get user",
