@@ -53,6 +53,9 @@ services:
       DB_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
       DB_SSLMODE: disable
       JWT_TTL: ${USER_MANAGEMENT_JWT_TTL:-24h}
+      # Task timeout (504) and concurrent task limit (503 + Retry-After).
+      REQUEST_TIMEOUT_MS: ${USER_MANAGEMENT_REQUEST_TIMEOUT_MS:-8000}
+      MAX_CONCURRENT_REQUESTS: ${USER_MANAGEMENT_MAX_CONCURRENT_REQUESTS:-50}
       # RS256 signing key. Generated on start-up and persisted in the database
       # when unset, so the stack works out of the box; set it in production so
       # the key survives a database reset.
@@ -133,6 +136,9 @@ services:
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       REDIS_URL: redis://:${BATTLE_REDIS_PASSWORD}@battle-service-cache:6379/0
       MAX_WS_CONNECTIONS: ${BATTLE_MAX_WS_CONNECTIONS:-500}
+      # Task timeout (504) and concurrent task limit (503 + Retry-After).
+      REQUEST_TIMEOUT_MS: ${BATTLE_REQUEST_TIMEOUT_MS:-8000}
+      MAX_CONCURRENT_REQUESTS: ${BATTLE_MAX_CONCURRENT_REQUESTS:-50}
     ports:
       # Published for the live socket too: the gateway's /ws/negotiate hands
       # clients ws://localhost:8082/battles/{battleId}/live.

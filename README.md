@@ -1589,6 +1589,10 @@ Set `PORT` to run somewhere else: `PORT=9081 ./run.sh`.
 User Management. `POST /users/register`, `POST /users/login` and the JWKS need
 no token. No WebSocket endpoints, and no outgoing calls.
 
+**Limits:** `504` after `REQUEST_TIMEOUT_MS` (8 s, also Postgres's
+`statement_timeout`), `503` + `Retry-After: 1` above `MAX_CONCURRENT_REQUESTS`
+(50) at once. `GET /health` is outside both.
+
 ### Battle Service
 
 **What it does:** runs turn-based PvP matches — damage from Tamagotchi levels,
@@ -1633,6 +1637,11 @@ in its own Redis (`battle-service-cache`) so each opens one socket, and sends
 `turn_update` frames (on connect, then after every turn) and a final
 `battle_end`. `BATTLE_MAX_WS_CONNECTIONS` (500) caps open sockets; the next one
 is closed with `1013`.
+
+**Limits:** `504` after `REQUEST_TIMEOUT_MS` (8 s, also Postgres's
+`statement_timeout`; each call to another service times out after 5 s), `503`
++ `Retry-After: 1` above `MAX_CONCURRENT_REQUESTS` (50) at once. `GET /health`
+and the live sockets are outside both.
 
 **Outgoing calls go through the gateway** too: in the shared stack
 `USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
