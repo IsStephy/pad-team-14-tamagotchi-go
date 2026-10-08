@@ -85,10 +85,28 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Redis that remembers used WebSocket tickets until they expire, so each
+  # ticket opens one live socket.
+  battle-service-cache:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${BATTLE_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - battle-service-cache-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   battle-service:
     image: pshasuleiman/battle-service:latest
     depends_on:
       battle-service-db:
+        condition: service_healthy
+      battle-service-cache:
         condition: service_healthy
       user-management-service:
         condition: service_started
@@ -109,7 +127,15 @@ services:
       AUTH_ENFORCED: ${AUTH_ENFORCED:-false}
       # The key this service presents to the Service-only endpoints it calls.
       SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
+      # WS /battles/{battleId}/live: clients connect here directly with the
+      # single-use ticket the gateway signs with GATEWAY_KEY; used ticket ids
+      # are kept in Redis, and MAX_WS_CONNECTIONS caps open sockets (1013).
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
+      REDIS_URL: redis://:${BATTLE_REDIS_PASSWORD}@battle-service-cache:6379/0
+      MAX_WS_CONNECTIONS: ${BATTLE_MAX_WS_CONNECTIONS:-500}
     ports:
+      # Published for the live socket too: the gateway's /ws/negotiate hands
+      # clients ws://localhost:8082/battles/{battleId}/live.
       - "${BATTLE_PORT:-8082}:8082"
 
 
@@ -440,6 +466,7 @@ services:
 volumes:
   user-management-service-db-data:
   battle-service-db-data:
+  battle-service-cache-data:
   tamagotchi-service-db-data:
   notification-service-db-data:
   map-service-db-data:

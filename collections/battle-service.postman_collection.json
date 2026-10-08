@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Battle Service (Team 14)",
-    "description": "Every endpoint of the Battle Service, reached through the gateway, in an order that runs top to bottom as a complete scenario: two players register and log in through User Management, a match is created, two turns are played, each rejection path is exercised, one player forfeits, the winner is paid, and the match and both players are deleted.\n\nStart the whole system first (`docker compose up -d` in the CPR), then hit Run. Requests go to `{{gatewayUrl}}` (default `http://localhost:8080`) with each player's own token.",
+    "description": "Every endpoint of the Battle Service, reached through the gateway, in an order that runs top to bottom as a complete scenario: two players register and log in through User Management, a match is created, two turns are played, each rejection path is exercised, one player forfeits, the winner is paid, and the match and both players are deleted. Live updates use a WebSocket, which Postman's runner cannot open: the run checks the negotiation step and saves the socket URL in `liveUrl`, which you can open in a Postman WebSocket tab within 60 seconds.\n\nStart the whole system first (`docker compose up -d` in the CPR), then hit Run. Requests go to `{{gatewayUrl}}` (default `http://localhost:8080`) with each player's own token.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -70,6 +70,10 @@
       "key": "missingId",
       "value": "00000000-0000-0000-0000-000000000000",
       "type": "string"
+    },
+    {
+      "key": "liveUrl",
+      "value": ""
     }
   ],
   "item": [
@@ -627,6 +631,62 @@
               "pm.test(\"is the battle we created\", function () {",
               "    pm.expect(pm.response.json().battleId).to.eql(pm.collectionVariables.get(\"battleId\"));",
               "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Negotiate the live socket",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/ws/negotiate?path=/battles/{{battleId}}/live",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "ws",
+            "negotiate"
+          ],
+          "query": [
+            {
+              "key": "path",
+              "value": "/battles/{{battleId}}/live"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const wsUrl = pm.response.json().wsUrl;",
+              "const path = \"/battles/\" + pm.collectionVariables.get(\"battleId\") + \"/live\";",
+              "pm.test(\"hands back Battle's own socket URL with a ticket\", function () {",
+              "    pm.expect(wsUrl).to.match(/^wss?:\\/\\//);",
+              "    pm.expect(wsUrl).to.include(path + \"?ticket=\");",
+              "});",
+              "pm.test(\"the ticket is for this player and exactly this socket, for 60 s\", function () {",
+              "    const part = wsUrl.split(\"ticket=\")[1].split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+              "    const claims = JSON.parse(atob(part + \"=\".repeat((4 - part.length % 4) % 4)));",
+              "    pm.expect(claims.sub).to.eql(pm.collectionVariables.get(\"player1Id\"));",
+              "    pm.expect(claims.path).to.eql(path);",
+              "    pm.expect(claims.jti).to.be.a(\"string\").and.not.empty;",
+              "    pm.expect(claims.exp - claims.iat).to.eql(60);",
+              "});",
+              "pm.collectionVariables.set(\"liveUrl\", wsUrl);"
             ]
           }
         }
