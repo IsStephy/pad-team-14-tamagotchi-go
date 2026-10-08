@@ -60,15 +60,15 @@ services:
       # when unset, so the stack works out of the box; set it in production so
       # the key survives a database reset.
       JWT_PRIVATE_KEY: ${USER_MANAGEMENT_JWT_PRIVATE_KEY:-}
-      # Access rules from the contract's Authentication section. Off until the
-      # team turns them on together: enforcing before every caller sends
-      # credentials would break them.
-      AUTH_ENFORCED: ${AUTH_ENFORCED:-false}
+      # Authorization is at the gateway: only requests carrying its key as
+      # X-Gateway-Key are served, and the player comes as X-User-Id. Services
+      # calling the service-only endpoints keep their own X-Service-Key.
+      GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
       SERVICE_KEY_MAP: ${SERVICE_KEY_MAP:-}
-    ports:
-      - "${USER_MANAGEMENT_PORT:-8081}:8081"
+    # No published port: only the gateway reaches it, at
+    # http://user-management-service:8081 on the Compose network.
     restart: unless-stopped
 
   # ------------------------------------------------------------- Go / battle
@@ -127,12 +127,13 @@ services:
       USER_MANAGEMENT_SERVICE_URL: ${BATTLE_USER_MANAGEMENT_URL:-http://gateway:8080}
       TAMAGOTCHI_SERVICE_URL: ${BATTLE_TAMAGOTCHI_SERVICE_URL:-http://gateway:8080}
       PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-http://gateway:8080}
-      AUTH_ENFORCED: ${AUTH_ENFORCED:-false}
       # The key this service presents to the Service-only endpoints it calls.
       SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
-      # WS /battles/{battleId}/live: clients connect here directly with the
-      # single-use ticket the gateway signs with GATEWAY_KEY; used ticket ids
-      # are kept in Redis, and MAX_WS_CONNECTIONS caps open sockets (1013).
+      # Authorization is at the gateway: only requests carrying GATEWAY_KEY as
+      # X-Gateway-Key are served, and the player comes as X-User-Id. Live
+      # sockets are opened directly with a single-use ticket the gateway signs
+      # with the same key; used ticket ids are kept in Redis, and
+      # MAX_WS_CONNECTIONS caps open sockets (1013).
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       REDIS_URL: redis://:${BATTLE_REDIS_PASSWORD}@battle-service-cache:6379/0
       MAX_WS_CONNECTIONS: ${BATTLE_MAX_WS_CONNECTIONS:-500}
@@ -140,8 +141,9 @@ services:
       REQUEST_TIMEOUT_MS: ${BATTLE_REQUEST_TIMEOUT_MS:-8000}
       MAX_CONCURRENT_REQUESTS: ${BATTLE_MAX_CONCURRENT_REQUESTS:-50}
     ports:
-      # Published for the live socket too: the gateway's /ws/negotiate hands
-      # clients ws://localhost:8082/battles/{battleId}/live.
+      # Published only for the live socket: the gateway's /ws/negotiate hands
+      # clients ws://localhost:8082/battles/{battleId}/live. Every other
+      # request here without the gateway's key is answered 401.
       - "${BATTLE_PORT:-8082}:8082"
 
 
