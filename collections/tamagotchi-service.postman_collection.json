@@ -48,6 +48,11 @@
       "type": "string"
     },
     {
+      "key": "invalidToken",
+      "value": "not-a-real-token",
+      "type": "string"
+    },
+    {
       "key": "runId",
       "value": "",
       "type": "string"
@@ -847,7 +852,7 @@
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer not-a-real-token"
+                "value": "Bearer {{invalidToken}}"
               }
             ],
             "url": {
