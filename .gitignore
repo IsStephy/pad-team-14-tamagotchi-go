@@ -17,6 +17,8 @@ build/
 # Env / secrets
 .env
 .env.*
+# ...except the placeholder template, which is meant to be committed.
+!.env.example
 *.pem
 *.key
 
@@ -25,3 +27,6 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# ...but .env.example carries placeholders only and must be committed
+!.env.example

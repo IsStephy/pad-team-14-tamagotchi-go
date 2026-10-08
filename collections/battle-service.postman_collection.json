@@ -1,0 +1,1453 @@
+{
+  "info": {
+    "name": "Battle Service (Team 14)",
+    "description": "Every endpoint of the Battle Service, reached through the gateway, in an order that runs top to bottom as a complete scenario: two players register and log in through User Management, a match is created, two turns are played, each rejection path is exercised, one player forfeits, the winner is paid, and the match and both players are deleted. Live updates use a WebSocket, which Postman's runner cannot open: the run checks the negotiation step and saves the socket URL in `liveUrl`, which you can open in a Postman WebSocket tab within 60 seconds.\n\nStart the whole system first (`docker compose up -d` in the CPR), then hit Run. Requests go to `{{gatewayUrl}}` (default `http://localhost:8080`) with each player's own token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "password",
+      "value": "correct-horse-battery"
+    },
+    {
+      "key": "challengerName",
+      "value": ""
+    },
+    {
+      "key": "rivalName",
+      "value": ""
+    },
+    {
+      "key": "player1Id",
+      "value": ""
+    },
+    {
+      "key": "player2Id",
+      "value": ""
+    },
+    {
+      "key": "token1",
+      "value": ""
+    },
+    {
+      "key": "token2",
+      "value": ""
+    },
+    {
+      "key": "rewardCurrency",
+      "value": ""
+    },
+    {
+      "key": "outsiderId",
+      "value": "99999999-9999-9999-9999-999999999999",
+      "type": "string"
+    },
+    {
+      "key": "primaryTamagotchiId",
+      "value": "tama-ember",
+      "type": "string"
+    },
+    {
+      "key": "secondaryTamagotchiId",
+      "value": "tama-ripple",
+      "type": "string"
+    },
+    {
+      "key": "opponentTamagotchiId",
+      "value": "tama-bramble",
+      "type": "string"
+    },
+    {
+      "key": "battleId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "missingId",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "type": "string"
+    },
+    {
+      "key": "liveUrl",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Battle is up behind the gateway",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{gatewayUrl}}/health/services",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "health",
+            "services"
+          ]
+        },
+        "description": "Liveness probe. Answers as soon as the service is up and migrated."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"battle-service is up behind the gateway\", function () {",
+              "    pm.expect(pm.response.json().services[\"battle-service\"].status).to.eql(\"ok\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Register player one",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/register",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "register"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{challengerName}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{challengerName}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const suffix = Date.now().toString().slice(-9);",
+              "pm.collectionVariables.set(\"challengerName\", \"challenger_\" + suffix);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 201\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "pm.collectionVariables.set(\"player1Id\", pm.response.json().userId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Register player two",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/register",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "register"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{rivalName}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{rivalName}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const suffix = Date.now().toString().slice(-9);",
+              "pm.collectionVariables.set(\"rivalName\", \"rival_\" + suffix);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 201\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "pm.collectionVariables.set(\"player2Id\", pm.response.json().userId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Log in as player one",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/login",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "login"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{challengerName}}\",\n  \"password\": \"{{password}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"returns a token for player one\", function () {",
+              "    pm.expect(body.userId).to.eql(pm.collectionVariables.get(\"player1Id\"));",
+              "});",
+              "pm.collectionVariables.set(\"token1\", body.token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Log in as player two",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/login",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "login"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{rivalName}}\",\n  \"password\": \"{{password}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"returns a token for player two\", function () {",
+              "    pm.expect(body.userId).to.eql(pm.collectionVariables.get(\"player2Id\"));",
+              "});",
+              "pm.collectionVariables.set(\"token2\", body.token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Battle reference",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/reference",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "reference"
+          ]
+        },
+        "description": "The combat types, boost ids and actions this service accepts, so a client need not hard-code them."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"lists the six elemental types\", function () {",
+              "    pm.expect(body.types).to.be.an(\"array\").with.lengthOf(6);",
+              "});",
+              "pm.test(\"lists the applicable boosts and actions\", function () {",
+              "    pm.expect(body.boosts).to.be.an(\"array\").that.is.not.empty;",
+              "    pm.expect(body.actions).to.include.members([\"attack\", \"defend\", \"forfeit\"]);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Battle reference without a token (rejected by the gateway)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/reference",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "reference"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 401\", function () {",
+              "    pm.response.to.have.status(401);",
+              "});",
+              "pm.test(\"the gateway refuses it before any service sees it\", function () {",
+              "    pm.expect(pm.response.json().error).to.match(/bearer token/i);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create battle",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles"
+          ]
+        },
+        "description": "Starts a match. The top-level Tamagotchi fields are player one's loadout (the shared contract shape); `opponent` is player two's. Player one moves first.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"Flame\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"Water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"power_snack\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"Nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 201\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"starts in progress on player one's turn\", function () {",
+              "    pm.expect(body.status).to.eql(\"in_progress\");",
+              "    pm.expect(body.currentTurn).to.eql(pm.collectionVariables.get(\"player1Id\"));",
+              "    pm.expect(body.turnNumber).to.eql(1);",
+              "});",
+              "pm.test(\"both sides start at full health\", function () {",
+              "    pm.expect(body.healthP1).to.be.above(0);",
+              "    pm.expect(body.healthP2).to.be.above(0);",
+              "});",
+              "pm.test(\"carries no result yet\", function () {",
+              "    pm.expect(body.result).to.be.undefined;",
+              "});",
+              "pm.collectionVariables.set(\"battleId\", body.battleId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create a battle with an unknown type (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles"
+          ]
+        },
+        "description": "Combat types are validated at creation, so a typo fails loudly instead of silently changing the maths.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"plasma\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"Water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"power_snack\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"Nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 400\", function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create a battle with an unknown boost (ignored)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles"
+          ]
+        },
+        "description": "Boost ids are checked against the catalogue this service knows how to apply.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"Flame\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"Water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"mega_potion\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"Nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 201 - an unknown boost is accepted\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "pm.test(\"the unknown boost is carried but has no effect\", function () {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.player1.loadout.boosts).to.include(\"mega_potion\");",
+              "    pm.expect(body.player1.packageBonus).to.eql(0);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create a battle with a duplicate boost (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles"
+          ]
+        },
+        "description": "Boost ids are checked against the catalogue this service knows how to apply.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"player1Id\": \"{{player1Id}}\",\n  \"player2Id\": \"{{player2Id}}\",\n  \"primaryTamagotchiId\": \"{{primaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{secondaryTamagotchiId}}\",\n  \"primaryType\": \"Flame\",\n  \"primaryLevel\": 5,\n  \"secondaryType\": \"Water\",\n  \"secondaryLevel\": 3,\n  \"boosts\": [\n    \"power_snack\",\n    \"power_snack\"\n  ],\n  \"opponent\": {\n    \"primaryTamagotchiId\": \"{{opponentTamagotchiId}}\",\n    \"primaryType\": \"Nature\",\n    \"primaryLevel\": 4,\n    \"boosts\": [\n      \"iron_shell\"\n    ]\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 400\", function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "pm.test(\"names the duplicated boost\", function () {",
+              "    pm.expect(pm.response.json().error).to.include(\"equipped twice\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get battle",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}"
+          ]
+        },
+        "description": "The full match state: turn, both healths, the action log, and the result once finished."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"is the battle we created\", function () {",
+              "    pm.expect(pm.response.json().battleId).to.eql(pm.collectionVariables.get(\"battleId\"));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Negotiate the live socket",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/ws/negotiate?path=/battles/{{battleId}}/live",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "ws",
+            "negotiate"
+          ],
+          "query": [
+            {
+              "key": "path",
+              "value": "/battles/{{battleId}}/live"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const wsUrl = pm.response.json().wsUrl;",
+              "const path = \"/battles/\" + pm.collectionVariables.get(\"battleId\") + \"/live\";",
+              "pm.test(\"hands back Battle's own socket URL with a ticket\", function () {",
+              "    pm.expect(wsUrl).to.match(/^wss?:\\/\\//);",
+              "    pm.expect(wsUrl).to.include(path + \"?ticket=\");",
+              "});",
+              "pm.test(\"the ticket is for this player and exactly this socket, for 60 s\", function () {",
+              "    const part = wsUrl.split(\"ticket=\")[1].split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+              "    const claims = JSON.parse(atob(part + \"=\".repeat((4 - part.length % 4) % 4)));",
+              "    pm.expect(claims.sub).to.eql(pm.collectionVariables.get(\"player1Id\"));",
+              "    pm.expect(claims.path).to.eql(path);",
+              "    pm.expect(claims.jti).to.be.a(\"string\").and.not.empty;",
+              "    pm.expect(claims.exp - claims.iat).to.eql(60);",
+              "});",
+              "pm.collectionVariables.set(\"liveUrl\", wsUrl);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List battles for a player",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles?userId={{player1Id}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles"
+          ],
+          "query": [
+            {
+              "key": "userId",
+              "value": "{{player1Id}}"
+            }
+          ]
+        },
+        "description": "Every match a player takes part in, newest first."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"includes the new battle\", function () {",
+              "    pm.expect(body).to.be.an(\"array\").that.is.not.empty;",
+              "    const ids = body.map(function (b) { return b.battleId; });",
+              "    pm.expect(ids).to.include(pm.collectionVariables.get(\"battleId\"));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List battles by status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles?status=in_progress&limit=10",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles"
+          ],
+          "query": [
+            {
+              "key": "status",
+              "value": "in_progress"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "description": "Filter by lifecycle state, with paging via limit and offset."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"every result is in progress\", function () {",
+              "    pm.response.json().forEach(function (b) {",
+              "        pm.expect(b.status).to.eql(\"in_progress\");",
+              "    });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List battles with an unknown status (rejected)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles?status=abandoned",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles"
+          ],
+          "query": [
+            {
+              "key": "status",
+              "value": "abandoned"
+            }
+          ]
+        },
+        "description": "Unknown filter values are rejected rather than silently returning everything."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 400\", function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Attack (player one)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}/action",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}",
+            "action"
+          ]
+        },
+        "description": "Deals damage from levels, the type matchup and equipped boosts, then passes the turn.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{player1Id}}\",\n  \"action\": \"attack\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"damages the opponent\", function () {",
+              "    pm.expect(body.healthP2).to.be.below(body.player2.maxHealth);",
+              "});",
+              "pm.test(\"passes the turn to player two\", function () {",
+              "    pm.expect(body.currentTurn).to.eql(pm.collectionVariables.get(\"player2Id\"));",
+              "    pm.expect(body.turnNumber).to.eql(2);",
+              "});",
+              "pm.test(\"records the move in the log\", function () {",
+              "    pm.expect(body.log).to.have.lengthOf(1);",
+              "    pm.expect(body.log[0].action).to.eql(\"attack\");",
+              "    pm.expect(body.log[0].damage).to.be.above(0);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Defend (player two)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token2}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}/action",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}",
+            "action"
+          ]
+        },
+        "description": "Braces for the next attack, halving the damage it deals. The brace is spent when that attack lands.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{player2Id}}\",\n  \"action\": \"defend\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"player two is braced\", function () {",
+              "    pm.expect(body.player2.defending).to.be.true;",
+              "});",
+              "pm.test(\"passes the turn back to player one\", function () {",
+              "    pm.expect(body.currentTurn).to.eql(pm.collectionVariables.get(\"player1Id\"));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Act out of turn (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token2}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}/action",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}",
+            "action"
+          ]
+        },
+        "description": "It is player one's turn, so player two acting is a conflict.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{player2Id}}\",\n  \"action\": \"attack\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 409\", function () {",
+              "    pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Act as a non-participant (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}/action",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}",
+            "action"
+          ]
+        },
+        "description": "Only the two players in the match may act in it.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{outsiderId}}\",\n  \"action\": \"attack\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 403\", function () {",
+              "    pm.response.to.have.status(403);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Submit an unknown action (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}/action",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}",
+            "action"
+          ]
+        },
+        "description": "Actions are limited to attack, defend and forfeit.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{player1Id}}\",\n  \"action\": \"flee\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 400\", function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Forfeit (player one)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}/action",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}",
+            "action"
+          ]
+        },
+        "description": "Ends the match immediately, handing the win to the opponent. The settlement in `result` is the BattleEnded payload other services will consume once async messaging is wired up.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{player1Id}}\",\n  \"action\": \"forfeit\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const body = pm.response.json();",
+              "pm.test(\"the battle is finished\", function () {",
+              "    pm.expect(body.status).to.eql(\"finished\");",
+              "    pm.expect(body.currentTurn).to.eql(\"\");",
+              "});",
+              "pm.test(\"player two wins\", function () {",
+              "    pm.expect(body.result.winnerId).to.eql(pm.collectionVariables.get(\"player2Id\"));",
+              "    pm.expect(body.result.loserId).to.eql(pm.collectionVariables.get(\"player1Id\"));",
+              "});",
+              "pm.test(\"the loser's primary Tamagotchi changes hands\", function () {",
+              "    pm.expect(body.result.transferredTamagotchiId)",
+              "        .to.eql(pm.collectionVariables.get(\"primaryTamagotchiId\"));",
+              "});",
+              "pm.test(\"xp splits 60/40 and adds back up\", function () {",
+              "    pm.expect(body.result.primaryXp + body.result.secondaryXp)",
+              "        .to.eql(body.result.rewardXp);",
+              "});",
+              "pm.collectionVariables.set(\"rewardCurrency\", body.result.rewardCurrency);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Winner was paid through the gateway",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token2}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/{{player2Id}}/currency",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{player2Id}}",
+            "currency"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Battle credited the reward via User Management\", function () {",
+              "    pm.expect(pm.response.json().globalCurrency)",
+              "        .to.eql(Number(pm.collectionVariables.get(\"rewardCurrency\")));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Act on a finished battle (rejected)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token2}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}/action",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}",
+            "action"
+          ]
+        },
+        "description": "A settled match accepts no further turns.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"{{player2Id}}\",\n  \"action\": \"attack\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 409\", function () {",
+              "    pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get an unknown battle (rejected)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{missingId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{missingId}}"
+          ]
+        },
+        "description": "An id that matches no match is a 404."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 404\", function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete battle",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}"
+          ]
+        },
+        "description": "Removes the match record, leaving the database as the run found it."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 204\", function () {",
+              "    pm.response.to.have.status(204);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Deleted battle is gone",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}"
+          ]
+        },
+        "description": "Confirms the delete took effect."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 404\", function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete player two",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token2}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/{{player2Id}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{player2Id}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 204\", function () {",
+              "    pm.response.to.have.status(204);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete player one",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/{{player1Id}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{player1Id}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 204\", function () {",
+              "    pm.response.to.have.status(204);",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

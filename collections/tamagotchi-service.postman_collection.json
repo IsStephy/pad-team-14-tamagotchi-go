@@ -1,0 +1,1467 @@
+{
+  "info": {
+    "_postman_id": "1b240c66-06bb-443f-9fef-7f795416b7dc",
+    "name": "tamagotchi-service",
+    "description": "Tamagotchi creation, stats, primary choice, XP and ownership transfer.\n\nOwner: dan1el50. Port: 8083 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`): players register and log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. Battle (`xp`, `transfer-owner`) and Monster Raid (`GET /tamagotchis/{id}`) call with their `X-Service-Key` and no token. The service accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.\n\nStat updates are checked against the package's stat definitions in Package Registry (through the gateway), so the setup folder registers a real package. Package Registry's admin is seeded by user id (PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID, `admin-1`), which no gateway login can be, so that one folder calls Package Registry directly and plays the gateway.\n\nSet these to the values in your .env (the defaults match .env.example): `{{gatewayKey}}` = GATEWAY_KEY, `{{battleServiceKey}}` = SERVICE_KEY_BATTLE, `{{monsterRaidServiceKey}}` = SERVICE_KEY_MONSTER_RAID. With newman: `--env-var gatewayKey=<key>` and so on.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "38273956"
+  },
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "tamagotchiUrl",
+      "value": "http://localhost:8083",
+      "type": "string"
+    },
+    {
+      "key": "packageRegistryUrl",
+      "value": "http://localhost:8088",
+      "type": "string"
+    },
+    {
+      "key": "gatewayKey",
+      "value": "change_me",
+      "type": "string"
+    },
+    {
+      "key": "battleServiceKey",
+      "value": "change_me",
+      "type": "string"
+    },
+    {
+      "key": "monsterRaidServiceKey",
+      "value": "change_me",
+      "type": "string"
+    },
+    {
+      "key": "packageAdminId",
+      "value": "admin-1",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "Secret123!",
+      "type": "string"
+    },
+    {
+      "key": "invalidToken",
+      "value": "not-a-real-token",
+      "type": "string"
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "ownerToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "ownerId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "otherToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "otherId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "packageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "tamagotchiId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "secondaryTamagotchiId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "unregisteredTamagotchiId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "tamagotchi-service is up behind the gateway",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Every run starts here with a new runId, so each run registers new players.",
+              "pm.collectionVariables.set('runId', String(Date.now()));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('tamagotchi-service is ok', function () { pm.expect(pm.response.json().services['tamagotchi-service'].status).to.eql('ok'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{gatewayUrl}}/health/services",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "health",
+            "services"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Players (User Management, through the gateway)",
+      "item": [
+        {
+          "name": "Register (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"owner-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"owner-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (owner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('ownerToken', body.token);",
+                  "pm.collectionVariables.set('ownerId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"owner-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (other)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"other-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"other-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (other)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('otherToken', body.token);",
+                  "pm.collectionVariables.set('otherId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"other-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Setup: a package with stat definitions (Package Registry directly)",
+      "item": [
+        {
+          "name": "Register a package (as the seeded admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('packageId', pm.response.json().packageId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{packageAdminId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{packageRegistryUrl}}/packages",
+              "host": [
+                "{{packageRegistryUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Tamagotchi collection {{runId}}\",\n  \"version\": \"1.0.{{runId}}\",\n  \"description\": \"Created by the tamagotchi-service collection\",\n  \"moderatorIds\": [\n    \"{{packageAdminId}}\"\n  ]\n}"
+            },
+            "description": "Plays the gateway (X-Gateway-Key + X-User-Id), because the seeded admin is not a user anyone can log in as."
+          },
+          "response": []
+        },
+        {
+          "name": "Define its stats: hunger and happiness",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{packageAdminId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{packageRegistryUrl}}/packages/{{packageId}}/stat-definitions",
+              "host": [
+                "{{packageRegistryUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}",
+                "stat-definitions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statDefinitions\": {\n    \"hunger\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 80,\n      \"bonusMultiplier\": 1.2\n    },\n    \"happiness\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 60,\n      \"bonusMultiplier\": 1.1\n    }\n  }\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Tamagotchi through the gateway",
+      "item": [
+        {
+          "name": "Type advantages - public, no token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the six types', function () { pm.expect(pm.response.json().cycle).to.have.lengthOf(6); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/types/advantages",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "types",
+                "advantages"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Owner creates a Tamagotchi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('tamagotchiId', pm.response.json().tamagotchiId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerId\": \"{{ownerId}}\",\n  \"type\": \"Flame\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Ignis\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Owner creates a second Tamagotchi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('secondaryTamagotchiId', pm.response.json().tamagotchiId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerId\": \"{{ownerId}}\",\n  \"type\": \"Water\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Aqua\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get the Tamagotchi",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('owned by the owner', function () { pm.expect(body.ownerId).to.eql(pm.collectionVariables.get('ownerId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List my Tamagotchis",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('both of them', function () { pm.expect(body).to.have.lengthOf(2); });",
+                  "pm.test('the first one is primary', function () {",
+                  "    const first = body.find(t => t.tamagotchiId === pm.collectionVariables.get('tamagotchiId'));",
+                  "    pm.expect(first.isPrimary).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "tamagotchis"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update stats (keys defined by the package)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('stats stored', function () { pm.expect(pm.response.json().packageStats).to.include({ hunger: 80, happiness: 90 }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 80,\n    \"happiness\": 90\n  }\n}"
+            },
+            "description": "Tamagotchi asks Package Registry (through the gateway) for this package's stat definitions before storing anything."
+          },
+          "response": []
+        },
+        {
+          "name": "Make the second one primary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('it is primary now', function () { pm.expect(pm.response.json().isPrimary).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/tamagotchis/{{secondaryTamagotchiId}}/set-primary",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "set-primary"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Monster Raid reads the Tamagotchi (service key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Battle adds XP (service key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('150 XP is a level up: level 2, 50 XP left', function () { pm.expect(pm.response.json()).to.include({ level: 2, xp: 50 }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/xp",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "xp"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xpAmount\": 150\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Battle transfers it to the other player (service key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the other player owns it', function () { pm.expect(pm.response.json().ownerId).to.eql(pm.collectionVariables.get('otherId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/transfer-owner",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "transfer-owner"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newOwnerId\": \"{{otherId}}\"\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "item": [
+        {
+          "name": "No token - stopped at the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Invalid token - stopped at the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{invalidToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Creating one for someone else (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('error: ownerId must be the caller', function () { pm.expect(pm.response.json().error).to.eql(\"ownerId must be the caller\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerId\": \"{{otherId}}\",\n  \"type\": \"Flame\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Stolen\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Updating someone else's stats (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 1\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Forged X-User-Id is ignored (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
+              },
+              {
+                "key": "X-Gateway-Key",
+                "value": "guessed-key"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 1\n  }\n}"
+            },
+            "description": "The other player claims to be the owner through forged headers. The gateway drops them and sets its own, so Tamagotchi still sees the other player."
+          },
+          "response": []
+        },
+        {
+          "name": "The old owner after the transfer (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 10\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Setting someone else's primary (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('error: userId must be the caller', function () { pm.expect(pm.response.json().error).to.eql(\"userId must be the caller\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{otherId}}/tamagotchis/{{tamagotchiId}}/set-primary",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{otherId}}",
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "set-primary"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A stat the package doesn't define (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });",
+                  "pm.test('error: unknown stat keys: strength', function () { pm.expect(pm.response.json().error).to.eql(\"unknown stat keys: strength\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 50,\n    \"strength\": 5\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Setup: a Tamagotchi in a package that doesn't exist",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('unregisteredTamagotchiId', pm.response.json().tamagotchiId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerId\": \"{{ownerId}}\",\n  \"type\": \"Earth\",\n  \"packageId\": \"00000000-0000-0000-0000-000000000000\",\n  \"name\": \"Nowhere\"\n}"
+            },
+            "description": "Creation doesn't check packageId; only stat updates do."
+          },
+          "response": []
+        },
+        {
+          "name": "Stats in a package Package Registry doesn't know (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });",
+                  "pm.test('error mentions is not registered in Package Registry', function () { pm.expect(pm.response.json().error).to.include(\"is not registered in Package Registry\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{unregisteredTamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{unregisteredTamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 50\n  }\n}"
+            },
+            "description": "Package Registry answers 404 for the package (through the gateway), which Tamagotchi turns into a 400."
+          },
+          "response": []
+        },
+        {
+          "name": "An invalid type (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerId\": \"{{ownerId}}\",\n  \"type\": \"Plasma\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Nope\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "An unknown Tamagotchi (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A player calling Battle's XP endpoint (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: missing service key', function () { pm.expect(pm.response.json().error).to.eql(\"missing service key\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}/xp",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "xp"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xpAmount\": 1000\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A wrong service key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: invalid service key', function () { pm.expect(pm.response.json().error).to.eql(\"invalid service key\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "not-a-real-key"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}/xp",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "xp"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xpAmount\": 1000\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Monster Raid's key on a Battle endpoint (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: invalid service key', function () { pm.expect(pm.response.json().error).to.eql(\"invalid service key\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}/transfer-owner",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "transfer-owner"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newOwnerId\": \"{{otherId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Tamagotchi without the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: missing or invalid gateway key', function () { pm.expect(pm.response.json().error).to.eql(\"missing or invalid gateway key\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{tamagotchiUrl}}/tamagotchis/{{secondaryTamagotchiId}}",
+              "host": [
+                "{{tamagotchiUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}"
+              ]
+            },
+            "description": "Straight to Tamagotchi's own port: refused, because only the gateway holds GATEWAY_KEY."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

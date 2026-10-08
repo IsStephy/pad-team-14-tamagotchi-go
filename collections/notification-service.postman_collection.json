@@ -1,0 +1,696 @@
+{
+  "info": {
+    "_postman_id": "0525e6ee-5e99-4f34-be06-40d857f9fbab",
+    "name": "notification-service",
+    "description": "Device registration and the notification inbox.\n\nOwner: dan1el50. Port: 8084 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`): players register and log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. The service accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.\n\nNotifications have no HTTP create endpoint: they only exist once a service publishes an event on the `notification-events` Redis channel. A fresh player's inbox is therefore empty, and `Mark my notification as read` is skipped. To see it run, publish an event for `{{playerId}}` between the two requests (README, Events Consumed) and run the collection from `List my notifications`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "38273956"
+  },
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "notificationUrl",
+      "value": "http://localhost:8084",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "Secret123!",
+      "type": "string"
+    },
+    {
+      "key": "invalidToken",
+      "value": "not-a-real-token",
+      "type": "string"
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "playerToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "playerId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "otherToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "otherId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "notification-service is up behind the gateway",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Every run starts here with a new runId, so each run registers new players.",
+              "pm.collectionVariables.set('runId', String(Date.now()));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('notification-service is ok', function () { pm.expect(pm.response.json().services['notification-service'].status).to.eql('ok'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{gatewayUrl}}/health/services",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "health",
+            "services"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Players (User Management, through the gateway)",
+      "item": [
+        {
+          "name": "Register (player)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"player-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"player-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (player)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('playerToken', body.token);",
+                  "pm.collectionVariables.set('playerId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"player-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (other)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"other-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"other-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (other)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('otherToken', body.token);",
+                  "pm.collectionVariables.set('otherId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"other-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications through the gateway",
+      "item": [
+        {
+          "name": "Register my device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('registered', function () { pm.expect(pm.response.json().status).to.eql('registered'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/register-device",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "register-device"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{playerId}}\",\n  \"fcmToken\": \"fcm-token-{{runId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List my notifications",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('an array', function () { pm.expect(body).to.be.an('array'); });",
+                  "// Empty for a fresh player; kept for the next request when an event was published.",
+                  "pm.collectionVariables.set('notificationId', body.length ? body[0].id : '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{playerId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{playerId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark my notification as read (skipped when the inbox is empty)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('notificationId')) {",
+                  "    console.log('No notification for this player yet - see the collection description.');",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('read', function () { pm.expect(pm.response.json().read).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{notificationId}}/read",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{notificationId}}",
+                "read"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "item": [
+        {
+          "name": "No token - stopped at the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{playerId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{playerId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Invalid token - stopped at the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{invalidToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{playerId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{playerId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Registering a device for someone else (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('error: userId must be the caller', function () { pm.expect(pm.response.json().error).to.eql(\"userId must be the caller\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/register-device",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "register-device"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{playerId}}\",\n  \"fcmToken\": \"stolen-{{runId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reading someone else's notifications (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('error: userId must be the caller', function () { pm.expect(pm.response.json().error).to.eql(\"userId must be the caller\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{playerId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{playerId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Forged X-User-Id is ignored (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{playerId}}"
+              },
+              {
+                "key": "X-Gateway-Key",
+                "value": "guessed-key"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{playerId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{playerId}}"
+              ]
+            },
+            "description": "The other player claims to be the player through forged headers. The gateway drops them and sets its own, so Notification still sees the other player."
+          },
+          "response": []
+        },
+        {
+          "name": "An unknown notification (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/00000000-0000-0000-0000-000000000000/read",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "00000000-0000-0000-0000-000000000000",
+                "read"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A service key instead of a player (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: invalid service key', function () { pm.expect(pm.response.json().error).to.eql(\"invalid service key\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Service-Key",
+                "value": "any-key"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{playerId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{playerId}}"
+              ]
+            },
+            "description": "Notification has no service-to-service endpoints, so any X-Service-Key is refused."
+          },
+          "response": []
+        },
+        {
+          "name": "Notification without the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: missing or invalid gateway key', function () { pm.expect(pm.response.json().error).to.eql(\"missing or invalid gateway key\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{playerId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{notificationUrl}}/notifications/{{playerId}}",
+              "host": [
+                "{{notificationUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{playerId}}"
+              ]
+            },
+            "description": "Straight to Notification's own port: refused, because only the gateway holds GATEWAY_KEY."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

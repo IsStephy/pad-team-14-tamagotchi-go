@@ -1,0 +1,1077 @@
+{
+  "info": {
+    "name": "Map Service (Team 14)",
+    "description": "Geolocation updates, nearby players and proximity detection.\n\nOwner: Dackohn. Port: 8085 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`, port 8080): players log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. The service itself accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "mapUrl",
+      "value": "http://localhost:8085"
+    },
+    {
+      "key": "password",
+      "value": "Secret123!"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "aliceToken",
+      "value": ""
+    },
+    {
+      "key": "aliceId",
+      "value": ""
+    },
+    {
+      "key": "bobToken",
+      "value": ""
+    },
+    {
+      "key": "bobId",
+      "value": ""
+    },
+    {
+      "key": "carolToken",
+      "value": ""
+    },
+    {
+      "key": "carolId",
+      "value": ""
+    },
+    {
+      "key": "daveToken",
+      "value": ""
+    },
+    {
+      "key": "daveId",
+      "value": ""
+    },
+    {
+      "key": "wsUrl",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "map-service is up behind the gateway",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Every run starts here with a new runId, so each run registers new players.",
+              "pm.collectionVariables.set('runId', String(Date.now()));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+              "pm.test('map-service is ok', function () { pm.expect(pm.response.json().services['map-service'].status).to.eql('ok'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{gatewayUrl}}/health/services",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "health",
+            "services"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Players (User Management, through the gateway)",
+      "description": "Real players: registered and logged in through the gateway, which verifies their RS256 tokens from here on.",
+      "item": [
+        {
+          "name": "Register (alice)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"alice-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (alice)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('aliceToken', body.token);",
+                  "pm.collectionVariables.set('aliceId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (bob)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"bob-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (bob)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('bobToken', body.token);",
+                  "pm.collectionVariables.set('bobId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"bob-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (carol)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"carol-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"carol-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (carol)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('carolToken', body.token);",
+                  "pm.collectionVariables.set('carolId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"carol-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register (dave)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"dave-{{runId}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"dave-{{runId}}@example.com\",\n  \"packageId\": \"p1\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Log in (dave)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('daveToken', body.token);",
+                  "pm.collectionVariables.set('daveId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"dave-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Relationships (User Management)",
+      "description": "Map shows how players relate; these come from User Management. Bob becomes Alice's friend (both sides agree), Carol her enemy, Dave stays a stranger.",
+      "item": [
+        {
+          "name": "Alice sends Bob a friend request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{aliceId}}/friends/{{bobId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{aliceId}}",
+                "friends",
+                "{{bobId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bob accepts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{bobToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{bobId}}/friends/{{aliceId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{bobId}}",
+                "friends",
+                "{{aliceId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Alice marks Carol as an enemy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{aliceId}}/enemies/{{carolId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{aliceId}}",
+                "enemies",
+                "{{carolId}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Map through the gateway",
+      "item": [
+        {
+          "name": "Alice reports her location",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('location stored', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{aliceId}}\",\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/map/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            },
+            "description": "The gateway checks Alice's token and forwards the request without it; Map checks the body's userId against X-User-Id."
+          },
+          "response": []
+        },
+        {
+          "name": "Bob reports his (nearby)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('location stored', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{bobToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{bobId}}\",\n  \"lat\": 47.0201,\n  \"lng\": 28.8301,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/map/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Carol reports hers (nearby)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('location stored', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{carolToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{carolId}}\",\n  \"lat\": 47.0198,\n  \"lng\": 28.8297,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/map/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Dave reports his, 2 m from Alice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('location stored', function () { pm.expect(pm.response.json().status).to.eql('updated'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{daveToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{daveId}}\",\n  \"lat\": 47.02002,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/map/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            },
+            "description": "Dave and Alice are unrelated and now within 6 m, so Map publishes ProximityDetected (logged as a JSON line until a broker exists: `docker compose logs map-service`)."
+          },
+          "response": []
+        },
+        {
+          "name": "Alice sees her friend, her enemy and a stranger",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const byUser = Object.fromEntries(pm.response.json().map(u => [u.userId, u.relationship]));",
+                  "pm.test('Bob is a friend', function () { pm.expect(byUser[pm.collectionVariables.get('bobId')]).to.eql('friend'); });",
+                  "pm.test('Carol is an enemy', function () { pm.expect(byUser[pm.collectionVariables.get('carolId')]).to.eql('enemy'); });",
+                  "pm.test('Dave is a stranger', function () { pm.expect(byUser[pm.collectionVariables.get('daveId')]).to.eql('none'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/nearby/{{aliceId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "nearby",
+                "{{aliceId}}"
+              ]
+            },
+            "description": "Map asks User Management for each relationship, through the gateway, with its own service key."
+          },
+          "response": []
+        },
+        {
+          "name": "Negotiate the location stream",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const wsUrl = pm.response.json().wsUrl;",
+                  "pm.test('a direct URL to Map with a one-time ticket', function () { pm.expect(wsUrl).to.match(/\\/map\\/stream\\?ticket=/); });",
+                  "pm.collectionVariables.set('wsUrl', wsUrl);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/ws/negotiate?path=/map/stream",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "ws",
+                "negotiate"
+              ],
+              "query": [
+                {
+                  "key": "path",
+                  "value": "/map/stream"
+                }
+              ]
+            },
+            "description": "The gateway checks the token and answers with Map's own socket URL plus a one-time ticket. See the WebSocket folder."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "item": [
+        {
+          "name": "No token - stopped at the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/nearby/{{aliceId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "nearby",
+                "{{aliceId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reporting someone else's location (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{bobId}}\",\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/map/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            },
+            "description": "The gateway vouches for Alice; Map refuses to let her act as Bob."
+          },
+          "response": []
+        },
+        {
+          "name": "Reading someone else's surroundings (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/nearby/{{bobId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "nearby",
+                "{{bobId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Stale timestamp (200, rejected_stale)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('rejected as stale', function () { pm.expect(pm.response.json().status).to.eql('rejected_stale'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{aliceId}}\",\n  \"lat\": 47.02,\n  \"lng\": 28.83,\n  \"timestamp\": \"2000-01-01T00:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/map/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Invalid latitude (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{aliceId}}\",\n  \"lat\": 200,\n  \"lng\": 28.83,\n  \"timestamp\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/map/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "location"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The stream over plain HTTP (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{aliceToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/stream",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "stream"
+              ]
+            },
+            "description": "Sockets are negotiated, never proxied."
+          },
+          "response": []
+        },
+        {
+          "name": "Map without the gateway (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: requests must come through the API Gateway', function () { pm.expect(pm.response.json().error).to.eql(\"requests must come through the API Gateway\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Id",
+                "value": "{{aliceId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{mapUrl}}/map/nearby/{{aliceId}}",
+              "host": [
+                "{{mapUrl}}"
+              ],
+              "path": [
+                "map",
+                "nearby",
+                "{{aliceId}}"
+              ]
+            },
+            "description": "Straight to Map's own port, claiming to be Alice: refused, because only the gateway holds GATEWAY_KEY."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Location stream (WebSocket)",
+      "item": [],
+      "description": "Postman's collection format can't store WebSocket requests, so create it in the app:\n\n1. Run `Negotiate the location stream`; it saves Map's URL with a one-time ticket into {{wsUrl}}.\n2. New -> WebSocket, URL {{wsUrl}} (save it in this collection so the variable resolves), Connect within 60 s.\n3. Send { \"userId\": \"{{aliceId}}\", \"lat\": 47.02, \"lng\": 28.83, \"timestamp\": \"{{$isoTimestamp}}\" }\n4. Map acks: { \"event\": \"ack\", \"data\": { \"status\": \"updated\" } }\n\nA ticket opens one socket only. A reused or expired ticket, or a frame for another player, closes it with 1008."
+    }
+  ]
+}
