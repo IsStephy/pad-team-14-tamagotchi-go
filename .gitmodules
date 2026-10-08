@@ -24,4 +24,4 @@
 	url = https://github.com/IsStephy/package-registry-service
 [submodule "gateway"]
 	path = gateway
-	url = https://github.com/IsStephy/gateway
+	url = https://github.com/Dackohn/gateway
