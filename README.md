@@ -32,6 +32,9 @@ Owns guild identity, membership, roles (owner/officer/member), and real-time gui
 ### Package Registry Service
 Owns the registry of client apps ("packages") participating in the ecosystem: package identifier/version/status, associated moderators/admins, and which users belong to which package. Stores each package's local Tamagotchi stat definitions/thresholds (non-normalized) so Battle Service can compute package-specific bonuses without a shared schema. Admins here design/schedule Monster Raids.
 
+### Service Discovery
+Infrastructure, not a game service (Lab 3). Knows where every running instance of every service is: instances register on start-up, keep themselves alive with heartbeats and deregister on shutdown; the API Gateway reads the live instances of a service to route to them, so services can run as several instances that are added and removed while the system runs.
+
 ## Technologies & Communication Patterns
 
 The team works in **2 languages**, split by repo/member pair:
@@ -1428,6 +1431,7 @@ Claim a free one when you wire up your service and add it here.
 | Guild | `8087` |
 | Package Registry | `8088` |
 | Gateway | `8080` |
+| Service Discovery | `8089` |
 
 ### Tamagotchi Service
 
@@ -1742,6 +1746,36 @@ package reads too; the player is the gateway's `X-User-Id`, and the service
 never verifies tokens. Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s), `503` +
 `Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, `502` if Monster
 Raid does not answer within `MONSTER_RAID_TIMEOUT_MS` (5 s).
+
+### Service Discovery
+
+**What it does:** the registry of running service instances (Lab 3). Python
+3.13 + FastAPI, in [`Dackohn/service-discovery`](https://github.com/Dackohn/service-discovery);
+the full API is in its README.
+
+```bash
+cd service-discovery
+cp .env.example .env
+docker compose up -d --build
+curl http://localhost:8089/health
+# {"status":"ok","service":"service-discovery","version":"3.0.0","services":0,"instances":0}
+```
+
+Interactive API docs: <http://localhost:8089/docs>.
+
+**How services use it:** on start-up `POST /services/register` with their own
+instance URL, then `PUT /services/{service}/instances/{instanceId}/heartbeat`
+every `heartbeatIntervalSeconds` (10 s), and `DELETE` on shutdown. An instance
+whose heartbeats stop is dropped after `INSTANCE_TTL_SECONDS` (30 s). The
+gateway reads `GET /services/{service}`. Every endpoint except `/health` needs
+the shared `X-Discovery-Key`.
+
+**Limits:** `504` after `REQUEST_TIMEOUT_SECONDS` (5 s), `503` + `Retry-After`
+above `MAX_CONCURRENT_REQUESTS` (100) at once.
+
+Not part of the shared `docker-compose.yml` yet: it joins once its first image
+is on Docker Hub (`dackohn/service-discovery`), together with the services
+registering and the gateway reading it.
 
 ## Running the Whole System
 
