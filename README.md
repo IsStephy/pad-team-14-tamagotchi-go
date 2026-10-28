@@ -1398,9 +1398,10 @@ and `ws-proxy` hands each socket to one replica.
 |---|---|
 | **Dark arrow** | REST: client → Gateway, and the Gateway routing each request to the service that owns the data |
 | **Amber arrow** | service-to-service REST, which also goes through the Gateway, carrying the caller's `X-Service-Key`; the label lists the services it calls |
-| **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to the service directly |
+| **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
 | **Dotted arrow** | asynchronous event on Redis Pub/Sub, for Notification — not through the Gateway |
-| **Colour** | which tier a service belongs to; the Gateway is amber |
+| **Teal arrow** | Service Discovery (Lab 3): every replica registers its own address, sends heartbeats and deregisters; Service Discovery checks each one's `/health` and sends alerts to Telegram |
+| **Colour** | which tier a service belongs to; the Gateway is amber, the infrastructure (Service Discovery, `ws-proxy`) teal |
 
 The three tiers behind the Gateway are the structure worth remembering:
 
@@ -1515,8 +1516,8 @@ Claim a free one when you wire up your service and add it here.
 | Battle | `8082` (the live socket, published by `ws-proxy`; REST only through the gateway) |
 | Tamagotchi | `8083` (not published: replicas reached only through the gateway) |
 | Notification | `8084` (not published: replicas reached only through the gateway) |
-| Map | `8085` |
-| Monster Raid | `8086` |
+| Map | `8085` (the location stream and direct calls, published by `ws-proxy`; REST through the gateway) |
+| Monster Raid | `8086` (the live raid socket and direct calls, published by `ws-proxy`; REST through the gateway) |
 | Guild | `8087` |
 | Package Registry | `8088` |
 | Gateway | `8080` |
@@ -1611,11 +1612,45 @@ answers "who is near me?" with distance and friend/enemy/none relationship
 **In the shared stack** it's reached only through the gateway, and calls User
 Management through the gateway with `SERVICE_KEY_MAP`:
 
+Stream frames are checked like `POST /map/location`: a bad one gets
+`{"event":"error","data":{"message":...}}` and the stream stays open.
+Latitudes run to ±85.05112878, the most Redis GEO stores.
+
+**Replicas:** the shared stack runs `MAP_REPLICAS` (2), with no published
+port: `ws-proxy` publishes `8085` for all of them and hands each socket or
+direct call to one replica. Each replica registers with Service Discovery as
+`http://<its hostname>:8085` once it is listening, sends a heartbeat every
+10 s, registers again if Service Discovery forgot it (`404`), and on `SIGTERM`
+deregisters before it stops serving. Any replica can serve any stream: locations and used tickets are in Map's Redis, shared by all of them.
+
 ```bash
-docker compose up -d
-curl http://localhost:8085/health          # public, direct
-# {"status":"ok","service":"map-service"}
+docker compose ps map-service                    # one line per replica
+curl http://localhost:8085/health                  # through ws-proxy: one replica
+# {"status":"ok","service":"map-service","version":"3.1.0","instanceId":"3f2a9c1b7d4e",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":100}
+curl -s localhost:8089/services/map-service -H "X-Discovery-Key: <DISCOVERY_KEY>"
 ```
+
+`GET /health` stays outside the limits and answers `200` under load; Service
+Discovery reads the load from it.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId` (the replica), `requestId` and `msg`: every request (with the
+caller's `callerService`, and the reason for every `4xx`/`5xx`), every outgoing
+call and its failures (`target`), sockets opened, refused and closed, events,
+circuit breaker changes and the Service Discovery registration
+(`registrationId`). `X-Request-Id` from the gateway is kept and passed on in its
+own calls. Keys, tokens and tickets are never logged. `MAP_LOG_LEVEL`
+(`info`) sets how much.
+
+**Circuit breaker:** one per service it calls (User Management). 3 errors
+(`MAP_CIRCUIT_BREAKER_THRESHOLD`) within the request timeout × 3.5
+(5 s → 17.5 s) trip it: the request needing that service answers
+`503 "<service> is unavailable (circuit open), retry in Ns"` with
+`Retry-After`, without calling it, until one trial call after the 30 s
+cooldown succeeds. Timeouts, refused connections and `5xx` count; `4xx`
+doesn't. Every change is logged (`ERROR` when it trips, naming caller, target
+and endpoint).
 
 **On its own** (development, User Management mocked with fixed test data):
 
@@ -1643,11 +1678,42 @@ Guild, Tamagotchi and User Management through the gateway with
 Registry's key (`PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY`). The service runs
 its versioned database migrations on start-up.
 
+
+**Replicas:** the shared stack runs `MONSTER_RAID_REPLICAS` (2), with no published
+port: `ws-proxy` publishes `8086` for all of them and hands each socket or
+direct call to one replica. Each replica registers with Service Discovery as
+`http://<its hostname>:8086` once it is listening, sends a heartbeat every
+10 s, registers again if Service Discovery forgot it (`404`), and on `SIGTERM`
+deregisters before it stops serving. Any replica can serve any live socket: raids are in PostgreSQL and used tickets in Redis, and every change is published on the Redis channel `raid-live`, so each replica pushes it to the sockets connected to it. Expiring raids is safe with several replicas: only the replica whose conditional `UPDATE` wins pays out.
+
 ```bash
-docker compose up -d
-curl http://localhost:8086/health          # public, direct
-# {"status":"ok","service":"monster-raid-service"}
+docker compose ps monster-raid-service                    # one line per replica
+curl http://localhost:8086/health                  # through ws-proxy: one replica
+# {"status":"ok","service":"monster-raid-service","version":"3.1.0","instanceId":"3f2a9c1b7d4e",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":100}
+curl -s localhost:8089/services/monster-raid-service -H "X-Discovery-Key: <DISCOVERY_KEY>"
 ```
+
+`GET /health` stays outside the limits and answers `200` under load; Service
+Discovery reads the load from it.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId` (the replica), `requestId` and `msg`: every request (with the
+caller's `callerService`, and the reason for every `4xx`/`5xx`), every outgoing
+call and its failures (`target`), sockets opened, refused and closed, events,
+circuit breaker changes and the Service Discovery registration
+(`registrationId`). `X-Request-Id` from the gateway is kept and passed on in its
+own calls. Keys, tokens and tickets are never logged. `MONSTER_RAID_LOG_LEVEL`
+(`info`) sets how much.
+
+**Circuit breaker:** one per service it calls (Guild, Tamagotchi, User Management). 3 errors
+(`MONSTER_RAID_CIRCUIT_BREAKER_THRESHOLD`) within the request timeout × 3.5
+(5 s → 17.5 s) trip it: the request needing that service answers
+`503 "<service> is unavailable (circuit open), retry in Ns"` with
+`Retry-After`, without calling it, until one trial call after the 30 s
+cooldown succeeds. Timeouts, refused connections and `5xx` count; `4xx`
+doesn't. Every change is logged (`ERROR` when it trips, naming caller, target
+and endpoint).
 
 **On its own** (development, Guild/Tamagotchi/User Management mocked):
 
@@ -1971,15 +2037,33 @@ succeeds. **User Management is still the built-in mock in the shared stack**
 3.13 + FastAPI, in [`Dackohn/service-discovery`](https://github.com/Dackohn/service-discovery);
 the full API is in its README.
 
+**In the shared stack** it runs from `dackohn/service-discovery:latest` on
+port `8089`, and every scaled service waits for it to be healthy. Set
+`DISCOVERY_KEY` in `.env`; every service registering and the gateway use the
+same value.
+
 ```bash
-cd service-discovery
-cp .env.example .env
-docker compose up -d --build
+docker compose up -d service-discovery
 curl http://localhost:8089/health
-# {"status":"ok","service":"service-discovery","version":"3.0.0","services":0,"instances":0}
+# {"status":"ok","service":"service-discovery","version":"3.2.0","instanceId":"…",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":100,
+#  "services":8,"instances":18,"healthChecks":{...}}
+curl -s localhost:8089/services -H "X-Discovery-Key: <DISCOVERY_KEY>"   # every instance
 ```
 
-Interactive API docs: <http://localhost:8089/docs>.
+**On its own** (development): `cd service-discovery`, `cp .env.example .env`,
+`docker compose up -d --build`. Interactive API docs:
+<http://localhost:8089/docs>. The Postman collection is
+[`collections/service-discovery.postman_collection.json`](collections/service-discovery.postman_collection.json).
+
+| Endpoint | Who calls it | Answer |
+|---|---|---|
+| `POST /services/register` `{"service","url","instanceId?","healthUrl?","metadata?"}` | each instance, once it is listening | `201 {"instanceId","heartbeatIntervalSeconds":10,"ttlSeconds":30}`; `200` when an `instanceId` it already knows registers again |
+| `PUT /services/{service}/instances/{instanceId}/heartbeat` | each instance, every `heartbeatIntervalSeconds` | `200`; `404` = forgotten, register again |
+| `DELETE /services/{service}/instances/{instanceId}` | each instance, on shutdown | `204` |
+| `GET /services/{service}` | the gateway | `200 {"service","instances":[...]}`; an unknown service has `[]` |
+| `GET /services` | people, debugging | `200 {"services":{name:[...]}}` |
+| `GET /health` | Docker, people | `200` with its own load and the health checks; public |
 
 **How services use it:** on start-up `POST /services/register` with their own
 instance URL, then `PUT /services/{service}/instances/{instanceId}/heartbeat`

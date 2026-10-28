@@ -2,20 +2,26 @@ flowchart TB
     %% Architecture diagram - the source of architecture.png (render steps in the README).
     %% Solid dark arrows: REST from clients, routed by the Gateway to the owning service.
     %% Amber arrows: service-to-service REST, which also goes through the Gateway.
-    %% Thick blue arrows: WebSockets - negotiated by the Gateway, then direct to the service.
+    %% Thick blue arrows: WebSockets - negotiated by the Gateway, then through ws-proxy to a replica.
     %% Dotted grey arrows: events on Redis Pub/Sub for Notification Service.
+    %% Teal arrows: Service Discovery (Lab 3) - registration, health checks, alerts.
 
     Client(["Client apps"])
     GW["<b>API Gateway</b><br/>Python · port 8080<br/>tokens · routing · limits"]
+    WP["<b>ws-proxy</b><br/>nginx · ports 8082, 8085–8088<br/>one host port per scaled service"]
+    SD["<b>Service Discovery</b><br/>Python · port 8089<br/>registry · health checks · alerts"]
+    TGM(["Telegram<br/>alerts topic"])
 
-    UM["User Management"]
-    BT["Battle"]
-    TG["Tamagotchi"]
-    NT["Notification"]
-    MP["Map"]
-    MR["Monster Raid"]
-    GD["Guild"]
-    PR["Package Registry"]
+    subgraph Services["Services · each runs as 2–3 replicas"]
+        UM["User Management"]
+        BT["Battle"]
+        TG["Tamagotchi"]
+        NT["Notification"]
+        MP["Map"]
+        MR["Monster Raid"]
+        GD["Guild"]
+        PR["Package Registry"]
+    end
 
     UMdb[("PostgreSQL")]
     BTdb[("PostgreSQL<br/>Redis")]
@@ -49,11 +55,13 @@ flowchart TB
     TG -->|"to Package Registry,<br/>User Management"| GW
     GD -->|"to User Management"| GW
 
-    %% WebSockets: negotiated by the Gateway, then direct to the service.
-    Client ==>|"WebSocket + ticket"| BT
-    Client ==>|"WebSocket + ticket"| MP
-    Client ==>|"WebSocket + ticket"| MR
-    Client ==>|"WebSocket + ticket"| GD
+    %% WebSockets: negotiated by the Gateway; the client connects to ws-proxy,
+    %% which hands the socket to one replica.
+    Client ==>|"WebSocket + ticket"| WP
+    WP ==> BT
+    WP ==> MP
+    WP ==> MR
+    WP ==> GD
 
     %% Events for Notification Service (Redis Pub/Sub, not through the Gateway).
     UM -.->|events| NT
@@ -62,7 +70,7 @@ flowchart TB
     MR -.->|events| NT
     GD -.->|events| NT
 
-    %% Each service owns its data store.
+    %% Each service owns its data store, shared by all of its replicas.
     UM --- UMdb
     BT --- BTdb
     TG --- TGdb
@@ -72,23 +80,34 @@ flowchart TB
     GD --- GDdb
     PR --- PRdb
 
+    %% Service Discovery: every replica registers its own address on start-up,
+    %% sends heartbeats and deregisters on shutdown; Service Discovery checks
+    %% each one's /health and alerts the team.
+    Services -->|"register · heartbeat · deregister<br/>(every replica, own address)"| SD
+    SD -.->|"GET /health · 10 s"| Services
+    SD -->|"critical load, unreachable"| TGM
+
     classDef client fill:#eef1f4,stroke:#5a6470,stroke-width:2px,color:#1f2933
     classDef gateway fill:#fdecc8,stroke:#c27c0e,stroke-width:3px,color:#3d2a05
     classDef blue fill:#dbe8f7,stroke:#2f6db5,stroke-width:2px,color:#10243e
     classDef purple fill:#e6e1f5,stroke:#5b48a2,stroke-width:2px,color:#1d1638
     classDef green fill:#dcefe2,stroke:#2e7d4f,stroke-width:2px,color:#0f2d1b
+    classDef infra fill:#d9f0ec,stroke:#1f7a6c,stroke-width:2px,color:#0b2e29
     classDef db fill:#f4f6f8,stroke:#9aa5b1,color:#3c4650
 
-    class Client client
+    class Client,TGM client
     class GW gateway
     class MR,BT,GD,MP blue
     class TG,PR purple
     class UM,NT green
+    class SD,WP infra
     class UMdb,BTdb,TGdb,NTdb,MPdb,MRdb,GDdb,PRdb db
+    style Services fill:#fafbfc,stroke:#9aa5b1,stroke-dasharray:6 4,color:#3c4650
 
     %% Edge colours: client and routed REST dark, service calls amber,
-    %% WebSockets blue, events grey.
+    %% WebSockets blue, events grey, Service Discovery teal.
     linkStyle 0,1,2,3,4,5,6,7,8 stroke:#3c4650,stroke-width:2px
     linkStyle 9,10,11,12,13,14 stroke:#c27c0e,stroke-width:2px
-    linkStyle 15,16,17,18 stroke:#2f6db5,stroke-width:3px
-    linkStyle 19,20,21,22,23 stroke:#8a939c,stroke-width:1.5px
+    linkStyle 15,16,17,18,19 stroke:#2f6db5,stroke-width:3px
+    linkStyle 20,21,22,23,24 stroke:#8a939c,stroke-width:1.5px
+    linkStyle 33,34,35 stroke:#1f7a6c,stroke-width:2px
