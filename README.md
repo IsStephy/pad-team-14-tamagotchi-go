@@ -139,7 +139,48 @@ Every error body is `{"error": "..."}`.
 | Token missing, malformed, expired or badly signed (at the gateway); gateway key or service key missing or wrong (at the service) | `401 Unauthorized` | connection closed with `1008` |
 | Acting as someone else, or lacking the role | `403 Forbidden` | connection closed with `1008` |
 | Concurrent task limit reached | `503 Service Unavailable` + `Retry-After` | connection closed with `1013` |
+| A service this request needs has its circuit breaker open (see below) | `503 Service Unavailable` | — |
 | Task timeout — the request, or a service it depends on, took too long | `504 Gateway Timeout` | — |
+
+#### Circuit breaker
+
+Every service that calls another one (the gateway, Battle, Guild, Package
+Registry, Tamagotchi, Map, Monster Raid) keeps **one breaker per target**, so
+one failing service never pauses calls to the others. The rule is the same
+everywhere:
+
+- **Trips at 3 errors to the same target within the caller's request timeout
+  × 3.5**: 10 s → 35 s for the gateway, 8 s → 28 s, 5 s → 17.5 s.
+- **Errors** are timeouts, refused or broken connections and `5xx` answers. A
+  `4xx` is not: the target answered, the request was wrong. A call abandoned
+  because your own caller went away is not either.
+
+| State | Calls to the target | Moves on when |
+|---|---|---|
+| Closed | go through; errors are counted over the window | the threshold is reached → open |
+| Open | fail at once, without reaching the target; the request that needed it answers `503` | the cooldown has passed → half-open |
+| Half-open | one trial call goes through, the others still fail at once | the trial succeeds → closed; it fails → open |
+
+Each service reads `CIRCUIT_BREAKER_THRESHOLD` (`3`), the window and the
+cooldown (both default to the window above) from its environment, with its
+own unit (`_MS` or `_SECONDS`) and prefix in [`.env.example`](.env.example).
+
+**Logs.** Every change of state is one line in the team log format. Tripping
+is an `ERROR` naming the caller, target, endpoint, error count, window and
+last error; half-open and closed are logged too:
+
+```json
+{"time":"2026-10-28T14:02:03.112Z","level":"ERROR","service":"gateway","msg":"circuit breaker tripped: calls to the service are paused","caller":"gateway","target":"tamagotchi-service","endpoint":"GET /types/advantages","errors":3,"windowSeconds":35.0,"threshold":3,"cooldownSeconds":35.0,"lastError":"tamagotchi-service is unreachable","requestId":"c41a…"}
+```
+
+**Try it:** stop a service (`docker compose stop tamagotchi-service`) and
+send 3 requests that need it. They fail with `502` or `504` and the third
+trips the breaker. The 4th answers `503` at once. Start the service again, and
+the first request after the cooldown closes the breaker. The gateway's
+`GET /health/services` shows each service's `circuit`.
+
+Reference implementations: the gateway's `app/breaker.py` (Python) and
+Battle's `internal/clients/httpx/breaker.go` (Go).
 
 #### Access per endpoint
 
