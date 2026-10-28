@@ -1,0 +1,563 @@
+{
+  "info": {
+    "_postman_id": "945f3ced-bffc-40f6-823b-039c35658579",
+    "name": "Service Discovery (Team 14)",
+    "description": "The registry of running service instances (Lab 3).\n\nOwner: Dackohn. Port: 8089, called directly: it is infrastructure, not behind the gateway.\n\nSet `discoveryKey` to `DISCOVERY_KEY` from your `.env` before running. The collection registers one test instance under its own service name, heartbeats, deregisters it, then lists the Map and Monster Raid replicas of the shared stack.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health (public)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Each run uses its own service name, so runs never see each other's instance.",
+              "pm.collectionVariables.set('probeService', 'postman-probe-' + Date.now());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK without a key', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('reports itself and its load', () => {",
+              "    pm.expect(body.status).to.eql('ok');",
+              "    pm.expect(body.service).to.eql('service-discovery');",
+              "    pm.expect(body.instanceId).to.be.a('string').and.not.empty;",
+              "    pm.expect(body.inFlightRequests).to.be.a('number');",
+              "    pm.expect(body.maxConcurrentRequests).to.be.a('number');",
+              "});",
+              "pm.test('summarises the health checks', () => pm.expect(body.healthChecks).to.be.an('object'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{discoveryUrl}}/health",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Status endpoint: public, outside the limits. Also shows how many services and instances are registered and the state of the health checks."
+      },
+      "response": []
+    },
+    {
+      "name": "Register without the key -> 401",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('401 without X-Discovery-Key', () => pm.response.to.have.status(401));",
+              "pm.test('says why', () => pm.expect(pm.response.json().error).to.match(/X-Discovery-Key/));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/register",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "register"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service\": \"{{probeService}}\",\n  \"url\": \"http://localhost:8089\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Register with a wrong key -> 401",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('401 with a wrong key', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "not-the-key"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/register",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "register"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service\": \"{{probeService}}\",\n  \"url\": \"http://localhost:8089\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Register with an invalid URL -> 400",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 for a URL that is not http(s)', () => pm.response.to.have.status(400));",
+              "pm.test('names the field', () => pm.expect(pm.response.json().error).to.match(/^url:/));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/register",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "register"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service\": \"{{probeService}}\",\n  \"url\": \"not a url\"\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Register an instance",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('returns the instance id and the heartbeat timing', () => {",
+              "    pm.expect(body.instanceId).to.be.a('string').and.not.empty;",
+              "    pm.expect(body.heartbeatIntervalSeconds).to.eql(10);",
+              "    pm.expect(body.ttlSeconds).to.eql(30);",
+              "});",
+              "pm.collectionVariables.set('instanceId', body.instanceId);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/register",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "register"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service\": \"{{probeService}}\",\n  \"url\": \"http://localhost:8089\"\n}"
+        },
+        "description": "What every replica does once it is listening. The address here is Service Discovery itself, so its health checks find this test instance healthy and raise no alert."
+      },
+      "response": []
+    },
+    {
+      "name": "List the registered instance",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const ids = pm.response.json().instances.map((i) => i.instanceId);",
+              "pm.test('lists the new instance', () => pm.expect(ids).to.include(pm.collectionVariables.get('instanceId')));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/{{probeService}}",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "{{probeService}}"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Heartbeat",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('moves the expiry on', () => pm.expect(pm.response.json().expiresAt).to.be.a('string'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/{{probeService}}/instances/{{instanceId}}/heartbeat",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "{{probeService}}",
+            "instances",
+            "{{instanceId}}",
+            "heartbeat"
+          ]
+        },
+        "description": "Every heartbeatIntervalSeconds (10 s). Without one for ttlSeconds (30 s) the instance is dropped."
+      },
+      "response": []
+    },
+    {
+      "name": "Deregister",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('204 No Content', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/{{probeService}}/instances/{{instanceId}}",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "{{probeService}}",
+            "instances",
+            "{{instanceId}}"
+          ]
+        },
+        "description": "On shutdown (SIGTERM), before the replica stops serving."
+      },
+      "response": []
+    },
+    {
+      "name": "Heartbeat after deregistering -> 404",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('404: the replica must register again', () => pm.response.to.have.status(404));",
+              "pm.test('says so', () => pm.expect(pm.response.json().error).to.match(/register again/));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/{{probeService}}/instances/{{instanceId}}/heartbeat",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "{{probeService}}",
+            "instances",
+            "{{instanceId}}",
+            "heartbeat"
+          ]
+        },
+        "description": "The same 404 a replica gets after Service Discovery restarts; it then registers again."
+      },
+      "response": []
+    },
+    {
+      "name": "The instance is gone",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('no instances left', () => pm.expect(pm.response.json().instances).to.eql([]));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/{{probeService}}",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "{{probeService}}"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Every registered instance",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('grouped by service', () => pm.expect(pm.response.json().services).to.be.an('object'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services"
+          ]
+        },
+        "description": "Every service and its instances, for debugging."
+      },
+      "response": []
+    },
+    {
+      "name": "Map Service replicas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('lists map-service', () => pm.expect(body.service).to.eql('map-service'));",
+              "pm.test('at least one replica is registered', () => pm.expect(body.instances).to.be.an('array').that.is.not.empty);",
+              "pm.test('each replica registered its own address on port 8085', () => {",
+              "    body.instances.forEach((i) => {",
+              "        pm.expect(i.url).to.match(/^http:\\/\\/[^/]+:8085$/);",
+              "        pm.expect(i.instanceId).to.be.a('string').and.not.empty;",
+              "    });",
+              "    const urls = body.instances.map((i) => i.url);",
+              "    pm.expect(new Set(urls).size).to.eql(urls.length);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/map-service",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "map-service"
+          ]
+        },
+        "description": "In the shared stack: one entry per replica (MAP_REPLICAS, 2), each at its own container hostname."
+      },
+      "response": []
+    },
+    {
+      "name": "Monster Raid Service replicas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('lists monster-raid-service', () => pm.expect(body.service).to.eql('monster-raid-service'));",
+              "pm.test('at least one replica is registered', () => pm.expect(body.instances).to.be.an('array').that.is.not.empty);",
+              "pm.test('each replica registered its own address on port 8086', () => {",
+              "    body.instances.forEach((i) => {",
+              "        pm.expect(i.url).to.match(/^http:\\/\\/[^/]+:8086$/);",
+              "        pm.expect(i.instanceId).to.be.a('string').and.not.empty;",
+              "    });",
+              "    const urls = body.instances.map((i) => i.url);",
+              "    pm.expect(new Set(urls).size).to.eql(urls.length);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/monster-raid-service",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "monster-raid-service"
+          ]
+        },
+        "description": "In the shared stack: one entry per replica (MONSTER_RAID_REPLICAS, 2), each at its own container hostname."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "discoveryUrl",
+      "value": "http://localhost:8089"
+    },
+    {
+      "key": "discoveryKey",
+      "value": "change_me"
+    },
+    {
+      "key": "probeService",
+      "value": ""
+    },
+    {
+      "key": "instanceId",
+      "value": ""
+    }
+  ]
+}
