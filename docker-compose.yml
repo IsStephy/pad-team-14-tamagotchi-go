@@ -41,6 +41,10 @@ services:
 
   user-management-service:
     image: pshasuleiman/user-management-service:latest
+    # Replicas (Lab 3): each registers itself with Service Discovery under its
+    # own hostname, so no container_name and no published port.
+    deploy:
+      replicas: ${USER_MANAGEMENT_REPLICAS:-3}
     depends_on:
       user-management-service-db:
         condition: service_healthy
@@ -67,6 +71,12 @@ services:
       SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
       SERVICE_KEY_MAP: ${SERVICE_KEY_MAP:-}
+      # Each replica registers as http://<its hostname>:8081, sends heartbeats
+      # and deregisters on shutdown; it keeps retrying while Service Discovery
+      # is not up.
+      SERVICE_DISCOVERY_URL: ${SERVICE_DISCOVERY_URL:-http://service-discovery:8089}
+      DISCOVERY_KEY: ${DISCOVERY_KEY:-}
+      LOG_LEVEL: ${USER_MANAGEMENT_LOG_LEVEL:-info}
     # No published port: only the gateway reaches it, at
     # http://user-management-service:8081 on the Compose network.
     restart: unless-stopped
@@ -106,6 +116,11 @@ services:
 
   battle-service:
     image: pshasuleiman/battle-service:latest
+    # Replicas (Lab 3): each registers itself with Service Discovery under its
+    # own hostname, so no container_name and no published port. Live turns
+    # reach the sockets on every replica through Redis pub/sub.
+    deploy:
+      replicas: ${BATTLE_REPLICAS:-3}
     depends_on:
       battle-service-db:
         condition: service_healthy
@@ -140,11 +155,20 @@ services:
       # Task timeout (504) and concurrent task limit (503 + Retry-After).
       REQUEST_TIMEOUT_MS: ${BATTLE_REQUEST_TIMEOUT_MS:-8000}
       MAX_CONCURRENT_REQUESTS: ${BATTLE_MAX_CONCURRENT_REQUESTS:-50}
-    ports:
-      # Published only for the live socket: the gateway's /ws/negotiate hands
-      # clients ws://localhost:8082/battles/{battleId}/live. Every other
-      # request here without the gateway's key is answered 401.
-      - "${BATTLE_PORT:-8082}:8082"
+      # Circuit breaker per dependency: 3 errors within the request timeout x
+      # 3.5 (28 s) pause calls to it. Empty window and cooldown follow that rule.
+      CIRCUIT_BREAKER_THRESHOLD: ${BATTLE_CIRCUIT_BREAKER_THRESHOLD:-3}
+      CIRCUIT_BREAKER_WINDOW_MS: ${BATTLE_CIRCUIT_BREAKER_WINDOW_MS:-}
+      CIRCUIT_BREAKER_COOLDOWN_MS: ${BATTLE_CIRCUIT_BREAKER_COOLDOWN_MS:-}
+      # Each replica registers as http://<its hostname>:8082, sends heartbeats
+      # and deregisters on shutdown; it keeps retrying while Service Discovery
+      # is not up.
+      SERVICE_DISCOVERY_URL: ${SERVICE_DISCOVERY_URL:-http://service-discovery:8089}
+      DISCOVERY_KEY: ${DISCOVERY_KEY:-}
+      LOG_LEVEL: ${BATTLE_LOG_LEVEL:-info}
+    # No published port: the gateway reaches each replica at the address it
+    # registered in Service Discovery.
+    restart: unless-stopped
 
 
   # ------------------------------------------------------- Go / tamagotchi
