@@ -74,8 +74,8 @@ services:
       # Each replica registers as http://<its hostname>:8081, sends heartbeats
       # and deregisters on shutdown; it keeps retrying while Service Discovery
       # is not up.
-      SERVICE_DISCOVERY_URL: ${SERVICE_DISCOVERY_URL:-http://service-discovery:8089}
-      DISCOVERY_KEY: ${DISCOVERY_KEY:-}
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${USER_MANAGEMENT_LOG_LEVEL:-info}
     # No published port: only the gateway reaches it, at
     # http://user-management-service:8081 on the Compose network.
@@ -163,11 +163,11 @@ services:
       # Each replica registers as http://<its hostname>:8082, sends heartbeats
       # and deregisters on shutdown; it keeps retrying while Service Discovery
       # is not up.
-      SERVICE_DISCOVERY_URL: ${SERVICE_DISCOVERY_URL:-http://service-discovery:8089}
-      DISCOVERY_KEY: ${DISCOVERY_KEY:-}
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${BATTLE_LOG_LEVEL:-info}
-    # No published port: the gateway reaches each replica at the address it
-    # registered in Service Discovery.
+    # No published port: the gateway reaches the replicas at
+    # http://battle-service:8082, which Compose DNS resolves to all of them.
     restart: unless-stopped
 
 
