@@ -1796,13 +1796,15 @@ cd guild-service
 cp .env.example .env        # then set a real password
 docker compose up -d --build
 curl http://localhost:8087/health
-# {"status":"ok","service":"guild-service"}
+# {"status":"ok","service":"guild-service","instanceId":"<container hostname>","uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":40,"openChatSockets":0,"maxChatSockets":500}
 ```
 
 Interactive API docs: <http://localhost:8087/docs>. Guild chat is a WebSocket
 at `ws://localhost:8087/guilds/{guildId}/chat`; clients get its URL with a
 single-use ticket from the gateway's `GET /ws/negotiate?path=/guilds/{guildId}/chat`
-and then connect to the service directly — see the service README.
+and then connect to the service directly — see the service README. In the
+shared stack that address is **ws-proxy**, which hands the socket to one of
+the replicas.
 
 **Gateway routes:** `/guilds/**` and `/users/{userId}/guilds/**` → Guild;
 `WS /guilds/{guildId}/chat` is negotiated, never proxied.
@@ -1814,6 +1816,39 @@ the gateway's `X-User-Id`, and the service never verifies tokens.
 (`SERVICE_KEY_MONSTER_RAID`). Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s),
 `503` + `Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, chat
 sockets capped at `MAX_WS_CONNECTIONS` (500).
+
+**Replicas:** the shared stack runs `GUILD_REPLICAS` (3), with no published
+port: `ws-proxy` publishes `GUILD_PORT` (8087) for all of them and passes each
+socket or HTTP call to one replica (see `ws-proxy/nginx.conf`). Any replica can
+serve any socket: used tickets are in PostgreSQL, and a chat message saved on
+one replica reaches the sockets on every other through PostgreSQL
+`LISTEN/NOTIFY`. Migrations run under an advisory lock, so replicas can start
+together. Each replica registers with Service Discovery as
+`http://<its hostname>:8087`, sends a heartbeat every 10 s, registers again if
+Service Discovery forgot it, and deregisters on `SIGTERM` before it stops
+serving. `GET /health` adds `instanceId`, `uptimeSeconds`, `inFlightRequests`,
+`maxConcurrentRequests` and the open chat sockets, and keeps answering `200`
+under load.
+
+**Logs:** one JSON line per event with `timestamp`, `level`, `service`,
+`instanceId`, `requestId` and `message`: every request and outgoing call,
+refusals with their reason, chat sockets, events, circuit breaker changes and
+Service Discovery registration. `X-Request-Id` is passed on in Guild's own
+calls. Keys, tokens and tickets are never logged.
+
+**Outgoing calls and circuit breaker:** User Management (`GET /users/{userId}`,
+`GET /users/{userId}/relationship/{targetId}`) through the gateway, with Guild's
+own `X-Service-Key`. 3 errors within `REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip the
+breaker: the request then answers `503` + `Retry-After` without calling, until
+one trial call after the cooldown succeeds. Timeouts, refused connections and
+`5xx` count; `4xx` doesn't. **User Management is still the built-in mock in
+the shared stack** (`GUILD_USER_MANAGEMENT_URL` empty): it accepts only players
+on those endpoints today. Once it accepts `SERVICE_KEY_GUILD`, set
+`GUILD_USER_MANAGEMENT_URL=http://gateway:8080`.
+
+**Events:** inviting a member publishes `GuildInvitation` on Notification's
+Redis channel `notification-events`, as
+`{"type":"GuildInvitation","eventId","userId":"<invited player>","payload":{guildId, guildName, invitedBy, sentAt}}`.
 
 ### Package Registry Service
 
@@ -1833,7 +1868,7 @@ cd package-registry-service
 cp .env.example .env        # then set a real password
 docker compose up -d --build
 curl http://localhost:8088/health
-# {"status":"ok","service":"package-registry-service"}
+# {"status":"ok","service":"package-registry-service","instanceId":"<container hostname>","uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":40}
 ```
 
 Interactive API docs: <http://localhost:8088/docs>.
@@ -1846,8 +1881,33 @@ token). No WebSocket endpoints.
 `X-Gateway-Key` (`401` otherwise, except `/health` and `/docs`) — the public
 package reads too; the player is the gateway's `X-User-Id`, and the service
 never verifies tokens. Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s), `503` +
-`Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, `502` if Monster
+`Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, `504` if Monster
 Raid does not answer within `MONSTER_RAID_TIMEOUT_MS` (5 s).
+
+**Replicas:** the shared stack runs `PACKAGE_REGISTRY_REPLICAS` (3), with no
+published port. The gateway finds them in Service Discovery; `ws-proxy`
+publishes `PACKAGE_REGISTRY_PORT` (8088) only so direct HTTP calls (the Postman
+collection) still reach one of them. All state is in PostgreSQL, migrations run
+under an advisory lock, and the first admin is seeded with
+`ON CONFLICT DO NOTHING`, so any replica can serve any request. Each replica
+registers with Service Discovery as `http://<its hostname>:8088`, sends a
+heartbeat every 10 s, and deregisters on `SIGTERM`. `GET /health` adds
+`instanceId`, `uptimeSeconds`, `inFlightRequests` and `maxConcurrentRequests`.
+
+**Logs:** one JSON line per event with `timestamp`, `level`, `service`,
+`instanceId`, `requestId` and `message`: every request and outgoing call,
+refusals with their reason, circuit breaker changes and Service Discovery
+registration. `X-Request-Id` is passed on to Monster Raid. Keys and tokens are
+never logged.
+
+**Outgoing calls and circuit breaker:** Monster Raid (`POST /raids`) and User
+Management (`GET /users/{userId}`), through the gateway with Package Registry's
+own `X-Service-Key`, each behind its own breaker: 3 errors within
+`REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip it, the request then answers `503` +
+`Retry-After` without calling, until one trial call after the cooldown
+succeeds. **User Management is still the built-in mock in the shared stack**
+(`PACKAGE_REGISTRY_USER_MANAGEMENT_URL` empty) until it accepts
+`SERVICE_KEY_PACKAGE_REGISTRY`.
 
 ### Service Discovery
 
