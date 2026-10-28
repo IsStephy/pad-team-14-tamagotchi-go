@@ -444,7 +444,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
-                  "pm.test('error: user is not a member of this raid's guild', function () { pm.expect(pm.response.json().error).to.eql(\"user is not a member of this raid's guild\"); });"
+                  "pm.test(\"error: user is not a member of this raid's guild\", function () { pm.expect(pm.response.json().error).to.eql(\"user is not a member of this raid's guild\"); });"
                 ]
               }
             }
