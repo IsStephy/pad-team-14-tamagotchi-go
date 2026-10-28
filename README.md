@@ -1464,7 +1464,7 @@ Claim a free one when you wire up your service and add it here.
 | Service | Port |
 |---|---|
 | User Management | `8081` (not published: replicas reached only through the gateway) |
-| Battle | `8082` (not published: replicas reached only through the gateway) |
+| Battle | `8082` (the live socket, published by `ws-proxy`; REST only through the gateway) |
 | Tamagotchi | `8083` (not published: replicas reached only through the gateway) |
 | Notification | `8084` (not published: replicas reached only through the gateway) |
 | Map | `8085` |
@@ -1722,13 +1722,14 @@ covers). `WS /battles/{battleId}/live` is negotiated, never proxied.
 which clients open directly with the gateway's ticket. The player is the
 gateway's `X-User-Id`, and the service no longer verifies tokens. Its own rules
 stay: the actor a request names must be that player, and only the challenged
-player may accept (`403` otherwise). Its port is not published in the shared
-stack.
+player may accept (`403` otherwise). The replicas publish no port: `ws-proxy`
+publishes `8082` for the live socket and passes each connection on to one of
+them.
 
 **Live updates:** clients call the gateway's
 `GET /ws/negotiate?path=/battles/{battleId}/live` with their token and connect
-to the returned `wsUrl` (`ws://…/battles/{battleId}/live?ticket=…`) within 60
-seconds. Battle checks the ticket against `GATEWAY_KEY`, keeps used ticket ids
+to the returned `wsUrl` (`ws://localhost:8082/battles/{battleId}/live?ticket=…`)
+within 60 seconds, through `ws-proxy`. Battle checks the ticket against `GATEWAY_KEY`, keeps used ticket ids
 in its own Redis (`battle-service-cache`) so each opens one socket, and sends
 `turn_update` frames (on connect, then after every turn) and a final
 `battle_end`. `BATTLE_MAX_WS_CONNECTIONS` (500) caps open sockets; the next one
