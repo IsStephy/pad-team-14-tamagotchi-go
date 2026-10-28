@@ -1527,6 +1527,14 @@ No WebSocket endpoints. Its one outgoing call, Package Registry's
 `GET /packages/{packageId}`, goes through the gateway too
 (`TAMAGOTCHI_PACKAGE_REGISTRY_URL`, `http://gateway:8080` when empty).
 
+**Circuit breaker:** that call has its own breaker.
+`TAMAGOTCHI_CIRCUIT_BREAKER_THRESHOLD` (3) errors within the request timeout × 3.5
+(5 s → 17.5 s) trip it: a stats update then answers `503` with `Retry-After` at once,
+without calling Package Registry, until the cooldown (the window) has passed and one
+trial call succeeds. Timeouts, refused connections and `5xx` count; an answer such as
+`404` doesn't. Every change of state is logged (an `ERROR` naming caller, target and
+endpoint when it trips), and `/health` shows the breaker under `load.circuitBreakers`.
+
 ### Notification Service
 
 Go, Redis 7. Runs as `NOTIFICATION_REPLICAS` replicas (default 2), each
