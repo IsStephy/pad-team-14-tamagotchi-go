@@ -610,15 +610,24 @@ services:
     # workflow). Run `docker compose pull` to get a new release.
     image: isstephy1/gateway:latest
     depends_on:
-      - user-management-service
-      - battle-service
-      - tamagotchi-service
-      - notification-service
-      - map-service
-      - monster-raid-service
-      - guild-service
-      - package-registry-service
-      - service-discovery
+      service-discovery:
+        condition: service_healthy
+      user-management-service:
+        condition: service_started
+      battle-service:
+        condition: service_started
+      tamagotchi-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+      map-service:
+        condition: service_started
+      monster-raid-service:
+        condition: service_started
+      guild-service:
+        condition: service_started
+      package-registry-service:
+        condition: service_started
     environment:
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       AUTH_MODE: ${GATEWAY_AUTH_MODE:-gateway}
@@ -631,12 +640,14 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${GATEWAY_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_SECONDS: ${GATEWAY_CIRCUIT_BREAKER_WINDOW_SECONDS:-}
       CIRCUIT_BREAKER_COOLDOWN_SECONDS: ${GATEWAY_CIRCUIT_BREAKER_COOLDOWN_SECONDS:-}
-      # Round-robin over each service's replicas, from Service Discovery's
-      # live instance lists (refreshed every DISCOVERY_REFRESH_SECONDS). A
-      # service that doesn't register keeps its fixed http://<service>:<port>.
+      # Each service's replicas, read from Service Discovery every
+      # GATEWAY_DISCOVERY_REFRESH_SECONDS and taken in turn. A replica that
+      # trips its breaker is removed and deregistered; a service Service
+      # Discovery doesn't list is reached at its fixed URL.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       DISCOVERY_REFRESH_SECONDS: ${GATEWAY_DISCOVERY_REFRESH_SECONDS:-5}
+      LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
       # What GET /ws/negotiate hands to clients: each service's own host port,
       # since the socket connects to the service directly.
       BATTLE_WS_PUBLIC_URL: ws://localhost:${BATTLE_PORT:-8082}
