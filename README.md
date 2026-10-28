@@ -248,8 +248,8 @@ Reference implementations: the gateway's `app/breaker.py` and
 | | `WS /battles/{battleId}/live` | Player — gateway ticket |
 | Tamagotchi | `GET /types/advantages` | Public |
 | | `POST /tamagotchis` | Player (self — the owner) |
-| | `GET /tamagotchis/{id}` | Player, or **Service** — Monster Raid (ownership and attack power on raid joins) |
-| | `GET /users/{userId}/tamagotchis` | Player |
+| | `GET /tamagotchis/{id}` | Player, or **Service** — Monster Raid (ownership and attack power on raid joins), Battle (combat stats and equipped boosts) |
+| | `GET /users/{userId}/tamagotchis` | Player, or **Service** — Battle (the player's Tamagotchis for a battle) |
 | | `PATCH /users/{userId}/tamagotchis/{id}/set-primary` | Player (self — the owner) |
 | | `PATCH /tamagotchis/{id}/stats` | Player (self — the owner) |
 | | `POST /tamagotchis/{id}/xp` | **Service** — Battle |
@@ -1548,7 +1548,8 @@ curl -s localhost:8089/services/tamagotchi-service -H "X-Discovery-Key: <DISCOVE
 
 **In the shared stack** it's reached only through the gateway: every endpoint
 except `GET /health` needs the gateway's `X-Gateway-Key`, players are
-identified by `X-User-Id`, and Battle (`xp`, `transfer-owner`) and Monster Raid
+identified by `X-User-Id`, and Battle (`xp`, `transfer-owner`, and reading
+`GET /tamagotchis/{id}` and `GET /users/{userId}/tamagotchis`) and Monster Raid
 (`GET /tamagotchis/{id}`) by their `X-Service-Key` (`SERVICE_KEY_BATTLE`,
 `SERVICE_KEY_MONSTER_RAID`). Access per endpoint is in the table above.
 
