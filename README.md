@@ -2192,8 +2192,10 @@ on its own port.
 ### How it works
 
 - **Every extra replica registers an address other machines can reach**:
-  `http://<INSTANCE_HOST>:<PORT>`, with `INSTANCE_HOST` the machine's IP or
-  a dotted host name (e.g. `pc-denis.local`) from its `.env`. A bare name such
+  `http://<host>:<port>`: the machine's IP or a dotted host name
+  (e.g. `pc-denis.local`) and the replica's port, from its `.env`. The
+  variables are named per service, e.g. Guild's `INSTANCE_HOST`/`PORT` and
+  Map's `MAP_INSTANCE_HOST`/`MAP_PORT`. A bare name such
   as `pc-denis`, or a loopback address, still gets HTTP, but the gateway never
   hands it out for sockets. The main machine's Compose replicas keep
   registering their container hostname, as before.
@@ -2257,10 +2259,19 @@ replicas elsewhere. On every machine with extra replicas, open their ports
 ### Extra replicas
 
 Each service's repo has a `docker-compose.replica.yml` that starts only the
-service, with no database. It reads everything from `.env`: the main machine's
-database and Service Discovery, the gateway's address for outgoing calls, this
-machine's `INSTANCE_HOST`, and `PORT`, the port the replica listens on,
-published 1:1. Example for Guild on `192.168.1.21`:
+service, with no database. It reads everything from its own `.env`: the main
+machine's database (and Redis) and Service Discovery, the gateway's address
+for outgoing calls, this machine's host or IP, and the port the replica
+listens on, published 1:1.
+
+**The variable names differ per service.** The `<SERVICE>_` rule is for this
+repo's shared `.env`; a service's own `.env` uses its own names. Guild and
+Package Registry use `INSTANCE_HOST` and `PORT`, Map uses `MAP_INSTANCE_HOST`
+and `MAP_PORT`, and so on. Always take them from that service's README
+("Run extra replicas"): with the wrong name, the replica quietly starts on its
+default port. Two examples, on `192.168.1.21`:
+
+Guild:
 
 ```bash
 INSTANCE_HOST=192.168.1.21
@@ -2277,9 +2288,16 @@ USER_MANAGEMENT_URL=http://192.168.1.10:8080
 NOTIFICATION_EVENTS_REDIS_URL=redis://:<NOTIFICATION_REDIS_PASSWORD>@192.168.1.10:6374/0
 ```
 
+Map (an excerpt: the rest is in Map's README):
+
+```bash
+MAP_INSTANCE_HOST=192.168.1.21
+MAP_PORT=18501
+MAP_REDIS_URL=redis://:<MAP_REDIS_PASSWORD>@192.168.1.10:6375
+```
+
 Outgoing calls go to the gateway's real address (`http://192.168.1.10:8080`),
-never `http://gateway:8080`, which only exists inside the main stack. The
-service's README ("Run extra replicas") lists its variables.
+never `http://gateway:8080`, which only exists inside the main stack.
 
 Check that a replica joined: `GET http://192.168.1.10:8089/services/<service>`
 with `X-Discovery-Key` lists its address, and the gateway's request log shows
@@ -2292,17 +2310,23 @@ it in `instanceUrl`.
   service's port inside Docker, publish none, and take sockets through
   `ws-proxy`.
 - **Extra replicas, on any machine:** one Compose project per replica, each
-  with its own port. A loop starts several:
+  with its own port. A loop starts several. It sets **that service's** port
+  variable (see its README), so the loop differs per service:
 
   ```bash
-  # three Guild replicas on this machine: ports 18701-18703
+  # three Guild replicas on this machine: ports 18701-18703 (Guild's PORT)
   for i in 1 2 3; do
     PORT=1870$i docker compose -p guild-$i -f docker-compose.replica.yml up -d
+  done
+
+  # three Map replicas: ports 18501-18503 (Map's MAP_PORT)
+  for i in 1 2 3; do
+    MAP_PORT=1850$i docker compose -p map-$i -f docker-compose.replica.yml up -d
   done
   ```
 
   ```powershell
-  # the same in PowerShell
+  # the Guild loop in PowerShell
   1..3 | ForEach-Object { $env:PORT = "1870$_"; docker compose -p "guild-$_" -f docker-compose.replica.yml up -d }
   ```
 
@@ -2322,9 +2346,10 @@ it in `instanceUrl`.
   | Guild | `8087` | `18701`–`18799` |
   | Package Registry | `8088` | `18801`–`18899` |
 
-Which services support it: every service needs `INSTANCE_HOST` and a
-`docker-compose.replica.yml` (#139, #140, #141, #142). Guild and Package
-Registry have them (#141); check each service's README for the others.
+Which services support it: every service needs a host setting and a
+`docker-compose.replica.yml`. Guild and Package Registry (#141), Tamagotchi and
+Notification (#140), and Map and Monster Raid (#142) have them; User Management
+and Battle follow in #139. Each service's README has its variables.
 
 ### Security
 
