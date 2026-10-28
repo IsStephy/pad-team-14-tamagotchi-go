@@ -130,7 +130,7 @@ The client then connects to the service directly. The **ticket** is a JWT the ga
 
 The service verifies the signature, expiry and path, remembers used `jti`s until they expire, and then applies its own rules (participant, guild member, …).
 
-**Replicas across machines.** When the gateway runs with `WS_URLS_FROM_DISCOVERY=true` (the main machine's [machines override](#running-across-machines)), `wsUrl` points at one replica's own address instead: the next replica of the service, round-robin, among those registered with an address clients can reach (an IP or a dotted host name, e.g. `ws://192.168.1.21:18701/guilds/<guildId>/chat?ticket=<ticket>`). The ticket is the same and valid on any replica. While no such replica is listed, `wsUrl` is the public URL above. Off (the default), nothing changes.
+**Replicas across machines.** When the gateway runs with `WS_URLS_FROM_DISCOVERY=true` (the main machine's [machines override](#running-across-machines)), the round-robin over all of the service's replicas, the same as HTTP, decides where the socket goes. A replica registered with an address clients can reach (an IP or a dotted host name, not loopback) gets `wsUrl` pointing at its own address, e.g. `ws://192.168.1.21:18701/guilds/<guildId>/chat?ticket=<ticket>`. A replica registered with its container hostname (the main machine's Compose replicas) gets the public URL above, and `ws-proxy` picks one of them. So sockets split like HTTP: 3 Compose replicas plus 1 extra one get them 3:1. The ticket is the same and valid on any replica. Off (the default), nothing changes.
 
 #### Errors
 
@@ -2192,7 +2192,9 @@ on its own port.
 
 - **Every extra replica registers an address other machines can reach**:
   `http://<INSTANCE_HOST>:<PORT>`, with `INSTANCE_HOST` the machine's IP or
-  host name from its `.env`. The main machine's Compose replicas keep
+  a dotted host name (e.g. `pc-denis.local`) from its `.env`. A bare name such
+  as `pc-denis`, or a loopback address, still gets HTTP, but the gateway never
+  hands it out for sockets. The main machine's Compose replicas keep
   registering their container hostname, as before.
 - **One shared database and Redis per service**, on the main machine. The
   override publishes them, so extra replicas use the same data as the main
@@ -2200,12 +2202,13 @@ on its own port.
 - **HTTP:** the gateway takes every registered replica in turn (round-robin),
   extra ones included.
 - **WebSockets:** with the override, the gateway runs with
-  `WS_URLS_FROM_DISCOVERY=true`. `/ws/negotiate` then returns an extra
-  replica's own address, and the client connects straight to it. Replicas that
-  registered a container hostname are never handed out, because clients can't
-  reach them. While no extra replica of a service is listed, `wsUrl` is the
-  public URL as before, and `ws-proxy` hands the socket to one of the main
-  machine's replicas. See [WebSockets](#websockets).
+  `WS_URLS_FROM_DISCOVERY=true`. `/ws/negotiate` takes the next replica in
+  the same round-robin as HTTP. For an extra replica it returns that replica's
+  own address, and the client connects straight to it. For one of the main
+  machine's Compose replicas (registered with a container hostname, which
+  clients can't reach) it returns the public URL, and `ws-proxy` hands the
+  socket to one of them. So sockets split over all replicas, like HTTP. See
+  [WebSockets](#websockets).
 - **Clients reconnect.** When a replica stops, its sockets close (`1001` on
   shutdown, `1006` if it dies). The client calls `/ws/negotiate` again, which
   hands out a live replica, and re-fetches the current state: pub/sub doesn't

@@ -51,8 +51,9 @@ services:
 
   gateway:
     environment:
-      # /ws/negotiate hands out an extra replica's own address, so clients
-      # connect straight to it. The main machine's Compose replicas register
-      # their container hostname, which clients can't reach: the gateway
-      # never hands those out, and uses ws-proxy for them instead.
+      # /ws/negotiate takes the next replica, round-robin like HTTP: an extra
+      # replica's turn hands out its own address, so the client connects
+      # straight to it. A Compose replica's turn (container hostname, which
+      # clients can't reach) hands out the public URL, and ws-proxy picks one
+      # of the Compose replicas. Sockets split over all replicas, like HTTP.
       WS_URLS_FROM_DISCOVERY: "true"
