@@ -540,6 +540,100 @@
         "description": "In the shared stack: one entry per replica (MONSTER_RAID_REPLICAS, 2), each at its own container hostname."
       },
       "response": []
+    },
+    {
+      "name": "Tamagotchi Service replicas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('lists tamagotchi-service', () => pm.expect(body.service).to.eql('tamagotchi-service'));",
+              "pm.test('at least one replica is registered', () => pm.expect(body.instances).to.be.an('array').that.is.not.empty);",
+              "pm.test('each replica registered its own address on port 8083', () => {",
+              "    body.instances.forEach((i) => {",
+              "        pm.expect(i.url).to.match(/^http:\\/\\/[^/]+:8083$/);",
+              "        pm.expect(i.instanceId).to.be.a('string').and.not.empty;",
+              "        pm.expect(i.metadata.version, 'the replica reports its version').to.be.a('string').and.not.empty;",
+              "    });",
+              "    const urls = body.instances.map((i) => i.url);",
+              "    pm.expect(new Set(urls).size).to.eql(urls.length);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/tamagotchi-service",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "tamagotchi-service"
+          ]
+        },
+        "description": "In the shared stack: one entry per replica (TAMAGOTCHI_REPLICAS, 2), each at its own container hostname, with its version in metadata. Extra replicas (docker-compose.replica.yml) appear at http://<INSTANCE_HOST>:<PORT> instead."
+      },
+      "response": []
+    },
+    {
+      "name": "Notification Service replicas",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('lists notification-service', () => pm.expect(body.service).to.eql('notification-service'));",
+              "pm.test('at least one replica is registered', () => pm.expect(body.instances).to.be.an('array').that.is.not.empty);",
+              "pm.test('each replica registered its own address on port 8084', () => {",
+              "    body.instances.forEach((i) => {",
+              "        pm.expect(i.url).to.match(/^http:\\/\\/[^/]+:8084$/);",
+              "        pm.expect(i.instanceId).to.be.a('string').and.not.empty;",
+              "        pm.expect(i.metadata.version, 'the replica reports its version').to.be.a('string').and.not.empty;",
+              "    });",
+              "    const urls = body.instances.map((i) => i.url);",
+              "    pm.expect(new Set(urls).size).to.eql(urls.length);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/services/notification-service",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "services",
+            "notification-service"
+          ]
+        },
+        "description": "In the shared stack: one entry per replica (NOTIFICATION_REPLICAS, 2), each at its own container hostname, with its version in metadata. Extra replicas (docker-compose.replica.yml) appear at http://<INSTANCE_HOST>:<PORT> instead."
+      },
+      "response": []
     }
   ],
   "variable": [
