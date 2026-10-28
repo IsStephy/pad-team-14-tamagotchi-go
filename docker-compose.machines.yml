@@ -1,0 +1,59 @@
+# Replicas across machines (#136, #138): run on the MAIN machine, on top of
+# the normal stack:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.machines.yml up -d
+#
+# Extra replicas on other machines (or on this one, on other ports) start
+# with docker-compose.replica.yml from their service's repo. They need to
+# reach what this file publishes: every service's database and Redis (one
+# shared copy each - a database per machine would split the data), plus
+# Service Discovery (8089) and the gateway (8080), which the normal stack
+# already publishes.
+#
+# Databases are published on MACHINES_BIND_IP only - this machine's LAN
+# address - not on every interface. Keep them on the local network: strong
+# passwords in .env, no router port forwarding, no public Wi-Fi.
+#
+# Host ports follow the service's port: 808N -> Postgres 543N, Redis 637N.
+# Each one can be changed with its *_PUBLISHED_PORT variable.
+
+services:
+  user-management-service-db:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${USER_MANAGEMENT_DB_PUBLISHED_PORT:-5431}:5432"
+  battle-service-db:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${BATTLE_DB_PUBLISHED_PORT:-5432}:5432"
+  battle-service-cache:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${BATTLE_REDIS_PUBLISHED_PORT:-6372}:6379"
+  tamagotchi-service-db:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${TAMAGOTCHI_DB_PUBLISHED_PORT:-5433}:5432"
+  notification-service-db:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${NOTIFICATION_REDIS_PUBLISHED_PORT:-6374}:6379"
+  map-service-db:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${MAP_REDIS_PUBLISHED_PORT:-6375}:6379"
+  monster-raid-service-db:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${MONSTER_RAID_DB_PUBLISHED_PORT:-5436}:5432"
+  monster-raid-service-cache:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${MONSTER_RAID_REDIS_PUBLISHED_PORT:-6376}:6379"
+  guild-service-db:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${GUILD_DB_PUBLISHED_PORT:-5437}:5432"
+  package-registry-service-db:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${PACKAGE_REGISTRY_DB_PUBLISHED_PORT:-5438}:5432"
+
+  gateway:
+    environment:
+      # /ws/negotiate takes the next replica, round-robin like HTTP: an extra
+      # replica's turn hands out its own address, so the client connects
+      # straight to it. A Compose replica's turn (container hostname, which
+      # clients can't reach) hands out the public URL, and ws-proxy picks one
+      # of the Compose replicas. Sockets split over all replicas, like HTTP.
+      WS_URLS_FROM_DISCOVERY: "true"

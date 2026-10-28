@@ -25,3 +25,6 @@
 [submodule "gateway"]
 	path = gateway
 	url = https://github.com/Dackohn/gateway
+[submodule "service-discovery"]
+	path = service-discovery
+	url = https://github.com/Dackohn/service-discovery

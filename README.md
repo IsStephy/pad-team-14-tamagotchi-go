@@ -32,6 +32,9 @@ Owns guild identity, membership, roles (owner/officer/member), and real-time gui
 ### Package Registry Service
 Owns the registry of client apps ("packages") participating in the ecosystem: package identifier/version/status, associated moderators/admins, and which users belong to which package. Stores each package's local Tamagotchi stat definitions/thresholds (non-normalized) so Battle Service can compute package-specific bonuses without a shared schema. Admins here design/schedule Monster Raids.
 
+### Service Discovery
+Infrastructure, not a game service (Lab 3). Knows where every running instance of every service is: instances register on start-up, keep themselves alive with heartbeats and deregister on shutdown; the API Gateway reads the live instances of a service to route to them, so services can run as several instances that are added and removed while the system runs.
+
 ## Technologies & Communication Patterns
 
 The team works in **2 languages**, split by repo/member pair:
@@ -127,6 +130,8 @@ The client then connects to the service directly. The **ticket** is a JWT the ga
 
 The service verifies the signature, expiry and path, remembers used `jti`s until they expire, and then applies its own rules (participant, guild member, …).
 
+**Replicas across machines.** When the gateway runs with `WS_URLS_FROM_DISCOVERY=true` (the main machine's [machines override](#running-across-machines)), the round-robin over all of the service's replicas, the same as HTTP, decides where the socket goes. A replica registered with an address clients can reach (an IP or a dotted host name, not loopback) gets `wsUrl` pointing at its own address, e.g. `ws://192.168.1.21:18701/guilds/<guildId>/chat?ticket=<ticket>`. A replica registered with its container hostname (the main machine's Compose replicas) gets the public URL above, and `ws-proxy` picks one of them. So sockets split like HTTP: 3 Compose replicas plus 1 extra one get them 3:1. The ticket is the same and valid on any replica. Off (the default), nothing changes.
+
 #### Errors
 
 Every error body is `{"error": "..."}`.
@@ -136,7 +141,82 @@ Every error body is `{"error": "..."}`.
 | Token missing, malformed, expired or badly signed (at the gateway); gateway key or service key missing or wrong (at the service) | `401 Unauthorized` | connection closed with `1008` |
 | Acting as someone else, or lacking the role | `403 Forbidden` | connection closed with `1008` |
 | Concurrent task limit reached | `503 Service Unavailable` + `Retry-After` | connection closed with `1013` |
+| A service this request needs has its circuit breaker open (see below) | `503 Service Unavailable` | — |
 | Task timeout — the request, or a service it depends on, took too long | `504 Gateway Timeout` | — |
+
+#### Circuit breaker
+
+Every service that calls another one (the gateway, Battle, Guild, Package
+Registry, Tamagotchi, Map, Monster Raid) keeps **one breaker per target**, so
+one failing service never pauses calls to the others. The rule is the same
+everywhere:
+
+- **Trips at 3 errors to the same target within the caller's request timeout
+  × 3.5**: 10 s → 35 s for the gateway, 8 s → 28 s, 5 s → 17.5 s.
+- **Errors** are timeouts, refused or broken connections and `5xx` answers. A
+  `4xx` is not: the target answered, the request was wrong. A call abandoned
+  because your own caller went away is not either.
+
+| State | Calls to the target | Moves on when |
+|---|---|---|
+| Closed | go through; errors are counted over the window | the threshold is reached → open |
+| Open | fail at once, without reaching the target; the request that needed it answers `503` | the cooldown has passed → half-open |
+| Half-open | one trial call goes through, the others still fail at once | the trial succeeds → closed; it fails → open |
+
+Each service reads `CIRCUIT_BREAKER_THRESHOLD` (`3`), the window and the
+cooldown (both default to the window above) from its environment, with its
+own unit (`_MS` or `_SECONDS`) and prefix in [`.env.example`](.env.example).
+
+**Logs.** Every change of state is one line in the team log format. Tripping
+is an `ERROR` naming the caller, target, endpoint, error count, window and
+last error; half-open and closed are logged too:
+
+```json
+{"time":"2026-10-28T14:02:03.112Z","level":"ERROR","service":"gateway","msg":"circuit breaker tripped: calls to the service are paused","caller":"gateway","target":"tamagotchi-service","endpoint":"GET /types/advantages","errors":3,"windowSeconds":35.0,"threshold":3,"cooldownSeconds":35.0,"lastError":"tamagotchi-service is unreachable","requestId":"c41a…"}
+```
+
+**Try it:** stop a service (`docker compose stop tamagotchi-service`) and
+send 3 requests that need it. They fail with `502` or `504` and the third
+trips the breaker. The 4th answers `503` at once. Start the service again, and
+the first request after the cooldown closes the breaker. The gateway's
+`GET /health/services` shows each service's `circuit`.
+
+**Removing the failing instance.** When the target has replicas in Service
+Discovery, the gateway keeps the breaker **per replica**, not per service, so
+one broken replica never takes its healthy siblings down:
+
+- The gateway takes the live replicas in turn (round-robin). 3 errors to the
+  same replica within the window **remove** it: out of rotation at once, and
+  deregistered from Service Discovery
+  (`DELETE /services/{service}/instances/{instanceId}`). The other replicas
+  keep serving.
+- A removed replica comes back only by **registering again**: its next
+  heartbeat gets `404` and it registers anew, which the gateway sees as a newer
+  `registeredAt` and puts back in rotation.
+- No live replica left: `503 {"error": "<service> has no live instance right now, retry shortly"}`.
+- A service Service Discovery doesn't list yet is reached at its fixed URL,
+  with the breaker per service above.
+- Every removal is logged as an `ERROR` with the service, instance, URL, error
+  count and window:
+
+```json
+{"time":"2026-10-28T16:16:02.540Z","level":"ERROR","service":"gateway","instanceId":"19236e53a734","msg":"circuit breaker tripped: instance removed","requestId":"e07b…","caller":"gateway","target":"battle-service","instance":"5f4bb89d4b73","url":"http://5f4bb89d4b73:8082","endpoint":"GET /battles/reference","errors":3,"windowSeconds":35.0,"threshold":3,"lastError":"battle-service is unreachable","remaining":2}
+```
+
+Services call each other through the gateway, so their calls get the same
+per-replica removal there; their own breakers stay per target service.
+
+**Try it:** `docker kill` one replica of a 3-replica service (it can't
+deregister itself) and send requests through the gateway: its 3 turns fail,
+it is removed and deregistered at once (not after the 30 s TTL), and every
+request after that succeeds on the other two. `docker pause` one instead and
+`docker unpause` it after it is removed: it registers again and is back in
+rotation. `GET /health/services` lists each service's `instances` and
+`removed`.
+
+Reference implementations: the gateway's `app/breaker.py` and
+`app/instances.py` (Python) and Battle's `internal/clients/httpx/breaker.go`
+(Go).
 
 #### Access per endpoint
 
@@ -168,8 +248,8 @@ Every error body is `{"error": "..."}`.
 | | `WS /battles/{battleId}/live` | Player — gateway ticket |
 | Tamagotchi | `GET /types/advantages` | Public |
 | | `POST /tamagotchis` | Player (self — the owner) |
-| | `GET /tamagotchis/{id}` | Player, or **Service** — Monster Raid (ownership and attack power on raid joins) |
-| | `GET /users/{userId}/tamagotchis` | Player |
+| | `GET /tamagotchis/{id}` | Player, or **Service** — Monster Raid (ownership and attack power on raid joins), Battle (combat stats and equipped boosts) |
+| | `GET /users/{userId}/tamagotchis` | Player, or **Service** — Battle (the player's Tamagotchis for a battle) |
 | | `PATCH /users/{userId}/tamagotchis/{id}/set-primary` | Player (self — the owner) |
 | | `PATCH /tamagotchis/{id}/stats` | Player (self — the owner) |
 | | `POST /tamagotchis/{id}/xp` | **Service** — Battle |
@@ -1302,13 +1382,30 @@ Every service, the database it owns, and how requests reach them. The
 **API Gateway** is the single entry point: clients never call a service
 directly, and services call each other through it too.
 
+**Load balancing (Lab 3).** Each service runs as several replicas, and each
+replica registers with Service Discovery. The gateway refreshes every
+service's live instances from Service Discovery every 5 s
+(`GATEWAY_DISCOVERY_REFRESH_SECONDS`) and sends each REST request to the next
+instance of its service, **round-robin**, one counter per service. A replica
+that starts gets traffic after the next refresh, one that stops no longer gets
+any, and a service with no live instance left answers `503`. A replica that
+keeps failing is removed and deregistered (see **Removing the failing
+instance** under the circuit breaker). A service that doesn't register yet
+keeps its fixed `http://<service>:<port>`. The gateway's
+request log names the replica that answered (`instanceId`). WebSockets are not
+balanced by the gateway: `/ws/negotiate` returns the service's public address,
+and `ws-proxy` hands each socket to one replica (across machines, it can
+return an extra replica's own address instead; see
+[Running across machines](#running-across-machines)).
+
 | | |
 |---|---|
 | **Dark arrow** | REST: client → Gateway, and the Gateway routing each request to the service that owns the data |
 | **Amber arrow** | service-to-service REST, which also goes through the Gateway, carrying the caller's `X-Service-Key`; the label lists the services it calls |
-| **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to the service directly |
+| **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
 | **Dotted arrow** | asynchronous event on Redis Pub/Sub, for Notification — not through the Gateway |
-| **Colour** | which tier a service belongs to; the Gateway is amber |
+| **Teal arrow** | Service Discovery (Lab 3): every replica registers its own address, sends heartbeats and deregisters; Service Discovery checks each one's `/health` and sends alerts to Telegram |
+| **Colour** | which tier a service belongs to; the Gateway is amber, the infrastructure (Service Discovery, `ws-proxy`) teal |
 
 The three tiers behind the Gateway are the structure worth remembering:
 
@@ -1419,30 +1516,40 @@ Claim a free one when you wire up your service and add it here.
 
 | Service | Port |
 |---|---|
-| User Management | `8081` (not published: reached only through the gateway) |
-| Battle | `8082` |
-| Tamagotchi | `8083` |
-| Notification | `8084` |
-| Map | `8085` |
-| Monster Raid | `8086` |
+| User Management | `8081` (not published: replicas reached only through the gateway) |
+| Battle | `8082` (the live socket, published by `ws-proxy`; REST only through the gateway) |
+| Tamagotchi | `8083` (not published: replicas reached only through the gateway) |
+| Notification | `8084` (not published: replicas reached only through the gateway) |
+| Map | `8085` (the location stream and direct calls, published by `ws-proxy`; REST through the gateway) |
+| Monster Raid | `8086` (the live raid socket and direct calls, published by `ws-proxy`; REST through the gateway) |
 | Guild | `8087` |
 | Package Registry | `8088` |
 | Gateway | `8080` |
+| Service Discovery | `8089` |
 
 ### Tamagotchi Service
 
-Go, PostgreSQL 16. Runs on `8083` in the shared stack. The service creates its
-own schema on start-up.
+Go, PostgreSQL 16. Runs as `TAMAGOTCHI_REPLICAS` replicas (default 2), each
+registered with Service Discovery under its own address (`http://<hostname>:8083`)
+and reached only through the gateway: no host port. The schema is created on
+start-up under a lock, so the replicas can start together. On `docker compose stop`
+each replica deregisters first, then lets its requests in progress finish.
 
 ```bash
 docker compose up -d tamagotchi-service
-curl http://localhost:8083/health
-# {"service":"tamagotchi-service","status":"ok"}
+docker compose ps tamagotchi-service             # one line per replica
+docker compose exec tamagotchi-service wget -qO- localhost:8083/health
+# {"status":"ok","service":"tamagotchi-service","version":"3.1.1","instanceId":"3f2a9c1b7d4e",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":10,"checks":{...},"load":{...}}
+
+# The replicas Service Discovery knows (DISCOVERY_KEY is in .env):
+curl -s localhost:8089/services/tamagotchi-service -H "X-Discovery-Key: <DISCOVERY_KEY>"
 ```
 
 **In the shared stack** it's reached only through the gateway: every endpoint
 except `GET /health` needs the gateway's `X-Gateway-Key`, players are
-identified by `X-User-Id`, and Battle (`xp`, `transfer-owner`) and Monster Raid
+identified by `X-User-Id`, and Battle (`xp`, `transfer-owner`, and reading
+`GET /tamagotchis/{id}` and `GET /users/{userId}/tamagotchis`) and Monster Raid
 (`GET /tamagotchis/{id}`) by their `X-Service-Key` (`SERVICE_KEY_BATTLE`,
 `SERVICE_KEY_MONSTER_RAID`). Access per endpoint is in the table above.
 
@@ -1451,8 +1558,9 @@ from Package Registry through the gateway (`GET /packages/{packageId}`): an
 undefined key or an unregistered package is `400`, and Package Registry being
 down is `502`.
 
-Without the gateway, call it with the gateway's headers yourself
-(`X-Gateway-Key` from `.env`, `X-User-Id`); the service's README has examples.
+There is no way around the gateway from outside the stack any more (no host
+port); the service's README shows calls with the gateway's headers for a local
+`go run`.
 
 **Gateway routes:** `/tamagotchis/**`, `/types/**` and
 `/users/{userId}/tamagotchis/**` → Tamagotchi (the gateway matches the last one
@@ -1461,16 +1569,30 @@ No WebSocket endpoints. Its one outgoing call, Package Registry's
 `GET /packages/{packageId}`, goes through the gateway too
 (`TAMAGOTCHI_PACKAGE_REGISTRY_URL`, `http://gateway:8080` when empty).
 
+**Circuit breaker:** that call has its own breaker.
+`TAMAGOTCHI_CIRCUIT_BREAKER_THRESHOLD` (3) errors within the request timeout × 3.5
+(5 s → 17.5 s) trip it: a stats update then answers `503` with `Retry-After` at once,
+without calling Package Registry, until the cooldown (the window) has passed and one
+trial call succeeds. Timeouts, refused connections and `5xx` count; an answer such as
+`404` doesn't. Every change of state is logged (an `ERROR` naming caller, target and
+endpoint when it trips), and `/health` shows the breaker under `load.circuitBreakers`.
+
 ### Notification Service
 
-Go, Redis 7. Runs on `8084` in the shared stack. Notifications are created by events published to the Redis
-Pub/Sub channel `notification-events` (there is no public create endpoint) and
-kept for 30 days.
+Go, Redis 7. Runs as `NOTIFICATION_REPLICAS` replicas (default 2), each
+registered with Service Discovery under its own address (`http://<hostname>:8084`)
+and reached only through the gateway: no host port. Notifications are created by
+events published to the Redis Pub/Sub channel `notification-events` (there is no
+public create endpoint) and kept for 30 days. Every replica receives every event,
+and each event is stored once: the replicas claim it in the shared Redis by its
+optional `eventId` (or a fingerprint of the message), as the contract's
+at-least-once delivery asks.
 
 ```bash
 docker compose up -d notification-service
-curl http://localhost:8084/health
-# {"service":"notification-service","status":"ok"}
+docker compose ps notification-service           # one line per replica
+docker compose exec notification-service wget -qO- localhost:8084/health
+# {"status":"ok","service":"notification-service","version":"3.1.1",...,"load":{"events":{...,"duplicates":0}}}
 
 # Simulate an event (Redis password is NOTIFICATION_REDIS_PASSWORD in .env):
 docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning PUBLISH notification-events "{\"type\":\"BattleEnded\",\"userId\":\"11111111-1111-1111-1111-111111111111\",\"payload\":{\"result\":\"won\"}}"'
@@ -1479,7 +1601,7 @@ docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD
 **In the shared stack** it's reached only through the gateway: every endpoint
 except `GET /health` needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
 player can only register their own device and read their own notifications.
-Without the gateway, send those headers yourself, as for Tamagotchi above.
+There is no way around the gateway from outside the stack (no host port).
 
 **Gateway routes:** `/notifications/**` → Notification. No WebSocket endpoints
 and no outgoing calls; events arrive on the Redis channel
@@ -1495,11 +1617,45 @@ answers "who is near me?" with distance and friend/enemy/none relationship
 **In the shared stack** it's reached only through the gateway, and calls User
 Management through the gateway with `SERVICE_KEY_MAP`:
 
+Stream frames are checked like `POST /map/location`: a bad one gets
+`{"event":"error","data":{"message":...}}` and the stream stays open.
+Latitudes run to ±85.05112878, the most Redis GEO stores.
+
+**Replicas:** the shared stack runs `MAP_REPLICAS` (2), with no published
+port: `ws-proxy` publishes `8085` for all of them and hands each socket or
+direct call to one replica. Each replica registers with Service Discovery as
+`http://<its hostname>:8085` once it is listening, sends a heartbeat every
+10 s, registers again if Service Discovery forgot it (`404`), and on `SIGTERM`
+deregisters before it stops serving. Any replica can serve any stream: locations and used tickets are in Map's Redis, shared by all of them.
+
 ```bash
-docker compose up -d
-curl http://localhost:8085/health          # public, direct
-# {"status":"ok","service":"map-service"}
+docker compose ps map-service                    # one line per replica
+curl http://localhost:8085/health                  # through ws-proxy: one replica
+# {"status":"ok","service":"map-service","version":"3.1.0","instanceId":"3f2a9c1b7d4e",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":100}
+curl -s localhost:8089/services/map-service -H "X-Discovery-Key: <DISCOVERY_KEY>"
 ```
+
+`GET /health` stays outside the limits and answers `200` under load; Service
+Discovery reads the load from it.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId` (the replica), `requestId` and `msg`: every request (with the
+caller's `callerService`, and the reason for every `4xx`/`5xx`), every outgoing
+call and its failures (`target`), sockets opened, refused and closed, events,
+circuit breaker changes and the Service Discovery registration
+(`registrationId`). `X-Request-Id` from the gateway is kept and passed on in its
+own calls. Keys, tokens and tickets are never logged. `MAP_LOG_LEVEL`
+(`info`) sets how much.
+
+**Circuit breaker:** one per service it calls (User Management). 3 errors
+(`MAP_CIRCUIT_BREAKER_THRESHOLD`) within the request timeout × 3.5
+(5 s → 17.5 s) trip it: the request needing that service answers
+`503 "<service> is unavailable (circuit open), retry in Ns"` with
+`Retry-After`, without calling it, until one trial call after the 30 s
+cooldown succeeds. Timeouts, refused connections and `5xx` count; `4xx`
+doesn't. Every change is logged (`ERROR` when it trips, naming caller, target
+and endpoint).
 
 **On its own** (development, User Management mocked with fixed test data):
 
@@ -1527,11 +1683,42 @@ Guild, Tamagotchi and User Management through the gateway with
 Registry's key (`PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY`). The service runs
 its versioned database migrations on start-up.
 
+
+**Replicas:** the shared stack runs `MONSTER_RAID_REPLICAS` (2), with no published
+port: `ws-proxy` publishes `8086` for all of them and hands each socket or
+direct call to one replica. Each replica registers with Service Discovery as
+`http://<its hostname>:8086` once it is listening, sends a heartbeat every
+10 s, registers again if Service Discovery forgot it (`404`), and on `SIGTERM`
+deregisters before it stops serving. Any replica can serve any live socket: raids are in PostgreSQL and used tickets in Redis, and every change is published on the Redis channel `raid-live`, so each replica pushes it to the sockets connected to it. Expiring raids is safe with several replicas: only the replica whose conditional `UPDATE` wins pays out.
+
 ```bash
-docker compose up -d
-curl http://localhost:8086/health          # public, direct
-# {"status":"ok","service":"monster-raid-service"}
+docker compose ps monster-raid-service                    # one line per replica
+curl http://localhost:8086/health                  # through ws-proxy: one replica
+# {"status":"ok","service":"monster-raid-service","version":"3.1.0","instanceId":"3f2a9c1b7d4e",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":100}
+curl -s localhost:8089/services/monster-raid-service -H "X-Discovery-Key: <DISCOVERY_KEY>"
 ```
+
+`GET /health` stays outside the limits and answers `200` under load; Service
+Discovery reads the load from it.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId` (the replica), `requestId` and `msg`: every request (with the
+caller's `callerService`, and the reason for every `4xx`/`5xx`), every outgoing
+call and its failures (`target`), sockets opened, refused and closed, events,
+circuit breaker changes and the Service Discovery registration
+(`registrationId`). `X-Request-Id` from the gateway is kept and passed on in its
+own calls. Keys, tokens and tickets are never logged. `MONSTER_RAID_LOG_LEVEL`
+(`info`) sets how much.
+
+**Circuit breaker:** one per service it calls (Guild, Tamagotchi, User Management). 3 errors
+(`MONSTER_RAID_CIRCUIT_BREAKER_THRESHOLD`) within the request timeout × 3.5
+(5 s → 17.5 s) trip it: the request needing that service answers
+`503 "<service> is unavailable (circuit open), retry in Ns"` with
+`Retry-After`, without calling it, until one trial call after the 30 s
+cooldown succeeds. Timeouts, refused connections and `5xx` count; `4xx`
+doesn't. Every change is logged (`ERROR` when it trips, naming caller, target
+and endpoint).
 
 **On its own** (development, Guild/Tamagotchi/User Management mocked):
 
@@ -1570,7 +1757,8 @@ API answers. When it prints
 
 ```bash
 curl http://localhost:8081/health
-# {"service":"user-management-service","status":"ok"}
+# {"status":"ok","service":"user-management-service","instanceId":"8c41d2e07a5f",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":50}
 ```
 
 | Command | What it does |
@@ -1602,6 +1790,23 @@ published in the shared stack.
 `statement_timeout`), `503` + `Retry-After: 1` above `MAX_CONCURRENT_REQUESTS`
 (50) at once. `GET /health` is outside both.
 
+**Replicas:** the shared stack runs `USER_MANAGEMENT_REPLICAS` (3). Each
+registers with Service Discovery as `http://<its hostname>:8081` once it is
+listening, sends a heartbeat every 10 s, registers again if Service Discovery
+forgot it, and deregisters on `SIGTERM` before it stops serving. Any replica
+serves any request: accounts and balances are in the shared database, currency
+adjustments are idempotent there, and every replica signs with the same key,
+so a token from one verifies everywhere. `GET /health` adds the replica's
+`instanceId` (its hostname), `uptimeSeconds`, `inFlightRequests` and
+`maxConcurrentRequests`, and keeps answering `200` under load.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`. Every request, refusals with their reason,
+registrations, logins, currency adjustments and Service Discovery registration
+are logged; passwords, tokens and keys never are. `X-Request-Id` from the
+gateway is kept and sent back. `USER_MANAGEMENT_LOG_LEVEL` (`info`) sets how
+much.
+
 ### Battle Service
 
 **What it does:** runs turn-based PvP matches — damage from Tamagotchi levels,
@@ -1628,7 +1833,8 @@ ready:
 
 ```bash
 curl http://localhost:8082/health
-# {"service":"battle-service","status":"ok"}
+# {"status":"ok","service":"battle-service","instanceId":"3f2a9c1b7d4e",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":50}
 ```
 
 It takes the same `stop` / `clean` / `logs` / `test` commands and the same
@@ -1643,22 +1849,49 @@ covers). `WS /battles/{battleId}/live` is negotiated, never proxied.
 which clients open directly with the gateway's ticket. The player is the
 gateway's `X-User-Id`, and the service no longer verifies tokens. Its own rules
 stay: the actor a request names must be that player, and only the challenged
-player may accept (`403` otherwise). Port `8082` stays published only for the
-live socket.
+player may accept (`403` otherwise). The replicas publish no port: `ws-proxy`
+publishes `8082` for the live socket and passes each connection on to one of
+them.
 
 **Live updates:** clients call the gateway's
 `GET /ws/negotiate?path=/battles/{battleId}/live` with their token and connect
-to the returned `ws://localhost:8082/battles/{battleId}/live?ticket=…` within 60
-seconds. Battle checks the ticket against `GATEWAY_KEY`, keeps used ticket ids
+to the returned `wsUrl` (`ws://localhost:8082/battles/{battleId}/live?ticket=…`)
+within 60 seconds, through `ws-proxy`. Battle checks the ticket against `GATEWAY_KEY`, keeps used ticket ids
 in its own Redis (`battle-service-cache`) so each opens one socket, and sends
 `turn_update` frames (on connect, then after every turn) and a final
 `battle_end`. `BATTLE_MAX_WS_CONNECTIONS` (500) caps open sockets; the next one
-is closed with `1013`.
+is closed with `1013`. With several replicas, a turn played on one is
+published on the Redis channel `battle:live` and every replica pushes it to
+the sockets connected to it, so a client sees every turn whichever replica it
+is on.
 
 **Limits:** `504` after `REQUEST_TIMEOUT_MS` (8 s, also Postgres's
 `statement_timeout`; each call to another service times out after 5 s), `503`
 + `Retry-After: 1` above `MAX_CONCURRENT_REQUESTS` (50) at once. `GET /health`
 and the live sockets are outside both.
+
+**Replicas:** the shared stack runs `BATTLE_REPLICAS` (3). Each registers
+with Service Discovery as `http://<its hostname>:8082` once it is listening,
+sends a heartbeat every 10 s, registers again if Service Discovery forgot it,
+and deregisters on `SIGTERM` before it stops serving. Battles live in
+PostgreSQL and used tickets in Redis, shared by every replica. `GET /health`
+adds the replica's `instanceId` (its hostname), `uptimeSeconds`,
+`inFlightRequests` and `maxConcurrentRequests`, and keeps answering `200`
+under load.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`: every request and every outgoing call,
+refusals with their reason, live sockets, circuit breaker changes and Service
+Discovery registration. `X-Request-Id` from the gateway is kept, sent back and
+passed on in Battle's own calls. Tickets, tokens and keys are never logged.
+`BATTLE_LOG_LEVEL` (`info`) sets how much.
+
+**Circuit breaker:** each service Battle calls has its own breaker.
+`BATTLE_CIRCUIT_BREAKER_THRESHOLD` (3) errors within the request timeout × 3.5
+(8 s → 28 s) trip it: calls to that service then fail at once, and the request
+needing it answers `503`, until the cooldown (the window) has passed and one
+trial call succeeds. Timeouts, refused connections and `5xx` count; `4xx`
+doesn't. Tripping is logged as an `ERROR` naming caller, target and endpoint.
 
 **Outgoing calls go through the gateway** too: in the shared stack
 `USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
@@ -1690,13 +1923,15 @@ cd guild-service
 cp .env.example .env        # then set a real password
 docker compose up -d --build
 curl http://localhost:8087/health
-# {"status":"ok","service":"guild-service"}
+# {"status":"ok","service":"guild-service","instanceId":"<container hostname>","uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":40,"openChatSockets":0,"maxChatSockets":500}
 ```
 
 Interactive API docs: <http://localhost:8087/docs>. Guild chat is a WebSocket
 at `ws://localhost:8087/guilds/{guildId}/chat`; clients get its URL with a
 single-use ticket from the gateway's `GET /ws/negotiate?path=/guilds/{guildId}/chat`
-and then connect to the service directly — see the service README.
+and then connect to the service directly — see the service README. In the
+shared stack that address is **ws-proxy**, which hands the socket to one of
+the replicas.
 
 **Gateway routes:** `/guilds/**` and `/users/{userId}/guilds/**` → Guild;
 `WS /guilds/{guildId}/chat` is negotiated, never proxied.
@@ -1708,6 +1943,39 @@ the gateway's `X-User-Id`, and the service never verifies tokens.
 (`SERVICE_KEY_MONSTER_RAID`). Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s),
 `503` + `Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, chat
 sockets capped at `MAX_WS_CONNECTIONS` (500).
+
+**Replicas:** the shared stack runs `GUILD_REPLICAS` (3), with no published
+port: `ws-proxy` publishes `GUILD_PORT` (8087) for all of them and passes each
+socket or HTTP call to one replica (see `ws-proxy/nginx.conf`). Any replica can
+serve any socket: used tickets are in PostgreSQL, and a chat message saved on
+one replica reaches the sockets on every other through PostgreSQL
+`LISTEN/NOTIFY`. Migrations run under an advisory lock, so replicas can start
+together. Each replica registers with Service Discovery as
+`http://<its hostname>:8087`, sends a heartbeat every 10 s, registers again if
+Service Discovery forgot it, and deregisters on `SIGTERM` before it stops
+serving. `GET /health` adds `instanceId`, `uptimeSeconds`, `inFlightRequests`,
+`maxConcurrentRequests` and the open chat sockets, and keeps answering `200`
+under load.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`: every request and outgoing call,
+refusals with their reason, chat sockets, events, circuit breaker changes and
+Service Discovery registration. `X-Request-Id` is passed on in Guild's own
+calls. Keys, tokens and tickets are never logged.
+
+**Outgoing calls and circuit breaker:** User Management (`GET /users/{userId}`,
+`GET /users/{userId}/relationship/{targetId}`) through the gateway, with Guild's
+own `X-Service-Key`. 3 errors within `REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip the
+breaker: the request then answers `503` + `Retry-After` without calling, until
+one trial call after the cooldown succeeds. Timeouts, refused connections and
+`5xx` count; `4xx` doesn't. **User Management is still the built-in mock in
+the shared stack** (`GUILD_USER_MANAGEMENT_URL` empty): it accepts only players
+on those endpoints today. Once it accepts `SERVICE_KEY_GUILD`, set
+`GUILD_USER_MANAGEMENT_URL=http://gateway:8080`.
+
+**Events:** inviting a member publishes `GuildInvitation` on Notification's
+Redis channel `notification-events`, as
+`{"type":"GuildInvitation","eventId","userId":"<invited player>","payload":{guildId, guildName, invitedBy, sentAt}}`.
 
 ### Package Registry Service
 
@@ -1727,7 +1995,7 @@ cd package-registry-service
 cp .env.example .env        # then set a real password
 docker compose up -d --build
 curl http://localhost:8088/health
-# {"status":"ok","service":"package-registry-service"}
+# {"status":"ok","service":"package-registry-service","instanceId":"<container hostname>","uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":40}
 ```
 
 Interactive API docs: <http://localhost:8088/docs>.
@@ -1740,8 +2008,98 @@ token). No WebSocket endpoints.
 `X-Gateway-Key` (`401` otherwise, except `/health` and `/docs`) — the public
 package reads too; the player is the gateway's `X-User-Id`, and the service
 never verifies tokens. Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s), `503` +
-`Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, `502` if Monster
+`Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, `504` if Monster
 Raid does not answer within `MONSTER_RAID_TIMEOUT_MS` (5 s).
+
+**Replicas:** the shared stack runs `PACKAGE_REGISTRY_REPLICAS` (3), with no
+published port. The gateway finds them in Service Discovery; `ws-proxy`
+publishes `PACKAGE_REGISTRY_PORT` (8088) only so direct HTTP calls (the Postman
+collection) still reach one of them. All state is in PostgreSQL, migrations run
+under an advisory lock, and the first admin is seeded with
+`ON CONFLICT DO NOTHING`, so any replica can serve any request. Each replica
+registers with Service Discovery as `http://<its hostname>:8088`, sends a
+heartbeat every 10 s, and deregisters on `SIGTERM`. `GET /health` adds
+`instanceId`, `uptimeSeconds`, `inFlightRequests` and `maxConcurrentRequests`.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`: every request and outgoing call,
+refusals with their reason, circuit breaker changes and Service Discovery
+registration. `X-Request-Id` is passed on to Monster Raid. Keys and tokens are
+never logged.
+
+**Outgoing calls and circuit breaker:** Monster Raid (`POST /raids`) and User
+Management (`GET /users/{userId}`), through the gateway with Package Registry's
+own `X-Service-Key`, each behind its own breaker: 3 errors within
+`REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip it, the request then answers `503` +
+`Retry-After` without calling, until one trial call after the cooldown
+succeeds. **User Management is still the built-in mock in the shared stack**
+(`PACKAGE_REGISTRY_USER_MANAGEMENT_URL` empty) until it accepts
+`SERVICE_KEY_PACKAGE_REGISTRY`.
+
+### Service Discovery
+
+**What it does:** the registry of running service instances (Lab 3). Python
+3.13 + FastAPI, in [`Dackohn/service-discovery`](https://github.com/Dackohn/service-discovery);
+the full API is in its README.
+
+**In the shared stack** it runs from `dackohn/service-discovery:latest` on
+port `8089`, and every scaled service waits for it to be healthy. Set
+`DISCOVERY_KEY` in `.env`; every service registering and the gateway use the
+same value.
+
+```bash
+docker compose up -d service-discovery
+curl http://localhost:8089/health
+# {"status":"ok","service":"service-discovery","version":"3.2.0","instanceId":"…",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":100,
+#  "services":8,"instances":18,"healthChecks":{...}}
+curl -s localhost:8089/services -H "X-Discovery-Key: <DISCOVERY_KEY>"   # every instance
+```
+
+**On its own** (development): `cd service-discovery`, `cp .env.example .env`,
+`docker compose up -d --build`. Interactive API docs:
+<http://localhost:8089/docs>. The Postman collection is
+[`collections/service-discovery.postman_collection.json`](collections/service-discovery.postman_collection.json).
+
+| Endpoint | Who calls it | Answer |
+|---|---|---|
+| `POST /services/register` `{"service","url","instanceId?","healthUrl?","metadata?"}` | each instance, once it is listening | `201 {"instanceId","heartbeatIntervalSeconds":10,"ttlSeconds":30}`; `200` when an `instanceId` it already knows registers again |
+| `PUT /services/{service}/instances/{instanceId}/heartbeat` | each instance, every `heartbeatIntervalSeconds` | `200`; `404` = forgotten, register again |
+| `DELETE /services/{service}/instances/{instanceId}` | each instance, on shutdown | `204` |
+| `GET /services/{service}` | the gateway | `200 {"service","instances":[...]}`; an unknown service has `[]` |
+| `GET /services` | people, debugging | `200 {"services":{name:[...]}}` |
+| `GET /health` | Docker, people | `200` with its own load and the health checks; public |
+
+**How services use it:** on start-up `POST /services/register` with their own
+instance URL, then `PUT /services/{service}/instances/{instanceId}/heartbeat`
+every `heartbeatIntervalSeconds` (10 s), and `DELETE` on shutdown. An instance
+whose heartbeats stop is dropped after `INSTANCE_TTL_SECONDS` (30 s). The
+gateway reads `GET /services/{service}`. Every endpoint except `/health` needs
+the shared `X-Discovery-Key`.
+
+**Limits:** `504` after `REQUEST_TIMEOUT_SECONDS` (5 s), `503` + `Retry-After`
+above `MAX_CONCURRENT_REQUESTS` (100) at once.
+
+**Health checks and alerts:** every `DISCOVERY_HEALTH_CHECK_INTERVAL_SECONDS`
+(10 s) it calls each registered instance's `/health` and reads its load,
+`inFlightRequests / maxConcurrentRequests`. An instance at or above
+`DISCOVERY_LOAD_ALERT_THRESHOLD` (0.8), unreachable, or not `ok` raises an alert
+(a `WARNING` line), and `instance recovered` closes it. `GET /health` summarises
+the checks (`healthChecks`).
+
+**Telegram:** with `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and `TELEGRAM_THREAD_ID`
+in `.env` (ask Daniel for them privately; never commit them), every alert is also
+posted to the team's Telegram alerts topic, at most one per instance every
+`DISCOVERY_ALERT_COOLDOWN_SECONDS` (300 s), then one "Recovered". Left empty,
+alerts stay in the log. Check the set-up with:
+
+```bash
+curl -X POST localhost:8089/alerts/test -H "X-Discovery-Key: <DISCOVERY_KEY>"
+# {"sent":true,...} and a test message appears in the topic
+```
+
+Its README has the details: [Health checks and alerts](https://github.com/Dackohn/service-discovery#health-checks-and-alerts),
+[Telegram alerts](https://github.com/Dackohn/service-discovery#telegram-alerts).
 
 ## Running the Whole System
 
@@ -1818,6 +2176,193 @@ never put a real password in it. Variables are prefixed with their service
 `docker-compose.yml` (service/database/volume names, env prefix, a pinned
 published image — never a `build:` context), claim a port in the table above,
 and add your variables to `.env.example` with placeholder values only.
+
+## Running across machines
+
+Replicas of a service can run on several devices on the same network, not only
+inside one Compose stack. One **main machine** runs the whole stack; any
+machine, the main one included, can add **extra replicas** of a service, each
+on its own port.
+
+| Machine | Runs | Command |
+|---|---|---|
+| Main (e.g. `192.168.1.10`) | the whole stack, plus the machines override | `docker compose -f docker-compose.yml -f docker-compose.machines.yml up -d` |
+| Any (e.g. `192.168.1.21`) | extra replicas of a service, nothing else | `docker compose -p <name> -f docker-compose.replica.yml up -d`, in that service's repo |
+
+### How it works
+
+- **Every extra replica registers an address other machines can reach**:
+  `http://<host>:<port>`: the machine's IP or a dotted host name
+  (e.g. `pc-denis.local`) and the replica's port, from its `.env`. The
+  variables are named per service, e.g. Guild's `INSTANCE_HOST`/`PORT` and
+  Map's `MAP_INSTANCE_HOST`/`MAP_PORT`. A bare name such
+  as `pc-denis`, or a loopback address, still gets HTTP, but the gateway never
+  hands it out for sockets. The main machine's Compose replicas keep
+  registering their container hostname, as before.
+- **One shared database and Redis per service**, on the main machine. The
+  override publishes them, so extra replicas use the same data as the main
+  ones. A database per machine would split the data.
+- **HTTP:** the gateway takes every registered replica in turn (round-robin),
+  extra ones included.
+- **WebSockets:** with the override, the gateway runs with
+  `WS_URLS_FROM_DISCOVERY=true`. `/ws/negotiate` takes the next replica in
+  the same round-robin as HTTP. For an extra replica it returns that replica's
+  own address, and the client connects straight to it. For one of the main
+  machine's Compose replicas (registered with a container hostname, which
+  clients can't reach) it returns the public URL, and `ws-proxy` hands the
+  socket to one of them. So sockets split over all replicas, like HTTP. See
+  [WebSockets](#websockets).
+- **Clients reconnect.** When a replica stops, its sockets close (`1001` on
+  shutdown, `1006` if it dies). The client calls `/ws/negotiate` again, which
+  hands out a live replica, and re-fetches the current state: pub/sub doesn't
+  keep messages sent while it was away.
+
+### The main machine
+
+```bash
+# .env: everything as usual, plus this machine's LAN IP
+MACHINES_BIND_IP=192.168.1.10
+```
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.machines.yml up -d
+```
+
+The override publishes every database and Redis on `MACHINES_BIND_IP`.
+Service Discovery and the gateway are published by the normal stack already.
+Host ports follow the service's port, `808N` → Postgres `543N`, Redis `637N`:
+
+| Store | Host port | Change with |
+|---|---|---|
+| `user-management-service-db` | `5431` | `USER_MANAGEMENT_DB_PUBLISHED_PORT` |
+| `battle-service-db` | `5432` | `BATTLE_DB_PUBLISHED_PORT` |
+| `battle-service-cache` | `6372` | `BATTLE_REDIS_PUBLISHED_PORT` |
+| `tamagotchi-service-db` | `5433` | `TAMAGOTCHI_DB_PUBLISHED_PORT` |
+| `notification-service-db` | `6374` | `NOTIFICATION_REDIS_PUBLISHED_PORT` |
+| `map-service-db` | `6375` | `MAP_REDIS_PUBLISHED_PORT` |
+| `monster-raid-service-db` | `5436` | `MONSTER_RAID_DB_PUBLISHED_PORT` |
+| `monster-raid-service-cache` | `6376` | `MONSTER_RAID_REDIS_PUBLISHED_PORT` |
+| `guild-service-db` | `5437` | `GUILD_DB_PUBLISHED_PORT` |
+| `package-registry-service-db` | `5438` | `PACKAGE_REGISTRY_DB_PUBLISHED_PORT` |
+
+A host port that is already taken stops that container with `port is already
+allocated`. That happens when a service's standalone stack runs on the same
+machine (Guild's and Package Registry's use `5437` and `5438` too) or a local
+Postgres listens on `5432`; set that store's `*_PUBLISHED_PORT` in `.env`, and
+the same port as `SHARED_DB_PORT` on the extra replicas.
+
+**Firewall:** open on the main machine `8080` (gateway), `8089` (Service
+Discovery), and the database and Redis ports of the services that have extra
+replicas elsewhere. On every machine with extra replicas, open their ports
+(below).
+
+### Extra replicas
+
+Each service's repo has a `docker-compose.replica.yml` that starts only the
+service, with no database. It reads everything from its own `.env`: the main
+machine's database (and Redis) and Service Discovery, the gateway's address
+for outgoing calls, this machine's host or IP, and the port the replica
+listens on, published 1:1.
+
+**The variable names differ per service.** The `<SERVICE>_` rule is for this
+repo's shared `.env`; a service's own `.env` uses its own names. Guild and
+Package Registry use `INSTANCE_HOST` and `PORT`, Map uses `MAP_INSTANCE_HOST`
+and `MAP_PORT`, and so on. Always take them from that service's README
+("Run extra replicas"): with the wrong name, the replica quietly starts on its
+default port. Two examples, on `192.168.1.21`:
+
+Guild:
+
+```bash
+INSTANCE_HOST=192.168.1.21
+PORT=18701
+SERVICE_DISCOVERY_URL=http://192.168.1.10:8089
+DISCOVERY_KEY=<the main machine's>
+SHARED_DB_HOST=192.168.1.10
+SHARED_DB_PORT=5437
+DB_NAME=guild_db
+DB_USER=guild_user
+DB_PASSWORD=<the main machine's GUILD_DB_PASSWORD>
+GATEWAY_KEY=<the main machine's>
+USER_MANAGEMENT_URL=http://192.168.1.10:8080
+NOTIFICATION_EVENTS_REDIS_URL=redis://:<NOTIFICATION_REDIS_PASSWORD>@192.168.1.10:6374/0
+```
+
+Map (an excerpt: the rest is in Map's README):
+
+```bash
+MAP_INSTANCE_HOST=192.168.1.21
+MAP_PORT=18501
+MAP_REDIS_URL=redis://:<MAP_REDIS_PASSWORD>@192.168.1.10:6375
+```
+
+Outgoing calls go to the gateway's real address (`http://192.168.1.10:8080`),
+never `http://gateway:8080`, which only exists inside the main stack.
+
+Check that a replica joined: `GET http://192.168.1.10:8089/services/<service>`
+with `X-Discovery-Key` lists its address, and the gateway's request log shows
+it in `instanceUrl`.
+
+### How many replicas
+
+- **On the main machine, automatic:** `<SERVICE>_REPLICAS` in `.env`
+  (e.g. `GUILD_REPLICAS=3`) sets how many Compose replicas run. They share the
+  service's port inside Docker, publish none, and take sockets through
+  `ws-proxy`.
+- **Extra replicas, on any machine:** one Compose project per replica, each
+  with its own port. A loop starts several. It sets **that service's** port
+  variable (see its README), so the loop differs per service:
+
+  ```bash
+  # three Guild replicas on this machine: ports 18701-18703 (Guild's PORT)
+  for i in 1 2 3; do
+    PORT=1870$i docker compose -p guild-$i -f docker-compose.replica.yml up -d
+  done
+
+  # three Map replicas: ports 18501-18503 (Map's MAP_PORT)
+  for i in 1 2 3; do
+    MAP_PORT=1850$i docker compose -p map-$i -f docker-compose.replica.yml up -d
+  done
+  ```
+
+  ```powershell
+  # the Guild loop in PowerShell
+  1..3 | ForEach-Object { $env:PORT = "1870$_"; docker compose -p "guild-$_" -f docker-compose.replica.yml up -d }
+  ```
+
+  Stop one with `docker compose -p guild-2 -f docker-compose.replica.yml down`:
+  it deregisters first.
+- **Port ranges:** a service on `808N` uses `18N01`–`18N99` for its extra
+  replicas, so they never collide, on any machine:
+
+  | Service | Port | Extra replicas |
+  |---|---|---|
+  | User Management | `8081` | `18101`–`18199` |
+  | Battle | `8082` | `18201`–`18299` |
+  | Tamagotchi | `8083` | `18301`–`18399` |
+  | Notification | `8084` | `18401`–`18499` |
+  | Map | `8085` | `18501`–`18599` |
+  | Monster Raid | `8086` | `18601`–`18699` |
+  | Guild | `8087` | `18701`–`18799` |
+  | Package Registry | `8088` | `18801`–`18899` |
+
+Which services support it: every service needs a host setting and a
+`docker-compose.replica.yml`. Guild and Package Registry (#141), Tamagotchi and
+Notification (#140), and Map and Monster Raid (#142) have them; User Management
+and Battle follow in #139. Each service's README has its variables.
+
+### Security
+
+Publishing the databases is the risky part of this setup:
+
+- **Only on the local network.** The override binds them to
+  `MACHINES_BIND_IP`, the main machine's LAN address, not `0.0.0.0`. Never
+  forward these ports on the router, and don't run this on public Wi-Fi.
+- **Strong passwords.** Every `*_DB_PASSWORD` and `*_REDIS_PASSWORD` in `.env`
+  is now reachable from the network: generate them
+  (`openssl rand -hex 32`), never keep `change_me`.
+- **Only for as long as needed.** Without the override, the single-machine
+  stack publishes no database, as before.
 
 ## API Collections
 
