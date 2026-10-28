@@ -194,6 +194,8 @@ services:
     depends_on:
       tamagotchi-service-db:
         condition: service_healthy
+      service-discovery:
+        condition: service_healthy
     environment:
       PORT: 8083
       APP_ENV: production
@@ -207,8 +209,15 @@ services:
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
       # Empty = Package Registry through the gateway (http://gateway:8080).
       PACKAGE_REGISTRY_URL: ${TAMAGOTCHI_PACKAGE_REGISTRY_URL:-}
-    ports:
-      - "${TAMAGOTCHI_PORT:-8083}:8083"
+      LOG_LEVEL: ${TAMAGOTCHI_LOG_LEVEL:-INFO}
+      # Each replica registers its own address (http://<hostname>:8083) here, and
+      # deregisters on shutdown. The schema migration takes a lock, so replicas can
+      # start together.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+    # Replicas publish no ports: they're reached only through the gateway.
+    deploy:
+      replicas: ${TAMAGOTCHI_REPLICAS:-2}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8083/health || exit 1"]
       interval: 10s
@@ -238,6 +247,8 @@ services:
     depends_on:
       notification-service-db:
         condition: service_healthy
+      service-discovery:
+        condition: service_healthy
     environment:
       PORT: 8084
       APP_ENV: production
@@ -247,8 +258,14 @@ services:
       MAX_CONCURRENT_EVENTS: ${NOTIFICATION_MAX_CONCURRENT_EVENTS:-10}
       # Reached through the gateway: X-User-Id is trusted only with this key.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
-    ports:
-      - "${NOTIFICATION_PORT:-8084}:8084"
+      LOG_LEVEL: ${NOTIFICATION_LOG_LEVEL:-INFO}
+      # Each replica registers its own address (http://<hostname>:8084) here. Every
+      # replica receives every event; they store each one once (claimed in Redis).
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+    # Replicas publish no ports: they're reached only through the gateway.
+    deploy:
+      replicas: ${NOTIFICATION_REPLICAS:-2}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8084/health || exit 1"]
       interval: 10s
