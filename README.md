@@ -1380,6 +1380,20 @@ Every service, the database it owns, and how requests reach them. The
 **API Gateway** is the single entry point: clients never call a service
 directly, and services call each other through it too.
 
+**Load balancing (Lab 3).** Each service runs as several replicas, and each
+replica registers with Service Discovery. The gateway refreshes every
+service's live instances from Service Discovery every 5 s
+(`GATEWAY_DISCOVERY_REFRESH_SECONDS`) and sends each REST request to the next
+instance of its service, **round-robin**, one counter per service. A replica
+that starts gets traffic after the next refresh, one that stops no longer gets
+any, and a service with no live instance left answers `503`. A replica that
+keeps failing is removed and deregistered (see **Removing the failing
+instance** under the circuit breaker). A service that doesn't register yet
+keeps its fixed `http://<service>:<port>`. The gateway's
+request log names the replica that answered (`instanceId`). WebSockets are not
+balanced by the gateway: `/ws/negotiate` returns the service's public address,
+and `ws-proxy` hands each socket to one replica.
+
 | | |
 |---|---|
 | **Dark arrow** | REST: client → Gateway, and the Gateway routing each request to the service that owns the data |
@@ -1872,8 +1886,8 @@ serving. `GET /health` adds `instanceId`, `uptimeSeconds`, `inFlightRequests`,
 `maxConcurrentRequests` and the open chat sockets, and keeps answering `200`
 under load.
 
-**Logs:** one JSON line per event with `timestamp`, `level`, `service`,
-`instanceId`, `requestId` and `message`: every request and outgoing call,
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`: every request and outgoing call,
 refusals with their reason, chat sockets, events, circuit breaker changes and
 Service Discovery registration. `X-Request-Id` is passed on in Guild's own
 calls. Keys, tokens and tickets are never logged.
@@ -1936,8 +1950,8 @@ registers with Service Discovery as `http://<its hostname>:8088`, sends a
 heartbeat every 10 s, and deregisters on `SIGTERM`. `GET /health` adds
 `instanceId`, `uptimeSeconds`, `inFlightRequests` and `maxConcurrentRequests`.
 
-**Logs:** one JSON line per event with `timestamp`, `level`, `service`,
-`instanceId`, `requestId` and `message`: every request and outgoing call,
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`: every request and outgoing call,
 refusals with their reason, circuit breaker changes and Service Discovery
 registration. `X-Request-Id` is passed on to Monster Raid. Keys and tokens are
 never logged.
