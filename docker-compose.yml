@@ -215,6 +215,11 @@ services:
       # Empty = Package Registry through the gateway (http://gateway:8080).
       PACKAGE_REGISTRY_URL: ${TAMAGOTCHI_PACKAGE_REGISTRY_URL:-}
       LOG_LEVEL: ${TAMAGOTCHI_LOG_LEVEL:-INFO}
+      # The circuit breaker on the call to Package Registry; an empty window or cooldown
+      # = the request timeout x 3.5 (17.5 s).
+      CIRCUIT_BREAKER_THRESHOLD: ${TAMAGOTCHI_CIRCUIT_BREAKER_THRESHOLD:-3}
+      CIRCUIT_BREAKER_WINDOW_MS: ${TAMAGOTCHI_CIRCUIT_BREAKER_WINDOW_MS:-}
+      CIRCUIT_BREAKER_COOLDOWN_MS: ${TAMAGOTCHI_CIRCUIT_BREAKER_COOLDOWN_MS:-}
       # Each replica registers its own address (http://<hostname>:8083) here, and
       # deregisters on shutdown. The schema migration takes a lock, so replicas can
       # start together.
