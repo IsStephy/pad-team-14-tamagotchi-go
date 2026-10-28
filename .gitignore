@@ -30,3 +30,4 @@ Thumbs.db
 
 # ...but .env.example carries placeholders only and must be committed
 !.env.example
+/scripts
