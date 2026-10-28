@@ -431,6 +431,19 @@ services:
       # is not up.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      # Circuit breaker on every outgoing call: THRESHOLD errors within the
+      # window (empty = REQUEST_TIMEOUT_MS x 3.5) trip it; empty cooldown = window.
+      CIRCUIT_BREAKER_THRESHOLD: ${GUILD_CIRCUIT_BREAKER_THRESHOLD:-3}
+      CIRCUIT_BREAKER_WINDOW_MS: ${GUILD_CIRCUIT_BREAKER_WINDOW_MS:-}
+      CIRCUIT_BREAKER_COOLDOWN_MS: ${GUILD_CIRCUIT_BREAKER_COOLDOWN_MS:-}
+      # User Management (user exists?) through the gateway, as this service:
+      # SERVICE_KEY_GUILD as X-Service-Key. Empty URL = built-in mock. Set it to
+      # http://gateway:8080 once User Management accepts SERVICE_KEY_GUILD.
+      USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-}
+      USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_GUILD:-}
+      # GuildInvitation events for Notification: its Redis Pub/Sub channel
+      # notification-events, as the README documents for every publisher.
+      NOTIFICATION_EVENTS_REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
     # Replicas publish no ports: chat sockets and the Postman
     # collection reach them through ws-proxy (one host port for all replicas).
     deploy:
@@ -489,6 +502,16 @@ services:
       # is not up.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      # Circuit breaker on every outgoing call: THRESHOLD errors within the
+      # window (empty = REQUEST_TIMEOUT_MS x 3.5) trip it; empty cooldown = window.
+      CIRCUIT_BREAKER_THRESHOLD: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_THRESHOLD:-3}
+      CIRCUIT_BREAKER_WINDOW_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_WINDOW_MS:-}
+      CIRCUIT_BREAKER_COOLDOWN_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_COOLDOWN_MS:-}
+      # User Management (user exists?) through the gateway, as this service:
+      # SERVICE_KEY_PACKAGE_REGISTRY as X-Service-Key. Empty URL = built-in mock. Set it to
+      # http://gateway:8080 once User Management accepts SERVICE_KEY_PACKAGE_REGISTRY.
+      USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-}
+      USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
     # Replicas publish no ports: the gateway finds them in Service
     # Discovery; direct HTTP calls (the Postman collection) go through ws-proxy.
     deploy:
