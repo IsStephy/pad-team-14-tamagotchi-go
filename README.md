@@ -1465,8 +1465,8 @@ Claim a free one when you wire up your service and add it here.
 |---|---|
 | User Management | `8081` (not published: replicas reached only through the gateway) |
 | Battle | `8082` (the live socket, published by `ws-proxy`; REST only through the gateway) |
-| Tamagotchi | `8083` |
-| Notification | `8084` |
+| Tamagotchi | `8083` (not published: replicas reached only through the gateway) |
+| Notification | `8084` (not published: replicas reached only through the gateway) |
 | Map | `8085` |
 | Monster Raid | `8086` |
 | Guild | `8087` |
@@ -1476,13 +1476,21 @@ Claim a free one when you wire up your service and add it here.
 
 ### Tamagotchi Service
 
-Go, PostgreSQL 16. Runs on `8083` in the shared stack. The service creates its
-own schema on start-up.
+Go, PostgreSQL 16. Runs as `TAMAGOTCHI_REPLICAS` replicas (default 2), each
+registered with Service Discovery under its own address (`http://<hostname>:8083`)
+and reached only through the gateway: no host port. The schema is created on
+start-up under a lock, so the replicas can start together. On `docker compose stop`
+each replica deregisters first, then lets its requests in progress finish.
 
 ```bash
 docker compose up -d tamagotchi-service
-curl http://localhost:8083/health
-# {"service":"tamagotchi-service","status":"ok"}
+docker compose ps tamagotchi-service             # one line per replica
+docker compose exec tamagotchi-service wget -qO- localhost:8083/health
+# {"status":"ok","service":"tamagotchi-service","version":"3.1.1","instanceId":"3f2a9c1b7d4e",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":10,"checks":{...},"load":{...}}
+
+# The replicas Service Discovery knows (DISCOVERY_KEY is in .env):
+curl -s localhost:8089/services/tamagotchi-service -H "X-Discovery-Key: <DISCOVERY_KEY>"
 ```
 
 **In the shared stack** it's reached only through the gateway: every endpoint
@@ -1496,8 +1504,9 @@ from Package Registry through the gateway (`GET /packages/{packageId}`): an
 undefined key or an unregistered package is `400`, and Package Registry being
 down is `502`.
 
-Without the gateway, call it with the gateway's headers yourself
-(`X-Gateway-Key` from `.env`, `X-User-Id`); the service's README has examples.
+There is no way around the gateway from outside the stack any more (no host
+port); the service's README shows calls with the gateway's headers for a local
+`go run`.
 
 **Gateway routes:** `/tamagotchis/**`, `/types/**` and
 `/users/{userId}/tamagotchis/**` → Tamagotchi (the gateway matches the last one
@@ -1508,14 +1517,20 @@ No WebSocket endpoints. Its one outgoing call, Package Registry's
 
 ### Notification Service
 
-Go, Redis 7. Runs on `8084` in the shared stack. Notifications are created by events published to the Redis
-Pub/Sub channel `notification-events` (there is no public create endpoint) and
-kept for 30 days.
+Go, Redis 7. Runs as `NOTIFICATION_REPLICAS` replicas (default 2), each
+registered with Service Discovery under its own address (`http://<hostname>:8084`)
+and reached only through the gateway: no host port. Notifications are created by
+events published to the Redis Pub/Sub channel `notification-events` (there is no
+public create endpoint) and kept for 30 days. Every replica receives every event,
+and each event is stored once: the replicas claim it in the shared Redis by its
+optional `eventId` (or a fingerprint of the message), as the contract's
+at-least-once delivery asks.
 
 ```bash
 docker compose up -d notification-service
-curl http://localhost:8084/health
-# {"service":"notification-service","status":"ok"}
+docker compose ps notification-service           # one line per replica
+docker compose exec notification-service wget -qO- localhost:8084/health
+# {"status":"ok","service":"notification-service","version":"3.1.1",...,"load":{"events":{...,"duplicates":0}}}
 
 # Simulate an event (Redis password is NOTIFICATION_REDIS_PASSWORD in .env):
 docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning PUBLISH notification-events "{\"type\":\"BattleEnded\",\"userId\":\"11111111-1111-1111-1111-111111111111\",\"payload\":{\"result\":\"won\"}}"'
@@ -1524,7 +1539,7 @@ docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD
 **In the shared stack** it's reached only through the gateway: every endpoint
 except `GET /health` needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
 player can only register their own device and read their own notifications.
-Without the gateway, send those headers yourself, as for Tamagotchi above.
+There is no way around the gateway from outside the stack (no host port).
 
 **Gateway routes:** `/notifications/**` → Notification. No WebSocket endpoints
 and no outgoing calls; events arrive on the Redis channel
@@ -1860,9 +1875,26 @@ the shared `X-Discovery-Key`.
 **Limits:** `504` after `REQUEST_TIMEOUT_SECONDS` (5 s), `503` + `Retry-After`
 above `MAX_CONCURRENT_REQUESTS` (100) at once.
 
-Not part of the shared `docker-compose.yml` yet: it joins once its first image
-is on Docker Hub (`dackohn/service-discovery`), together with the services
-registering and the gateway reading it.
+**Health checks and alerts:** every `DISCOVERY_HEALTH_CHECK_INTERVAL_SECONDS`
+(10 s) it calls each registered instance's `/health` and reads its load,
+`inFlightRequests / maxConcurrentRequests`. An instance at or above
+`DISCOVERY_LOAD_ALERT_THRESHOLD` (0.8), unreachable, or not `ok` raises an alert
+(a `WARNING` line), and `instance recovered` closes it. `GET /health` summarises
+the checks (`healthChecks`).
+
+**Telegram:** with `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and `TELEGRAM_THREAD_ID`
+in `.env` (ask Daniel for them privately; never commit them), every alert is also
+posted to the team's Telegram alerts topic, at most one per instance every
+`DISCOVERY_ALERT_COOLDOWN_SECONDS` (300 s), then one "Recovered". Left empty,
+alerts stay in the log. Check the set-up with:
+
+```bash
+curl -X POST localhost:8089/alerts/test -H "X-Discovery-Key: <DISCOVERY_KEY>"
+# {"sent":true,...} and a test message appears in the topic
+```
+
+Its README has the details: [Health checks and alerts](https://github.com/Dackohn/service-discovery#health-checks-and-alerts),
+[Telegram alerts](https://github.com/Dackohn/service-discovery#telegram-alerts).
 
 ## Running the Whole System
 

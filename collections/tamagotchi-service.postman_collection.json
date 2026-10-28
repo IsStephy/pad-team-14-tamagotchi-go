@@ -13,11 +13,6 @@
       "type": "string"
     },
     {
-      "key": "tamagotchiUrl",
-      "value": "http://localhost:8083",
-      "type": "string"
-    },
-    {
       "key": "packageRegistryUrl",
       "value": "http://localhost:8088",
       "type": "string"
@@ -1422,42 +1417,6 @@
               "mode": "raw",
               "raw": "{\n  \"newOwnerId\": \"{{otherId}}\"\n}"
             }
-          },
-          "response": []
-        },
-        {
-          "name": "Tamagotchi without the gateway (401)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
-                  "pm.test('error: missing or invalid gateway key', function () { pm.expect(pm.response.json().error).to.eql(\"missing or invalid gateway key\"); });"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{ownerId}}"
-              }
-            ],
-            "url": {
-              "raw": "{{tamagotchiUrl}}/tamagotchis/{{secondaryTamagotchiId}}",
-              "host": [
-                "{{tamagotchiUrl}}"
-              ],
-              "path": [
-                "tamagotchis",
-                "{{secondaryTamagotchiId}}"
-              ]
-            },
-            "description": "Straight to Tamagotchi's own port: refused, because only the gateway holds GATEWAY_KEY."
           },
           "response": []
         }
