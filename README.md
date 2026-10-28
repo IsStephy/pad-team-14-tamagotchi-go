@@ -1679,8 +1679,7 @@ in its own Redis (`battle-service-cache`) so each opens one socket, and sends
 is closed with `1013`. With several replicas, a turn played on one is
 published on the Redis channel `battle:live` and every replica pushes it to
 the sockets connected to it, so a client sees every turn whichever replica it
-is on. Which replica a ticket's `wsUrl` points at is the gateway's choice
-(round-robin, Lab 3).
+is on.
 
 **Limits:** `504` after `REQUEST_TIMEOUT_MS` (8 s, also Postgres's
 `statement_timeout`; each call to another service times out after 5 s), `503`
