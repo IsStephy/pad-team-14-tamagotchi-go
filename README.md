@@ -179,8 +179,42 @@ trips the breaker. The 4th answers `503` at once. Start the service again, and
 the first request after the cooldown closes the breaker. The gateway's
 `GET /health/services` shows each service's `circuit`.
 
-Reference implementations: the gateway's `app/breaker.py` (Python) and
-Battle's `internal/clients/httpx/breaker.go` (Go).
+**Removing the failing instance.** When the target has replicas in Service
+Discovery, the gateway keeps the breaker **per replica**, not per service, so
+one broken replica never takes its healthy siblings down:
+
+- The gateway takes the live replicas in turn (round-robin). 3 errors to the
+  same replica within the window **remove** it: out of rotation at once, and
+  deregistered from Service Discovery
+  (`DELETE /services/{service}/instances/{instanceId}`). The other replicas
+  keep serving.
+- A removed replica comes back only by **registering again**: its next
+  heartbeat gets `404` and it registers anew, which the gateway sees as a newer
+  `registeredAt` and puts back in rotation.
+- No live replica left: `503 {"error": "<service> has no live instance right now, retry shortly"}`.
+- A service Service Discovery doesn't list yet is reached at its fixed URL,
+  with the breaker per service above.
+- Every removal is logged as an `ERROR` with the service, instance, URL, error
+  count and window:
+
+```json
+{"time":"2026-10-28T16:16:02.540Z","level":"ERROR","service":"gateway","instanceId":"19236e53a734","msg":"circuit breaker tripped: instance removed","requestId":"e07b…","caller":"gateway","target":"battle-service","instance":"5f4bb89d4b73","url":"http://5f4bb89d4b73:8082","endpoint":"GET /battles/reference","errors":3,"windowSeconds":35.0,"threshold":3,"lastError":"battle-service is unreachable","remaining":2}
+```
+
+Services call each other through the gateway, so their calls get the same
+per-replica removal there; their own breakers stay per target service.
+
+**Try it:** `docker kill` one replica of a 3-replica service (it can't
+deregister itself) and send requests through the gateway: its 3 turns fail,
+it is removed and deregistered at once (not after the 30 s TTL), and every
+request after that succeeds on the other two. `docker pause` one instead and
+`docker unpause` it after it is removed: it registers again and is back in
+rotation. `GET /health/services` lists each service's `instances` and
+`removed`.
+
+Reference implementations: the gateway's `app/breaker.py` and
+`app/instances.py` (Python) and Battle's `internal/clients/httpx/breaker.go`
+(Go).
 
 #### Access per endpoint
 
