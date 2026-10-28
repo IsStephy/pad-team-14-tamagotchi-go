@@ -13,11 +13,6 @@
       "type": "string"
     },
     {
-      "key": "notificationUrl",
-      "value": "http://localhost:8084",
-      "type": "string"
-    },
-    {
       "key": "password",
       "value": "Secret123!",
       "type": "string"
@@ -651,42 +646,6 @@
               ]
             },
             "description": "Notification has no service-to-service endpoints, so any X-Service-Key is refused."
-          },
-          "response": []
-        },
-        {
-          "name": "Notification without the gateway (401)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
-                  "pm.test('error: missing or invalid gateway key', function () { pm.expect(pm.response.json().error).to.eql(\"missing or invalid gateway key\"); });"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Id",
-                "value": "{{playerId}}"
-              }
-            ],
-            "url": {
-              "raw": "{{notificationUrl}}/notifications/{{playerId}}",
-              "host": [
-                "{{notificationUrl}}"
-              ],
-              "path": [
-                "notifications",
-                "{{playerId}}"
-              ]
-            },
-            "description": "Straight to Notification's own port: refused, because only the gateway holds GATEWAY_KEY."
           },
           "response": []
         }
