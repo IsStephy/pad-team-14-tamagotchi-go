@@ -1874,9 +1874,26 @@ the shared `X-Discovery-Key`.
 **Limits:** `504` after `REQUEST_TIMEOUT_SECONDS` (5 s), `503` + `Retry-After`
 above `MAX_CONCURRENT_REQUESTS` (100) at once.
 
-Not part of the shared `docker-compose.yml` yet: it joins once its first image
-is on Docker Hub (`dackohn/service-discovery`), together with the services
-registering and the gateway reading it.
+**Health checks and alerts:** every `DISCOVERY_HEALTH_CHECK_INTERVAL_SECONDS`
+(10 s) it calls each registered instance's `/health` and reads its load,
+`inFlightRequests / maxConcurrentRequests`. An instance at or above
+`DISCOVERY_LOAD_ALERT_THRESHOLD` (0.8), unreachable, or not `ok` raises an alert
+(a `WARNING` line), and `instance recovered` closes it. `GET /health` summarises
+the checks (`healthChecks`).
+
+**Telegram:** with `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and `TELEGRAM_THREAD_ID`
+in `.env` (ask Daniel for them privately; never commit them), every alert is also
+posted to the team's Telegram alerts topic, at most one per instance every
+`DISCOVERY_ALERT_COOLDOWN_SECONDS` (300 s), then one "Recovered". Left empty,
+alerts stay in the log. Check the set-up with:
+
+```bash
+curl -X POST localhost:8089/alerts/test -H "X-Discovery-Key: <DISCOVERY_KEY>"
+# {"sent":true,...} and a test message appears in the topic
+```
+
+Its README has the details: [Health checks and alerts](https://github.com/Dackohn/service-discovery#health-checks-and-alerts),
+[Telegram alerts](https://github.com/Dackohn/service-discovery#telegram-alerts).
 
 ## Running the Whole System
 
