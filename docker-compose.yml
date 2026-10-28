@@ -512,6 +512,17 @@ services:
       REQUEST_TIMEOUT_SECONDS: ${DISCOVERY_REQUEST_TIMEOUT_SECONDS:-5}
       MAX_CONCURRENT_REQUESTS: ${DISCOVERY_MAX_CONCURRENT_REQUESTS:-100}
       LOG_LEVEL: ${DISCOVERY_LOG_LEVEL:-INFO}
+      # Health checks of every registered instance, and alerts when one is critically
+      # loaded, unreachable or unhealthy (see the Service Discovery README).
+      HEALTH_CHECK_INTERVAL_SECONDS: ${DISCOVERY_HEALTH_CHECK_INTERVAL_SECONDS:-10}
+      HEALTH_CHECK_TIMEOUT_SECONDS: ${DISCOVERY_HEALTH_CHECK_TIMEOUT_SECONDS:-3}
+      LOAD_ALERT_THRESHOLD: ${DISCOVERY_LOAD_ALERT_THRESHOLD:-0.8}
+      # Alerts also go to the team's Telegram alerts topic when these are set (in .env
+      # only, never committed); empty = alerts in the log only.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_THREAD_ID: ${TELEGRAM_THREAD_ID:-}
+      ALERT_COOLDOWN_SECONDS: ${DISCOVERY_ALERT_COOLDOWN_SECONDS:-300}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8089/health', timeout=2)"]
       interval: 10s
