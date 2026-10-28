@@ -1842,8 +1842,8 @@ serving. `GET /health` adds `instanceId`, `uptimeSeconds`, `inFlightRequests`,
 `maxConcurrentRequests` and the open chat sockets, and keeps answering `200`
 under load.
 
-**Logs:** one JSON line per event with `timestamp`, `level`, `service`,
-`instanceId`, `requestId` and `message`: every request and outgoing call,
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`: every request and outgoing call,
 refusals with their reason, chat sockets, events, circuit breaker changes and
 Service Discovery registration. `X-Request-Id` is passed on in Guild's own
 calls. Keys, tokens and tickets are never logged.
@@ -1906,8 +1906,8 @@ registers with Service Discovery as `http://<its hostname>:8088`, sends a
 heartbeat every 10 s, and deregisters on `SIGTERM`. `GET /health` adds
 `instanceId`, `uptimeSeconds`, `inFlightRequests` and `maxConcurrentRequests`.
 
-**Logs:** one JSON line per event with `timestamp`, `level`, `service`,
-`instanceId`, `requestId` and `message`: every request and outgoing call,
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`: every request and outgoing call,
 refusals with their reason, circuit breaker changes and Service Discovery
 registration. `X-Request-Id` is passed on to Monster Raid. Keys and tokens are
 never logged.
