@@ -41,6 +41,28 @@
   "item": [
     {
       "name": "Health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 even under load', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('reports which replica answered and its load', () => {",
+              "    pm.expect(body.status).to.eql('ok');",
+              "    pm.expect(body.service).to.eql('guild-service');",
+              "    pm.expect(body.instanceId).to.be.a('string').and.not.empty;",
+              "    pm.expect(body.uptimeSeconds).to.be.a('number');",
+              "    pm.expect(body.inFlightRequests).to.be.a('number');",
+              "    pm.expect(body.maxConcurrentRequests).to.be.a('number');",
+              "    pm.expect(body.openChatSockets).to.be.a('number');",
+              "    pm.expect(body.maxChatSockets).to.be.a('number');",
+              "});"
+            ]
+          }
+        }
+      ],
       "request": {
         "method": "GET",
         "header": [],
@@ -53,7 +75,7 @@
             "health"
           ]
         },
-        "description": "Liveness check. Returns { status: ok, service: guild-service }."
+        "description": "Status endpoint (Lab 3): always 200 while the process runs, with the replica (instanceId = container hostname), uptimeSeconds, inFlightRequests and maxConcurrentRequests, plus openChatSockets / maxChatSockets. Public: no gateway key needed."
       },
       "response": []
     },
