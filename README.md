@@ -1346,6 +1346,18 @@ Every service, the database it owns, and how requests reach them. The
 **API Gateway** is the single entry point: clients never call a service
 directly, and services call each other through it too.
 
+**Load balancing (Lab 3).** Each service runs as several replicas, and each
+replica registers with Service Discovery. The gateway refreshes every
+service's live instances from Service Discovery every 5 s
+(`GATEWAY_DISCOVERY_REFRESH_SECONDS`) and sends each REST request to the next
+instance of its service, **round-robin**, one counter per service. A replica
+that starts gets traffic after the next refresh, one that stops no longer gets
+any, and a service with no live instance left answers `503`. A service that
+doesn't register yet keeps its fixed `http://<service>:<port>`. The gateway's
+request log names the replica that answered (`instanceId`). WebSockets are not
+balanced by the gateway: `/ws/negotiate` returns the service's public address,
+and `ws-proxy` hands each socket to one replica.
+
 | | |
 |---|---|
 | **Dark arrow** | REST: client → Gateway, and the Gateway routing each request to the service that owns the data |
