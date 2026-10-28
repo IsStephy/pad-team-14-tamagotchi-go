@@ -1422,8 +1422,8 @@ Claim a free one when you wire up your service and add it here.
 
 | Service | Port |
 |---|---|
-| User Management | `8081` (not published: reached only through the gateway) |
-| Battle | `8082` |
+| User Management | `8081` (not published: replicas reached only through the gateway) |
+| Battle | `8082` (not published: replicas reached only through the gateway) |
 | Tamagotchi | `8083` |
 | Notification | `8084` |
 | Map | `8085` |
@@ -1574,7 +1574,8 @@ API answers. When it prints
 
 ```bash
 curl http://localhost:8081/health
-# {"service":"user-management-service","status":"ok"}
+# {"status":"ok","service":"user-management-service","instanceId":"8c41d2e07a5f",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":50}
 ```
 
 | Command | What it does |
@@ -1606,6 +1607,23 @@ published in the shared stack.
 `statement_timeout`), `503` + `Retry-After: 1` above `MAX_CONCURRENT_REQUESTS`
 (50) at once. `GET /health` is outside both.
 
+**Replicas:** the shared stack runs `USER_MANAGEMENT_REPLICAS` (3). Each
+registers with Service Discovery as `http://<its hostname>:8081` once it is
+listening, sends a heartbeat every 10 s, registers again if Service Discovery
+forgot it, and deregisters on `SIGTERM` before it stops serving. Any replica
+serves any request: accounts and balances are in the shared database, currency
+adjustments are idempotent there, and every replica signs with the same key,
+so a token from one verifies everywhere. `GET /health` adds the replica's
+`instanceId` (its hostname), `uptimeSeconds`, `inFlightRequests` and
+`maxConcurrentRequests`, and keeps answering `200` under load.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`. Every request, refusals with their reason,
+registrations, logins, currency adjustments and Service Discovery registration
+are logged; passwords, tokens and keys never are. `X-Request-Id` from the
+gateway is kept and sent back. `USER_MANAGEMENT_LOG_LEVEL` (`info`) sets how
+much.
+
 ### Battle Service
 
 **What it does:** runs turn-based PvP matches — damage from Tamagotchi levels,
@@ -1632,7 +1650,8 @@ ready:
 
 ```bash
 curl http://localhost:8082/health
-# {"service":"battle-service","status":"ok"}
+# {"status":"ok","service":"battle-service","instanceId":"3f2a9c1b7d4e",
+#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":50}
 ```
 
 It takes the same `stop` / `clean` / `logs` / `test` commands and the same
@@ -1647,22 +1666,49 @@ covers). `WS /battles/{battleId}/live` is negotiated, never proxied.
 which clients open directly with the gateway's ticket. The player is the
 gateway's `X-User-Id`, and the service no longer verifies tokens. Its own rules
 stay: the actor a request names must be that player, and only the challenged
-player may accept (`403` otherwise). Port `8082` stays published only for the
-live socket.
+player may accept (`403` otherwise). Its port is not published in the shared
+stack.
 
 **Live updates:** clients call the gateway's
 `GET /ws/negotiate?path=/battles/{battleId}/live` with their token and connect
-to the returned `ws://localhost:8082/battles/{battleId}/live?ticket=…` within 60
+to the returned `wsUrl` (`ws://…/battles/{battleId}/live?ticket=…`) within 60
 seconds. Battle checks the ticket against `GATEWAY_KEY`, keeps used ticket ids
 in its own Redis (`battle-service-cache`) so each opens one socket, and sends
 `turn_update` frames (on connect, then after every turn) and a final
 `battle_end`. `BATTLE_MAX_WS_CONNECTIONS` (500) caps open sockets; the next one
-is closed with `1013`.
+is closed with `1013`. With several replicas, a turn played on one is
+published on the Redis channel `battle:live` and every replica pushes it to
+the sockets connected to it, so a client sees every turn whichever replica it
+is on. Which replica a ticket's `wsUrl` points at is the gateway's choice
+(round-robin, Lab 3).
 
 **Limits:** `504` after `REQUEST_TIMEOUT_MS` (8 s, also Postgres's
 `statement_timeout`; each call to another service times out after 5 s), `503`
 + `Retry-After: 1` above `MAX_CONCURRENT_REQUESTS` (50) at once. `GET /health`
 and the live sockets are outside both.
+
+**Replicas:** the shared stack runs `BATTLE_REPLICAS` (3). Each registers
+with Service Discovery as `http://<its hostname>:8082` once it is listening,
+sends a heartbeat every 10 s, registers again if Service Discovery forgot it,
+and deregisters on `SIGTERM` before it stops serving. Battles live in
+PostgreSQL and used tickets in Redis, shared by every replica. `GET /health`
+adds the replica's `instanceId` (its hostname), `uptimeSeconds`,
+`inFlightRequests` and `maxConcurrentRequests`, and keeps answering `200`
+under load.
+
+**Logs:** one JSON line per event with `time`, `level`, `service`,
+`instanceId`, `requestId` and `msg`: every request and every outgoing call,
+refusals with their reason, live sockets, circuit breaker changes and Service
+Discovery registration. `X-Request-Id` from the gateway is kept, sent back and
+passed on in Battle's own calls. Tickets, tokens and keys are never logged.
+`BATTLE_LOG_LEVEL` (`info`) sets how much.
+
+**Circuit breaker:** each service Battle calls has its own breaker.
+`BATTLE_CIRCUIT_BREAKER_THRESHOLD` (3) errors within the request timeout × 3.5
+(8 s → 28 s) trip it: calls to that service then fail at once, and the request
+needing it answers `503`, until the cooldown (the window) has passed and one
+trial call succeeds. Timeouts, refused connections and `5xx` count; `4xx`
+doesn't. Tripping is logged as an `ERROR` naming caller, target and endpoint.
 
 **Outgoing calls go through the gateway** too: in the shared stack
 `USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
