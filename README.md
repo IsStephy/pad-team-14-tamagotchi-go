@@ -130,6 +130,8 @@ The client then connects to the service directly. The **ticket** is a JWT the ga
 
 The service verifies the signature, expiry and path, remembers used `jti`s until they expire, and then applies its own rules (participant, guild member, …).
 
+**Replicas across machines.** When the gateway runs with `WS_URLS_FROM_DISCOVERY=true` (the main machine's [machines override](#running-across-machines)), the round-robin over all of the service's replicas, the same as HTTP, decides where the socket goes. A replica registered with an address clients can reach (an IP or a dotted host name, not loopback) gets `wsUrl` pointing at its own address, e.g. `ws://192.168.1.21:18701/guilds/<guildId>/chat?ticket=<ticket>`. A replica registered with its container hostname (the main machine's Compose replicas) gets the public URL above, and `ws-proxy` picks one of them. So sockets split like HTTP: 3 Compose replicas plus 1 extra one get them 3:1. The ticket is the same and valid on any replica. Off (the default), nothing changes.
+
 #### Errors
 
 Every error body is `{"error": "..."}`.
@@ -1392,7 +1394,9 @@ instance** under the circuit breaker). A service that doesn't register yet
 keeps its fixed `http://<service>:<port>`. The gateway's
 request log names the replica that answered (`instanceId`). WebSockets are not
 balanced by the gateway: `/ws/negotiate` returns the service's public address,
-and `ws-proxy` hands each socket to one replica.
+and `ws-proxy` hands each socket to one replica (across machines, it can
+return an extra replica's own address instead; see
+[Running across machines](#running-across-machines)).
 
 | | |
 |---|---|
@@ -2172,6 +2176,193 @@ never put a real password in it. Variables are prefixed with their service
 `docker-compose.yml` (service/database/volume names, env prefix, a pinned
 published image — never a `build:` context), claim a port in the table above,
 and add your variables to `.env.example` with placeholder values only.
+
+## Running across machines
+
+Replicas of a service can run on several devices on the same network, not only
+inside one Compose stack. One **main machine** runs the whole stack; any
+machine, the main one included, can add **extra replicas** of a service, each
+on its own port.
+
+| Machine | Runs | Command |
+|---|---|---|
+| Main (e.g. `192.168.1.10`) | the whole stack, plus the machines override | `docker compose -f docker-compose.yml -f docker-compose.machines.yml up -d` |
+| Any (e.g. `192.168.1.21`) | extra replicas of a service, nothing else | `docker compose -p <name> -f docker-compose.replica.yml up -d`, in that service's repo |
+
+### How it works
+
+- **Every extra replica registers an address other machines can reach**:
+  `http://<host>:<port>`: the machine's IP or a dotted host name
+  (e.g. `pc-denis.local`) and the replica's port, from its `.env`. The
+  variables are named per service, e.g. Guild's `INSTANCE_HOST`/`PORT` and
+  Map's `MAP_INSTANCE_HOST`/`MAP_PORT`. A bare name such
+  as `pc-denis`, or a loopback address, still gets HTTP, but the gateway never
+  hands it out for sockets. The main machine's Compose replicas keep
+  registering their container hostname, as before.
+- **One shared database and Redis per service**, on the main machine. The
+  override publishes them, so extra replicas use the same data as the main
+  ones. A database per machine would split the data.
+- **HTTP:** the gateway takes every registered replica in turn (round-robin),
+  extra ones included.
+- **WebSockets:** with the override, the gateway runs with
+  `WS_URLS_FROM_DISCOVERY=true`. `/ws/negotiate` takes the next replica in
+  the same round-robin as HTTP. For an extra replica it returns that replica's
+  own address, and the client connects straight to it. For one of the main
+  machine's Compose replicas (registered with a container hostname, which
+  clients can't reach) it returns the public URL, and `ws-proxy` hands the
+  socket to one of them. So sockets split over all replicas, like HTTP. See
+  [WebSockets](#websockets).
+- **Clients reconnect.** When a replica stops, its sockets close (`1001` on
+  shutdown, `1006` if it dies). The client calls `/ws/negotiate` again, which
+  hands out a live replica, and re-fetches the current state: pub/sub doesn't
+  keep messages sent while it was away.
+
+### The main machine
+
+```bash
+# .env: everything as usual, plus this machine's LAN IP
+MACHINES_BIND_IP=192.168.1.10
+```
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.machines.yml up -d
+```
+
+The override publishes every database and Redis on `MACHINES_BIND_IP`.
+Service Discovery and the gateway are published by the normal stack already.
+Host ports follow the service's port, `808N` → Postgres `543N`, Redis `637N`:
+
+| Store | Host port | Change with |
+|---|---|---|
+| `user-management-service-db` | `5431` | `USER_MANAGEMENT_DB_PUBLISHED_PORT` |
+| `battle-service-db` | `5432` | `BATTLE_DB_PUBLISHED_PORT` |
+| `battle-service-cache` | `6372` | `BATTLE_REDIS_PUBLISHED_PORT` |
+| `tamagotchi-service-db` | `5433` | `TAMAGOTCHI_DB_PUBLISHED_PORT` |
+| `notification-service-db` | `6374` | `NOTIFICATION_REDIS_PUBLISHED_PORT` |
+| `map-service-db` | `6375` | `MAP_REDIS_PUBLISHED_PORT` |
+| `monster-raid-service-db` | `5436` | `MONSTER_RAID_DB_PUBLISHED_PORT` |
+| `monster-raid-service-cache` | `6376` | `MONSTER_RAID_REDIS_PUBLISHED_PORT` |
+| `guild-service-db` | `5437` | `GUILD_DB_PUBLISHED_PORT` |
+| `package-registry-service-db` | `5438` | `PACKAGE_REGISTRY_DB_PUBLISHED_PORT` |
+
+A host port that is already taken stops that container with `port is already
+allocated`. That happens when a service's standalone stack runs on the same
+machine (Guild's and Package Registry's use `5437` and `5438` too) or a local
+Postgres listens on `5432`; set that store's `*_PUBLISHED_PORT` in `.env`, and
+the same port as `SHARED_DB_PORT` on the extra replicas.
+
+**Firewall:** open on the main machine `8080` (gateway), `8089` (Service
+Discovery), and the database and Redis ports of the services that have extra
+replicas elsewhere. On every machine with extra replicas, open their ports
+(below).
+
+### Extra replicas
+
+Each service's repo has a `docker-compose.replica.yml` that starts only the
+service, with no database. It reads everything from its own `.env`: the main
+machine's database (and Redis) and Service Discovery, the gateway's address
+for outgoing calls, this machine's host or IP, and the port the replica
+listens on, published 1:1.
+
+**The variable names differ per service.** The `<SERVICE>_` rule is for this
+repo's shared `.env`; a service's own `.env` uses its own names. Guild and
+Package Registry use `INSTANCE_HOST` and `PORT`, Map uses `MAP_INSTANCE_HOST`
+and `MAP_PORT`, and so on. Always take them from that service's README
+("Run extra replicas"): with the wrong name, the replica quietly starts on its
+default port. Two examples, on `192.168.1.21`:
+
+Guild:
+
+```bash
+INSTANCE_HOST=192.168.1.21
+PORT=18701
+SERVICE_DISCOVERY_URL=http://192.168.1.10:8089
+DISCOVERY_KEY=<the main machine's>
+SHARED_DB_HOST=192.168.1.10
+SHARED_DB_PORT=5437
+DB_NAME=guild_db
+DB_USER=guild_user
+DB_PASSWORD=<the main machine's GUILD_DB_PASSWORD>
+GATEWAY_KEY=<the main machine's>
+USER_MANAGEMENT_URL=http://192.168.1.10:8080
+NOTIFICATION_EVENTS_REDIS_URL=redis://:<NOTIFICATION_REDIS_PASSWORD>@192.168.1.10:6374/0
+```
+
+Map (an excerpt: the rest is in Map's README):
+
+```bash
+MAP_INSTANCE_HOST=192.168.1.21
+MAP_PORT=18501
+MAP_REDIS_URL=redis://:<MAP_REDIS_PASSWORD>@192.168.1.10:6375
+```
+
+Outgoing calls go to the gateway's real address (`http://192.168.1.10:8080`),
+never `http://gateway:8080`, which only exists inside the main stack.
+
+Check that a replica joined: `GET http://192.168.1.10:8089/services/<service>`
+with `X-Discovery-Key` lists its address, and the gateway's request log shows
+it in `instanceUrl`.
+
+### How many replicas
+
+- **On the main machine, automatic:** `<SERVICE>_REPLICAS` in `.env`
+  (e.g. `GUILD_REPLICAS=3`) sets how many Compose replicas run. They share the
+  service's port inside Docker, publish none, and take sockets through
+  `ws-proxy`.
+- **Extra replicas, on any machine:** one Compose project per replica, each
+  with its own port. A loop starts several. It sets **that service's** port
+  variable (see its README), so the loop differs per service:
+
+  ```bash
+  # three Guild replicas on this machine: ports 18701-18703 (Guild's PORT)
+  for i in 1 2 3; do
+    PORT=1870$i docker compose -p guild-$i -f docker-compose.replica.yml up -d
+  done
+
+  # three Map replicas: ports 18501-18503 (Map's MAP_PORT)
+  for i in 1 2 3; do
+    MAP_PORT=1850$i docker compose -p map-$i -f docker-compose.replica.yml up -d
+  done
+  ```
+
+  ```powershell
+  # the Guild loop in PowerShell
+  1..3 | ForEach-Object { $env:PORT = "1870$_"; docker compose -p "guild-$_" -f docker-compose.replica.yml up -d }
+  ```
+
+  Stop one with `docker compose -p guild-2 -f docker-compose.replica.yml down`:
+  it deregisters first.
+- **Port ranges:** a service on `808N` uses `18N01`–`18N99` for its extra
+  replicas, so they never collide, on any machine:
+
+  | Service | Port | Extra replicas |
+  |---|---|---|
+  | User Management | `8081` | `18101`–`18199` |
+  | Battle | `8082` | `18201`–`18299` |
+  | Tamagotchi | `8083` | `18301`–`18399` |
+  | Notification | `8084` | `18401`–`18499` |
+  | Map | `8085` | `18501`–`18599` |
+  | Monster Raid | `8086` | `18601`–`18699` |
+  | Guild | `8087` | `18701`–`18799` |
+  | Package Registry | `8088` | `18801`–`18899` |
+
+Which services support it: every service needs a host setting and a
+`docker-compose.replica.yml`. Guild and Package Registry (#141), Tamagotchi and
+Notification (#140), and Map and Monster Raid (#142) have them; User Management
+and Battle follow in #139. Each service's README has its variables.
+
+### Security
+
+Publishing the databases is the risky part of this setup:
+
+- **Only on the local network.** The override binds them to
+  `MACHINES_BIND_IP`, the main machine's LAN address, not `0.0.0.0`. Never
+  forward these ports on the router, and don't run this on public Wi-Fi.
+- **Strong passwords.** Every `*_DB_PASSWORD` and `*_REDIS_PASSWORD` in `.env`
+  is now reachable from the network: generate them
+  (`openssl rand -hex 32`), never keep `change_me`.
+- **Only for as long as needed.** Without the override, the single-machine
+  stack publishes no database, as before.
 
 ## API Collections
 
