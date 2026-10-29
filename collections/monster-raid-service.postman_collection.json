@@ -100,6 +100,85 @@
       "response": []
     },
     {
+      "name": "Status of one replica (Lab 3)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('names the service and the replica', () => {",
+              "    pm.expect(body.status).to.eql('ok');",
+              "    pm.expect(body.service).to.eql('monster-raid-service');",
+              "    pm.expect(body.instanceId).to.be.a('string').and.not.empty;",
+              "    pm.expect(body.version).to.be.a('string').and.not.empty;",
+              "});",
+              "pm.test('reports its load', () => {",
+              "    pm.expect(body.uptimeSeconds).to.be.a('number');",
+              "    pm.expect(body.inFlightRequests).to.be.a('number');",
+              "    pm.expect(body.maxConcurrentRequests).to.be.a('number').and.above(0);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{raidUrl}}/health",
+          "host": [
+            "{{raidUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Lab 3 status endpoint, read directly through ws-proxy (port 8086), which hands the request to one replica. Public and outside the request limits: it answers 200 even when the replica is saturated."
+      },
+      "response": []
+    },
+    {
+      "name": "Every replica is up (Lab 3)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const svc = pm.response.json().services['monster-raid-service'];",
+              "pm.test('the gateway routes to several replicas', () => {",
+              "    pm.expect(svc.instances).to.be.an('array');",
+              "    pm.expect(svc.instances.length).to.be.at.least(2);",
+              "});",
+              "pm.test('every replica answers its health check', () => {",
+              "    svc.instances.forEach((i) => pm.expect(i.status, i.url).to.eql('ok'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{gatewayUrl}}/health/services",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "health",
+            "services"
+          ]
+        },
+        "description": "The gateway probes every replica it routes to, from the lists it reads from Service Discovery."
+      },
+      "response": []
+    },
+    {
       "name": "Players (User Management, through the gateway)",
       "description": "Real players: registered and logged in through the gateway, which verifies their RS256 tokens from here on.",
       "item": [
