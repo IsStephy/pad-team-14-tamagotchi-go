@@ -1526,6 +1526,7 @@ Claim a free one when you wire up your service and add it here.
 | Package Registry | `8088` |
 | Gateway | `8080` |
 | Service Discovery | `8089` |
+| Message Broker | `8090` (HTTP), `50051` (gRPC, later) |
 
 ### Tamagotchi Service
 
@@ -2100,6 +2101,36 @@ curl -X POST localhost:8089/alerts/test -H "X-Discovery-Key: <DISCOVERY_KEY>"
 
 Its README has the details: [Health checks and alerts](https://github.com/Dackohn/service-discovery#health-checks-and-alerts),
 [Telegram alerts](https://github.com/Dackohn/service-discovery#telegram-alerts).
+
+### Message Broker
+
+**What it does:** carries service-to-service traffic (Lab 4). Python 3.13, in
+[`Dackohn/message-broker`](https://github.com/Dackohn/message-broker); the full
+API is in its README.
+
+- **Subscriber-based queues:** `ANY /services/{service}/{path}` puts a request
+  on that service's queue; one instance answers, and the reply goes back
+  unchanged (`503` no live instance, `504` no reply in time, `502` unreachable).
+- **Topic-based queues:** `POST /topics/{topic}/messages` with
+  `{"source", "payload"}`; every service subscribed to the topic (the `topics`
+  it registered with Service Discovery) gets one copy at `POST /events`, until
+  it acks with a `2xx`.
+- **Thread-per-request:** every request on its own thread, at most
+  `BROKER_MAX_THREADS` (`503` above). `GET /topics` lists the topics and their
+  subscribers.
+
+**In the shared stack** it runs from `dackohn/message-broker:latest` on port
+`8090`, waits for Service Discovery, registers itself there and reads every
+service's instances from it. Every call except `GET /health` needs
+`X-Broker-Key` (`BROKER_KEY` in `.env`).
+
+```bash
+docker compose up -d message-broker
+curl http://localhost:8090/health
+curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
+```
+
+The services and the gateway move onto it in the Lab 4 tickets (#153).
 
 ## Running the Whole System
 
