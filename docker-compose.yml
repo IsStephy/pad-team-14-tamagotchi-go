@@ -327,6 +327,12 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${MAP_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${MAP_CIRCUIT_BREAKER_WINDOW_MS:-17500}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${MAP_CIRCUIT_BREAKER_COOLDOWN_MS:-30000}
+      # Set MAP_BROKER_URL (e.g. http://message-broker:8090) to send calls to
+      # other services and events through the Message Broker; empty = calls as
+      # above and events only logged. Requests the broker delivers carry
+      # BROKER_KEY next to the sender's own key.
+      BROKER_URL: ${MAP_BROKER_URL:-}
+      BROKER_KEY: ${BROKER_KEY:-}
       LOG_LEVEL: ${MAP_LOG_LEVEL:-info}
     # Replicas publish no ports: clients reach the location stream through ws-proxy.
     deploy:
@@ -407,6 +413,12 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${MONSTER_RAID_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${MONSTER_RAID_CIRCUIT_BREAKER_WINDOW_MS:-17500}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${MONSTER_RAID_CIRCUIT_BREAKER_COOLDOWN_MS:-30000}
+      # Set MONSTER_RAID_BROKER_URL (e.g. http://message-broker:8090) to send calls to
+      # other services and events through the Message Broker; empty = calls as
+      # above and events only logged. Requests the broker delivers carry
+      # BROKER_KEY next to the sender's own key.
+      BROKER_URL: ${MONSTER_RAID_BROKER_URL:-}
+      BROKER_KEY: ${BROKER_KEY:-}
       LOG_LEVEL: ${MONSTER_RAID_LOG_LEVEL:-info}
     # Replicas publish no ports: clients reach the live raid socket through ws-proxy.
     deploy:
