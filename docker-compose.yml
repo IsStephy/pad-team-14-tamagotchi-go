@@ -470,8 +470,15 @@ services:
       # http://gateway:8080 once User Management accepts SERVICE_KEY_GUILD.
       USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_GUILD:-}
-      # GuildInvitation events for Notification: its Redis Pub/Sub channel
-      # notification-events, as the README documents for every publisher.
+      # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
+      # accepted with it, and it is sent with Guild's own calls to the broker.
+      # BROKER_URL set = GuildInvitation goes to the topic guild.invitation;
+      # empty until Notification subscribes to it, so invitations still reach
+      # Notification through Redis meanwhile.
+      BROKER_URL: ${GUILD_BROKER_URL:-}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # GuildInvitation events for Notification while BROKER_URL is empty: its
+      # Redis Pub/Sub channel notification-events.
       NOTIFICATION_EVENTS_REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
     # Replicas publish no ports: chat sockets and the Postman
     # collection reach them through ws-proxy (one host port for all replicas).
@@ -541,6 +548,12 @@ services:
       # http://gateway:8080 once User Management accepts SERVICE_KEY_PACKAGE_REGISTRY.
       USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
+      # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
+      # accepted with it. A call goes through the broker when its URL above is
+      # this BROKER_URL - so setting it alone changes nothing; each URL moves
+      # once the service on the other side accepts the broker's key.
+      BROKER_URL: http://message-broker:8090
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
     # Replicas publish no ports: the gateway finds them in Service
     # Discovery; direct HTTP calls (the Postman collection) go through ws-proxy.
     deploy:
