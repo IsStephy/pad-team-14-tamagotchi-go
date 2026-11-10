@@ -1408,7 +1408,8 @@ return an extra replica's own address instead; see
 | **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
 | **Dotted arrow** | an event published on a topic in the Message Broker, which hands one copy to every subscribed service |
 | **Teal arrow** | Service Discovery: every replica registers its own address and the topics it wants, sends heartbeats and deregisters; Service Discovery checks each one's `/health` and sends alerts to Telegram; the broker reads the instances and topics from it |
-| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal |
+| **Purple arrow** | monitoring: Prometheus scrapes `GET /metrics` on every replica, Promtail ships every container's logs to Loki, and Grafana shows both (see [Monitoring](#monitoring)) |
+| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring (Prometheus, Promtail, Loki, Grafana) light purple |
 
 The three tiers behind the Gateway are the structure worth remembering:
 
@@ -1530,6 +1531,9 @@ Claim a free one when you wire up your service and add it here.
 | Gateway | `8080` |
 | Service Discovery | `8089` |
 | Message Broker | `8090` (HTTP), `50051` (gRPC, later) |
+| Grafana | `3000` |
+| Prometheus | `9090` |
+| Loki | `3100` (not published: Grafana reads it inside the stack) |
 
 ### Tamagotchi Service
 
@@ -2165,7 +2169,63 @@ curl http://localhost:8090/health
 curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
 ```
 
-The services and the gateway move onto it next (#153).
+#### Topics
+
+Topic names are `<service>.<event>`, lowercase snake_case. A service
+subscribes by listing the topics in its Service Discovery registration
+(`"topics": [...]` on `POST /services/register`).
+
+| Topic | Publisher | Subscribers | Payload defined in |
+|---|---|---|---|
+| `map.proximity_detected` | Map | Notification | Proximity Detected, in [Map Service](#map-service-map-raid-typescript) |
+| `raid.started` | Monster Raid | Notification | `{raidId, guildId}`, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) (`POST /raids`) |
+| `raid.completed` | Monster Raid | Notification, User Management | Raid Completed, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) |
+| `raid.failed` | Monster Raid | Notification | Raid Failed, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) |
+| `battle.ended` | Battle | Notification, Tamagotchi, User Management | [Battle Service](#battle-service-user-battle-go) |
+| `battle.request_received` | Battle | Notification | [Battle Service](#battle-service-user-battle-go) |
+| `battle.tamagotchi_captured` | Battle | Notification | [Battle Service](#battle-service-user-battle-go) |
+| `user.friend_request_received` | User Management | Notification | [User Management Service](#user-management-service-user-battle-go) |
+| `guild.invitation` | Guild | Notification | [Guild Service](#guild-service-guild-registry-typescript) |
+
+#### Publishing
+
+```http
+POST /topics/raid.completed/messages
+X-Broker-Key: <BROKER_KEY>
+
+{"source": "monster-raid-service", "payload": {...}, "messageId": "<uuid>"}
+```
+
+The broker answers `202 {"messageId", "topic", "subscribers"}` at once.
+`messageId` is optional; send it, so a retried publish keeps its id. Use a
+UUIDv5 of `<topic>:<the event's own id>` (e.g. the raid id) when the event has
+one, so the same event always gets the same id. `timestamp` and `requestId` are
+optional too.
+
+#### Receiving: `POST /events`
+
+Every subscribed service gets one copy per event, at `POST /events` on one of
+its instances, with `X-Broker-Key`, `X-Request-Id` and `X-Message-Id`. The body
+is the envelope:
+
+```json
+{"messageId": "<uuid>", "topic": "raid.completed", "source": "monster-raid-service",
+ "requestId": "<id>", "timestamp": "2026-11-10T12:00:00Z", "payload": {...}}
+```
+
+- Check `X-Broker-Key` the way you check `X-Gateway-Key`.
+- Answer `2xx` only **after** handling the event: that is the ack.
+- A `messageId` you already handled answers `2xx` without doing it again. Keep
+  the handled ids, e.g. in your Redis with a TTL.
+
+#### Delivery guarantee
+
+**At least once**, per subscribed service. A copy that isn't acked (no `2xx`,
+no answer, or no reachable instance) is delivered again every
+`BROKER_REDELIVERY_DELAY_SECONDS` (2 s), up to `BROKER_MAX_DELIVERY_ATTEMPTS`
+(5) in all, and then dropped and counted in `eventsDropped` on `/health`. So
+the same event can arrive twice: dedupe by `messageId`. The queues are kept in
+memory, so copies not yet acked are lost if the broker restarts.
 
 ## Running the Whole System
 
@@ -2186,6 +2246,53 @@ docker compose ps        # wait until everything is healthy
 | `docker compose logs -f <service>` | Follow one service's logs |
 | `docker compose down` | Stop everything, **keeping** all database data |
 | `docker compose down -v` | Stop everything and **delete** every database volume |
+
+### Monitoring
+
+`docker compose up -d` also starts the monitoring stack, configured from
+[`monitoring/`](monitoring/):
+
+- **Prometheus** (`http://localhost:9090`) scrapes `GET /metrics` on every
+  replica every 15 s. It finds the replicas through Docker's DNS, so scaled
+  replicas show up on their own. Its targets are under Status → Targets.
+- **Promtail** ships every container's log lines from this stack to **Loki**,
+  labelled with the Compose `service`, the `container` and the `level`.
+- **Grafana** (`http://localhost:3000`, user `admin`, password
+  `GRAFANA_ADMIN_PASSWORD` from `.env`) opens on the **Tamagotchi Go**
+  dashboard, provisioned from
+  [`monitoring/grafana/dashboards/tamagotchi-go.json`](monitoring/grafana/dashboards/tamagotchi-go.json).
+  Change it by editing that JSON, not in the UI.
+
+| Panel | What it shows |
+|---|---|
+| Replicas up | scraped replicas per service; a stopped replica drops out within 15 s |
+| Requests per second / Errors per second (5xx) / Client errors (4xx) | per service |
+| Latency p95 | 95th percentile answer time per service, over 5 minutes |
+| Requests per second per replica / In-flight requests per replica | how the load spreads over the replicas |
+| Circuit breakers | each caller's breaker per called service: 0 closed, 1 half-open, 2 open |
+| Request queue length / Event queue length | requests and event copies waiting in the broker, per queue |
+| Requests through the broker | by target service and reply status |
+| Event copies by outcome | delivered, acked, retried, dropped |
+| Dead Letter Channel size | event copies dropped after every attempt failed |
+| Events published | per topic and publisher |
+| Logs | every container's logs; filter by service, level, or a `requestId` in the search box |
+
+**Metrics every service serves**, so the dashboard covers it (`GET /metrics`,
+Prometheus text format, no key, not routed by the gateway):
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | counter | `method`, `route` (the route pattern, e.g. `/raids/:raidId`, never the raw path), `status` |
+| `http_request_duration_seconds` | histogram | `method`, `route` |
+| `http_requests_in_flight` | gauge | |
+| `circuit_breaker_state` | gauge | `target`: 0 closed, 1 half-open, 2 open |
+
+Leave `/health` and `/metrics` themselves out of the counts. In Node,
+`prom-client` gives these; in Go, `prometheus/client_golang`; in Python,
+`prometheus_client`. Then add a job for your service to
+[`monitoring/prometheus/prometheus.yml`](monitoring/prometheus/prometheus.yml)
+(copy one: the Compose service name and its port). Today Map, Monster Raid and
+the Message Broker serve them.
 
 ### Credentials
 
