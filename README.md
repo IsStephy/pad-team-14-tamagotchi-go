@@ -1379,8 +1379,11 @@ Success Response (200 OK):
 ![Architecture Diagram](docs/images/architecture.png)
 
 Every service, the database it owns, and how requests reach them. The
-**API Gateway** is the single entry point: clients never call a service
-directly, and services call each other through it too.
+**API Gateway** is the single entry point for clients. Behind it, the
+**Message Broker** carries every request to a service, every
+service-to-service call and every event: requests go on the target
+service's queue and one replica answers; events go on a topic and every
+subscribed service gets a copy.
 
 **Load balancing (Lab 3).** Each service runs as several replicas, and each
 replica registers with Service Discovery. The gateway refreshes every
@@ -1400,12 +1403,12 @@ return an extra replica's own address instead; see
 
 | | |
 |---|---|
-| **Dark arrow** | REST: client → Gateway, and the Gateway routing each request to the service that owns the data |
-| **Amber arrow** | service-to-service REST, which also goes through the Gateway, carrying the caller's `X-Service-Key`; the label lists the services it calls |
+| **Dark arrow** | REST: client → Gateway → Message Broker, which puts the request on the owning service's queue for one replica |
+| **Amber arrow** | service-to-service call, through the Message Broker, carrying the caller's `X-Service-Key`; the label lists the services it calls |
 | **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
-| **Dotted arrow** | asynchronous event on Redis Pub/Sub, for Notification — not through the Gateway |
-| **Teal arrow** | Service Discovery (Lab 3): every replica registers its own address, sends heartbeats and deregisters; Service Discovery checks each one's `/health` and sends alerts to Telegram |
-| **Colour** | which tier a service belongs to; the Gateway is amber, the infrastructure (Service Discovery, `ws-proxy`) teal |
+| **Dotted arrow** | an event published on a topic in the Message Broker, which hands one copy to every subscribed service |
+| **Teal arrow** | Service Discovery: every replica registers its own address and the topics it wants, sends heartbeats and deregisters; Service Discovery checks each one's `/health` and sends alerts to Telegram; the broker reads the instances and topics from it |
+| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal |
 
 The three tiers behind the Gateway are the structure worth remembering:
 
@@ -2104,7 +2107,7 @@ Its README has the details: [Health checks and alerts](https://github.com/Dackoh
 
 ### Message Broker
 
-**What it does:** carries service-to-service traffic (Lab 4). Python 3.13, in
+**What it does:** carries service-to-service traffic. Python 3.13, in
 [`Dackohn/message-broker`](https://github.com/Dackohn/message-broker); the full
 API is in its README.
 
@@ -2130,7 +2133,7 @@ curl http://localhost:8090/health
 curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
 ```
 
-The services and the gateway move onto it in the Lab 4 tickets (#153).
+The services and the gateway move onto it next (#153).
 
 ## Running the Whole System
 
