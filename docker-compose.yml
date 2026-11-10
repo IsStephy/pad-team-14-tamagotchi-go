@@ -587,7 +587,7 @@ services:
     restart: unless-stopped
 
   # ------------------------------------------------- Python / message broker
-  # Lab 4: carries service-to-service traffic. Requests for a service go on
+  # Carries service-to-service traffic. Requests for a service go on
   # that service's queue and one instance answers (subscriber-based); events go
   # on a topic and every subscribed service gets a copy (topic-based). It reads
   # the instances, and the topics they subscribe to, from Service Discovery.
