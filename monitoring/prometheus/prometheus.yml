@@ -1,0 +1,39 @@
+# Prometheus for the whole stack.
+#
+# Every service that serves GET /metrics gets a job here. The targets come from
+# Docker's DNS: a Compose service name resolves to the address of every one of
+# its replicas, so each replica is scraped on its own (the `instance` label)
+# and replicas added with `--scale` show up within the refresh interval.
+#
+# To add your service: copy a job, set job_name to the Compose service name and
+# the port it listens on inside the stack.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: message-broker
+    dns_sd_configs:
+      - names: [message-broker]
+        type: A
+        port: 8090
+        refresh_interval: 15s
+
+  - job_name: map-service
+    dns_sd_configs:
+      - names: [map-service]
+        type: A
+        port: 8085
+        refresh_interval: 15s
+
+  - job_name: monster-raid-service
+    dns_sd_configs:
+      - names: [monster-raid-service]
+        type: A
+        port: 8086
+        refresh_interval: 15s
