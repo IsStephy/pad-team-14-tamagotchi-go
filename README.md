@@ -1408,7 +1408,8 @@ return an extra replica's own address instead; see
 | **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
 | **Dotted arrow** | an event published on a topic in the Message Broker, which hands one copy to every subscribed service |
 | **Teal arrow** | Service Discovery: every replica registers its own address and the topics it wants, sends heartbeats and deregisters; Service Discovery checks each one's `/health` and sends alerts to Telegram; the broker reads the instances and topics from it |
-| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal |
+| **Purple arrow** | monitoring: Prometheus scrapes `GET /metrics` on every replica, Promtail ships every container's logs to Loki, and Grafana shows both (see [Monitoring](#monitoring)) |
+| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring (Prometheus, Promtail, Loki, Grafana) light purple |
 
 The three tiers behind the Gateway are the structure worth remembering:
 
