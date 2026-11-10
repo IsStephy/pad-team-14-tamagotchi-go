@@ -1,0 +1,41 @@
+# Promtail ships every container's log lines to Loki.
+#
+# It reads the containers from the Docker socket (read-only), keeps only this
+# Compose project's (COMPOSE_PROJECT, set by docker-compose.yml), and labels
+# each line with its Compose `service` and `container`. Lines in the team's JSON log
+# format also get a `level` label; `requestId`, `msg` and the other fields stay
+# in the line, so Grafana can filter on them with `| json`.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=${COMPOSE_PROJECT}"]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        regex: (.+)
+        action: keep
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_name]
+        regex: /?(.*)
+        target_label: container
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+      - labels:
+          level:
