@@ -2133,7 +2133,63 @@ curl http://localhost:8090/health
 curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
 ```
 
-The services and the gateway move onto it next (#153).
+#### Topics
+
+Topic names are `<service>.<event>`, lowercase snake_case. A service
+subscribes by listing the topics in its Service Discovery registration
+(`"topics": [...]` on `POST /services/register`).
+
+| Topic | Publisher | Subscribers | Payload defined in |
+|---|---|---|---|
+| `map.proximity_detected` | Map | Notification | Proximity Detected, in [Map Service](#map-service-map-raid-typescript) |
+| `raid.started` | Monster Raid | Notification | `{raidId, guildId}`, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) (`POST /raids`) |
+| `raid.completed` | Monster Raid | Notification, User Management | Raid Completed, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) |
+| `raid.failed` | Monster Raid | Notification | Raid Failed, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) |
+| `battle.ended` | Battle | Notification, Tamagotchi, User Management | [Battle Service](#battle-service-user-battle-go) |
+| `battle.request_received` | Battle | Notification | [Battle Service](#battle-service-user-battle-go) |
+| `battle.tamagotchi_captured` | Battle | Notification | [Battle Service](#battle-service-user-battle-go) |
+| `user.friend_request_received` | User Management | Notification | [User Management Service](#user-management-service-user-battle-go) |
+| `guild.invitation` | Guild | Notification | [Guild Service](#guild-service-guild-registry-typescript) |
+
+#### Publishing
+
+```http
+POST /topics/raid.completed/messages
+X-Broker-Key: <BROKER_KEY>
+
+{"source": "monster-raid-service", "payload": {...}, "messageId": "<uuid>"}
+```
+
+The broker answers `202 {"messageId", "topic", "subscribers"}` at once.
+`messageId` is optional; send it, so a retried publish keeps its id. Use a
+UUIDv5 of `<topic>:<the event's own id>` (e.g. the raid id) when the event has
+one, so the same event always gets the same id. `timestamp` and `requestId` are
+optional too.
+
+#### Receiving: `POST /events`
+
+Every subscribed service gets one copy per event, at `POST /events` on one of
+its instances, with `X-Broker-Key`, `X-Request-Id` and `X-Message-Id`. The body
+is the envelope:
+
+```json
+{"messageId": "<uuid>", "topic": "raid.completed", "source": "monster-raid-service",
+ "requestId": "<id>", "timestamp": "2026-11-10T12:00:00Z", "payload": {...}}
+```
+
+- Check `X-Broker-Key` the way you check `X-Gateway-Key`.
+- Answer `2xx` only **after** handling the event: that is the ack.
+- A `messageId` you already handled answers `2xx` without doing it again. Keep
+  the handled ids, e.g. in your Redis with a TTL.
+
+#### Delivery guarantee
+
+**At least once**, per subscribed service. A copy that isn't acked (no `2xx`,
+no answer, or no reachable instance) is delivered again every
+`BROKER_REDELIVERY_DELAY_SECONDS` (2 s), up to `BROKER_MAX_DELIVERY_ATTEMPTS`
+(5) in all, and then dropped and counted in `eventsDropped` on `/health`. So
+the same event can arrive twice: dedupe by `messageId`. The queues are kept in
+memory, so copies not yet acked are lost if the broker restarts.
 
 ## Running the Whole System
 
