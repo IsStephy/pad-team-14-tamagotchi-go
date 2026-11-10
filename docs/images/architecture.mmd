@@ -5,6 +5,7 @@ flowchart TB
     %% Thick blue arrows: WebSockets - negotiated by the Gateway, then through ws-proxy to a replica.
     %% Dotted grey arrows: events published on a topic; the broker hands a copy to each subscribed service.
     %% Teal arrows: Service Discovery - registration with topics, health checks, alerts, instance lists.
+    %% Purple arrows: monitoring - Prometheus scrapes /metrics, Promtail ships logs to Loki, Grafana shows both.
 
     Client(["Client apps"])
     GW["<b>API Gateway</b><br/>Python · port 8080<br/>tokens · routing · limits"]
@@ -12,6 +13,13 @@ flowchart TB
     WP["<b>ws-proxy</b><br/>nginx · ports 8082, 8085–8088<br/>one host port per scaled service"]
     SD["<b>Service Discovery</b><br/>Python · port 8089<br/>registry · health checks · alerts"]
     TGM(["Telegram<br/>alerts topic"])
+
+    subgraph Monitoring["Monitoring"]
+        PM["<b>Prometheus</b><br/>port 9090"]
+        PT["<b>Promtail</b>"]
+        LK["<b>Loki</b>"]
+        GF["<b>Grafana</b><br/>port 3000 · dashboard"]
+    end
 
     subgraph Services["Services · each runs as 2–3 replicas"]
         UM["User Management"]
@@ -91,6 +99,15 @@ flowchart TB
     SD -->|"critical load, unreachable"| TGM
     MB -->|"instances and topics · 5 s"| SD
 
+    %% Monitoring: Prometheus scrapes GET /metrics on every replica (found
+    %% through Docker's DNS); Promtail ships every container's logs to Loki;
+    %% Grafana shows both on a provisioned dashboard.
+    PM -.->|"GET /metrics · 15 s"| Services
+    PM -.-> MB
+    PT -->|"container logs"| LK
+    GF --> PM
+    GF --> LK
+
     classDef client fill:#eef1f4,stroke:#5a6470,stroke-width:2px,color:#1f2933
     classDef gateway fill:#fdecc8,stroke:#c27c0e,stroke-width:3px,color:#3d2a05
     classDef broker fill:#fbe3d6,stroke:#b5502b,stroke-width:3px,color:#3b170a
@@ -98,6 +115,7 @@ flowchart TB
     classDef purple fill:#e6e1f5,stroke:#5b48a2,stroke-width:2px,color:#1d1638
     classDef green fill:#dcefe2,stroke:#2e7d4f,stroke-width:2px,color:#0f2d1b
     classDef infra fill:#d9f0ec,stroke:#1f7a6c,stroke-width:2px,color:#0b2e29
+    classDef monitor fill:#efe2f4,stroke:#7a3e9d,stroke-width:2px,color:#2b1236
     classDef db fill:#f4f6f8,stroke:#9aa5b1,color:#3c4650
 
     class Client,TGM client
@@ -107,13 +125,16 @@ flowchart TB
     class TG,PR purple
     class UM,NT green
     class SD,WP infra
+    class PM,PT,LK,GF monitor
     class UMdb,BTdb,TGdb,NTdb,MPdb,MRdb,GDdb,PRdb db
     style Services fill:#fafbfc,stroke:#9aa5b1,stroke-dasharray:6 4,color:#3c4650
+    style Monitoring fill:#fbf7fc,stroke:#b08bc2,stroke-dasharray:6 4,color:#2b1236
 
     %% Edge colours: client requests dark, service calls amber, WebSockets
-    %% blue, events grey, Service Discovery teal.
+    %% blue, events grey, Service Discovery teal, monitoring purple.
     linkStyle 0,1,2,3,4,5,6,7,8,9 stroke:#3c4650,stroke-width:2px
     linkStyle 10,11,12,13,14,15 stroke:#c27c0e,stroke-width:2px
     linkStyle 16,17,18,19,20 stroke:#2f6db5,stroke-width:3px
     linkStyle 21,22,23,24,25,26 stroke:#8a939c,stroke-width:1.5px
     linkStyle 35,36,37,38 stroke:#1f7a6c,stroke-width:2px
+    linkStyle 39,40,41,42,43 stroke:#7a3e9d,stroke-width:2px
