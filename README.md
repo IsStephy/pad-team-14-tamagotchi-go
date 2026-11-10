@@ -2125,6 +2125,21 @@ API is in its README.
 - **Thread-per-request:** every request on its own thread, at most
   `BROKER_MAX_THREADS` (`503` above). `GET /topics` lists the topics and their
   subscribers.
+- **Load balancing (moved here from the Gateway):** each message goes to the
+  **least loaded** healthy instance — the one with the fewest messages the
+  broker is delivering to it right now; equals take turns (round-robin). So a
+  slow replica gets no new work until it catches up. `GET /health` shows the
+  load under `inFlightPerInstance`, and every `request delivered` /
+  `event delivered` log line names the `instance` and its `inFlight`.
+- **High availability:** a delivery that fails (timeout, refused connection,
+  `5xx` — the circuit breaker's definition; never a `4xx`) goes straight to
+  another healthy instance, at most `BROKER_MAX_REROUTES` (2) times, before the
+  sender's deadline, and only when repeating it is safe: events (consumers
+  dedupe by `messageId`), `GET`/`HEAD`/`OPTIONS`/`PUT`/`DELETE`, or any request
+  whose connection was never made. A `POST` that timed out or got a `5xx` is
+  never sent twice. Stopping a replica mid-run therefore gives clients no
+  errors; each reroute is logged as `request rerouted` / `event rerouted`
+  with the failed and the new instance.
 
 **In the shared stack** it runs from `dackohn/message-broker:latest` on port
 `8090`, waits for Service Discovery, registers itself there and reads every

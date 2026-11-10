@@ -618,6 +618,8 @@ services:
       MAX_IN_FLIGHT_PER_QUEUE: ${BROKER_MAX_IN_FLIGHT_PER_QUEUE:-50}
       MAX_DELIVERY_ATTEMPTS: ${BROKER_MAX_DELIVERY_ATTEMPTS:-5}
       REDELIVERY_DELAY_SECONDS: ${BROKER_REDELIVERY_DELAY_SECONDS:-2}
+      # A failed message goes to another instance at most this often (0 = never).
+      MAX_REROUTES: ${BROKER_MAX_REROUTES:-2}
       LOG_LEVEL: ${BROKER_LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"]
