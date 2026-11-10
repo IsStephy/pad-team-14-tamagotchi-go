@@ -1530,6 +1530,9 @@ Claim a free one when you wire up your service and add it here.
 | Gateway | `8080` |
 | Service Discovery | `8089` |
 | Message Broker | `8090` (HTTP), `50051` (gRPC, later) |
+| Grafana | `3000` |
+| Prometheus | `9090` |
+| Loki | `3100` (not published: Grafana reads it inside the stack) |
 
 ### Tamagotchi Service
 
@@ -2154,6 +2157,53 @@ docker compose ps        # wait until everything is healthy
 | `docker compose logs -f <service>` | Follow one service's logs |
 | `docker compose down` | Stop everything, **keeping** all database data |
 | `docker compose down -v` | Stop everything and **delete** every database volume |
+
+### Monitoring
+
+`docker compose up -d` also starts the monitoring stack, configured from
+[`monitoring/`](monitoring/):
+
+- **Prometheus** (`http://localhost:9090`) scrapes `GET /metrics` on every
+  replica every 15 s. It finds the replicas through Docker's DNS, so scaled
+  replicas show up on their own. Its targets are under Status → Targets.
+- **Promtail** ships every container's log lines from this stack to **Loki**,
+  labelled with the Compose `service`, the `container` and the `level`.
+- **Grafana** (`http://localhost:3000`, user `admin`, password
+  `GRAFANA_ADMIN_PASSWORD` from `.env`) opens on the **Tamagotchi Go**
+  dashboard, provisioned from
+  [`monitoring/grafana/dashboards/tamagotchi-go.json`](monitoring/grafana/dashboards/tamagotchi-go.json).
+  Change it by editing that JSON, not in the UI.
+
+| Panel | What it shows |
+|---|---|
+| Replicas up | scraped replicas per service; a stopped replica drops out within 15 s |
+| Requests per second / Errors per second (5xx) / Client errors (4xx) | per service |
+| Latency p95 | 95th percentile answer time per service, over 5 minutes |
+| Requests per second per replica / In-flight requests per replica | how the load spreads over the replicas |
+| Circuit breakers | each caller's breaker per called service: 0 closed, 1 half-open, 2 open |
+| Request queue length / Event queue length | requests and event copies waiting in the broker, per queue |
+| Requests through the broker | by target service and reply status |
+| Event copies by outcome | delivered, acked, retried, dropped |
+| Dead Letter Channel size | event copies dropped after every attempt failed |
+| Events published | per topic and publisher |
+| Logs | every container's logs; filter by service, level, or a `requestId` in the search box |
+
+**Metrics every service serves**, so the dashboard covers it (`GET /metrics`,
+Prometheus text format, no key, not routed by the gateway):
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | counter | `method`, `route` (the route pattern, e.g. `/raids/:raidId`, never the raw path), `status` |
+| `http_request_duration_seconds` | histogram | `method`, `route` |
+| `http_requests_in_flight` | gauge | |
+| `circuit_breaker_state` | gauge | `target`: 0 closed, 1 half-open, 2 open |
+
+Leave `/health` and `/metrics` themselves out of the counts. In Node,
+`prom-client` gives these; in Go, `prometheus/client_golang`; in Python,
+`prometheus_client`. Then add a job for your service to
+[`monitoring/prometheus/prometheus.yml`](monitoring/prometheus/prometheus.yml)
+(copy one: the Compose service name and its port). Today Map, Monster Raid and
+the Message Broker serve them.
 
 ### Credentials
 
