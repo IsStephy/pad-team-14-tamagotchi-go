@@ -28,3 +28,6 @@
 [submodule "service-discovery"]
 	path = service-discovery
 	url = https://github.com/Dackohn/service-discovery
+[submodule "message-broker"]
+	path = message-broker
+	url = https://github.com/Dackohn/message-broker.git

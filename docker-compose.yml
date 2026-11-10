@@ -586,6 +586,37 @@ services:
       - "${DISCOVERY_PORT:-8089}:8089"
     restart: unless-stopped
 
+  # ------------------------------------------------- Python / message broker
+  # Carries service-to-service traffic. Requests for a service go on
+  # that service's queue and one instance answers (subscriber-based); events go
+  # on a topic and every subscribed service gets a copy (topic-based). It reads
+  # the instances, and the topics they subscribe to, from Service Discovery.
+  message-broker:
+    image: dackohn/message-broker:latest
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+    environment:
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      DISCOVERY_REFRESH_SECONDS: ${BROKER_DISCOVERY_REFRESH_SECONDS:-5}
+      REQUEST_TIMEOUT_SECONDS: ${BROKER_REQUEST_TIMEOUT_SECONDS:-10}
+      MAX_THREADS: ${BROKER_MAX_THREADS:-200}
+      MAX_IN_FLIGHT_PER_QUEUE: ${BROKER_MAX_IN_FLIGHT_PER_QUEUE:-50}
+      MAX_DELIVERY_ATTEMPTS: ${BROKER_MAX_DELIVERY_ATTEMPTS:-5}
+      REDELIVERY_DELAY_SECONDS: ${BROKER_REDELIVERY_DELAY_SECONDS:-2}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    ports:
+      - "${BROKER_PORT:-8090}:8090"
+    restart: unless-stopped
+
   # One host port per scaled service for the WebSockets clients open directly
   # (see ws-proxy/nginx.conf): it forwards to whichever replica Docker's DNS gives.
   ws-proxy:

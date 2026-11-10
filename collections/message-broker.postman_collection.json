@@ -1,0 +1,404 @@
+{
+  "info": {
+    "_postman_id": "3e872805-9222-4ec6-ad2b-0fe0f9f8e4f0",
+    "name": "Message Broker (Team 14)",
+    "description": "The broker that carries requests to services, service-to-service calls and events.\n\nOwner: Dackohn. Port: 8090, called directly.\n\nSet `brokerKey` to `BROKER_KEY` from your `.env`. The Guild requests need the shared stack with 3 Guild replicas.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health (public)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK without a key', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('names the broker and its load', () => {",
+              "    pm.expect(body.status).to.eql('ok');",
+              "    pm.expect(body.service).to.eql('message-broker');",
+              "    pm.expect(body.instanceId).to.be.a('string').and.not.empty;",
+              "    pm.expect(body.inFlightRequests).to.be.a('number');",
+              "    pm.expect(body.maxConcurrentRequests).to.be.above(0);",
+              "});",
+              "pm.test('shows its threads and queues', () => {",
+              "    pm.expect(body.threads).to.be.a('number');",
+              "    pm.expect(body.requestQueues).to.be.an('object');",
+              "    pm.expect(body.eventsQueued).to.be.a('number');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{brokerUrl}}/health",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Public, outside the thread cap."
+      },
+      "response": []
+    },
+    {
+      "name": "Topics without the key -> 401",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('401 without X-Broker-Key', () => pm.response.to.have.status(401));",
+              "pm.test('says why', () => pm.expect(pm.response.json().error).to.match(/X-Broker-Key/));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{brokerUrl}}/topics",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "topics"
+          ]
+        },
+        "description": "Everything but /health needs X-Broker-Key."
+      },
+      "response": []
+    },
+    {
+      "name": "List the topics",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('every topic has its subscribers and queued count', () => {",
+              "    const topics = pm.response.json();",
+              "    pm.expect(topics).to.be.an('array');",
+              "    topics.forEach((t) => {",
+              "        pm.expect(t.topic).to.be.a('string');",
+              "        pm.expect(t.subscribers).to.be.an('array');",
+              "        pm.expect(t.queued).to.be.a('number');",
+              "    });",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{brokerUrl}}/topics",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "topics"
+          ]
+        },
+        "description": "Every topic someone subscribes to (the topics instances registered with Service Discovery) or published on, with its subscriber services and the copies not yet acknowledged."
+      },
+      "response": []
+    },
+    {
+      "name": "Publish an event",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+              "const body = pm.response.json();",
+              "pm.test('returns the message id, the topic and the subscribers', () => {",
+              "    pm.expect(body.messageId).to.be.a('string').and.not.empty;",
+              "    pm.expect(body.topic).to.eql('postman.check');",
+              "    pm.expect(body.subscribers).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{brokerUrl}}/topics/postman.check/messages",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "topics",
+            "postman.check",
+            "messages"
+          ]
+        },
+        "description": "Topic-based queue: the publisher names only the topic. Every service subscribed to it gets one copy at POST /events, handled by one of its replicas. Nobody subscribes to postman.check, so nothing is delivered.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source\": \"postman\",\n  \"payload\": {\n    \"check\": true\n  }\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Publish without a source -> 400",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 for a body without source', () => pm.response.to.have.status(400));",
+              "pm.test('names the field', () => pm.expect(pm.response.json().error).to.match(/source/));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{brokerUrl}}/topics/postman.check/messages",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "topics",
+            "postman.check",
+            "messages"
+          ]
+        },
+        "description": "The body needs source (the publishing service) and payload (an object).",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"payload\": {}\n}"
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "A request for Guild, through its queue (1 of 3)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('the replica answered through the broker', () => {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().service).to.eql('guild-service');",
+              "});",
+              "pm.test('the broker passes the request id back', () => pm.response.to.have.header('X-Request-Id'));",
+              "const seen = JSON.parse(pm.collectionVariables.get('guildReplicas') || '[]');",
+              "seen.push(pm.response.json().instanceId);",
+              "pm.collectionVariables.set('guildReplicas', JSON.stringify(seen));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{brokerUrl}}/services/guild-service/health",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "services",
+            "guild-service",
+            "health"
+          ]
+        },
+        "description": "Subscriber-based queue: the request goes on guild-service's queue and one replica answers. Run the three in order: with 3 replicas they are answered by three different ones."
+      },
+      "response": []
+    },
+    {
+      "name": "A request for Guild, through its queue (2 of 3)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('the replica answered through the broker', () => {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().service).to.eql('guild-service');",
+              "});",
+              "pm.test('the broker passes the request id back', () => pm.response.to.have.header('X-Request-Id'));",
+              "const seen = JSON.parse(pm.collectionVariables.get('guildReplicas') || '[]');",
+              "seen.push(pm.response.json().instanceId);",
+              "pm.collectionVariables.set('guildReplicas', JSON.stringify(seen));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{brokerUrl}}/services/guild-service/health",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "services",
+            "guild-service",
+            "health"
+          ]
+        },
+        "description": "Subscriber-based queue: the request goes on guild-service's queue and one replica answers. Run the three in order: with 3 replicas they are answered by three different ones."
+      },
+      "response": []
+    },
+    {
+      "name": "A request for Guild, through its queue (3 of 3)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('the replica answered through the broker', () => {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().service).to.eql('guild-service');",
+              "});",
+              "pm.test('the broker passes the request id back', () => pm.response.to.have.header('X-Request-Id'));",
+              "const seen = JSON.parse(pm.collectionVariables.get('guildReplicas') || '[]');",
+              "seen.push(pm.response.json().instanceId);",
+              "pm.collectionVariables.set('guildReplicas', JSON.stringify(seen));",
+              "pm.test('three requests reached three different replicas', () => {",
+              "    pm.expect(new Set(seen).size).to.eql(3);",
+              "});",
+              "pm.collectionVariables.set('guildReplicas', '[]');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{brokerUrl}}/services/guild-service/health",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "services",
+            "guild-service",
+            "health"
+          ]
+        },
+        "description": "Subscriber-based queue: the request goes on guild-service's queue and one replica answers. Run the three in order: with 3 replicas they are answered by three different ones."
+      },
+      "response": []
+    },
+    {
+      "name": "Request for a service with no replica -> 503",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('503', () => pm.response.to.have.status(503));",
+              "pm.test('with Retry-After', () => pm.response.to.have.header('Retry-After'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{brokerUrl}}/services/no-such-service/health",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "services",
+            "no-such-service",
+            "health"
+          ]
+        },
+        "description": "Subscriber-based queue for a service Service Discovery lists no replica of."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "brokerKey",
+      "value": "change_me"
+    },
+    {
+      "key": "guildReplicas",
+      "value": "[]"
+    }
+  ]
+}
