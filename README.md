@@ -157,8 +157,9 @@ Every error body is `{"error": "..."}`.
 
 #### Circuit breaker
 
-Every service that calls another one (the gateway, Battle, Guild, Package
-Registry, Tamagotchi, Map, Monster Raid) keeps **one breaker per target**, so
+Every service that calls another one (Battle, Guild, Package Registry,
+Tamagotchi, Map, Monster Raid, and the gateway until v4.0.0) keeps **one
+breaker per target**, so
 one failing service never pauses calls to the others. The rule is the same
 everywhere:
 
@@ -187,47 +188,46 @@ last error; half-open and closed are logged too:
 ```
 
 **Try it:** stop a service (`docker compose stop tamagotchi-service`) and
-send 3 requests that need it. They fail with `502` or `504` and the third
-trips the breaker. The 4th answers `503` at once. Start the service again, and
-the first request after the cooldown closes the breaker. The gateway's
-`GET /health/services` shows each service's `circuit`.
+send 3 requests to a service that needs it (e.g. a battle). They fail with
+`502` or `504` and the third trips the caller's breaker. The 4th answers `503`
+at once. Start the service again, and the first request after the cooldown
+closes the breaker.
 
-**Removing the failing instance.** When the target has replicas in Service
-Discovery, the gateway keeps the breaker **per replica**, not per service, so
-one broken replica never takes its healthy siblings down:
+**Removing the failing instance — in the Message Broker (Lab 4, #168).**
+Every call and event between services, and from gateway v4.0.0 every client
+request too, goes through the broker, so the broker keeps the breaker **per
+instance**, and one broken replica never takes its healthy siblings down:
 
-- The gateway takes the live replicas in turn (round-robin). 3 errors to the
-  same replica within the window **remove** it: out of rotation at once, and
-  deregistered from Service Discovery
+- 3 errors (the same definition as above) to the same instance within the
+  window (`BROKER_REQUEST_TIMEOUT_SECONDS` × 3.5, 35 s) **remove** it: no more
+  messages at once, and deregistered from Service Discovery
   (`DELETE /services/{service}/instances/{instanceId}`). The other replicas
-  keep serving.
+  keep serving, and the failed message is rerouted to one of them when that is
+  safe (`BROKER_MAX_REROUTES`).
 - A removed replica comes back only by **registering again**: its next
-  heartbeat gets `404` and it registers anew, which the gateway sees as a newer
-  `registeredAt` and puts back in rotation.
-- No live replica left: `503 {"error": "<service> has no live instance right now, retry shortly"}`.
-- A service Service Discovery doesn't list yet is reached at its fixed URL,
-  with the breaker per service above.
-- Every removal is logged as an `ERROR` with the service, instance, URL, error
-  count and window:
+  heartbeat gets `404` and it registers anew, with a newer `registeredAt`.
+- No healthy instance left: a request answers `503` + `Retry-After`; an event
+  waits in its queue, without using up a delivery attempt, until one is back.
+- gRPC calls count too: `UNAVAILABLE`, `DEADLINE_EXCEEDED` and `INTERNAL`.
+- The broker's `GET /health` shows each instance's breaker under
+  `circuitBreakers`, and every removal is logged as an `ERROR` with the
+  target, instance, URL, endpoint, error count and window:
 
 ```json
-{"time":"2026-10-28T16:16:02.540Z","level":"ERROR","service":"gateway","instanceId":"19236e53a734","msg":"circuit breaker tripped: instance removed","requestId":"e07b…","caller":"gateway","target":"battle-service","instance":"5f4bb89d4b73","url":"http://5f4bb89d4b73:8082","endpoint":"GET /battles/reference","errors":3,"windowSeconds":35.0,"threshold":3,"lastError":"battle-service is unreachable","remaining":2}
+{"time":"2026-11-10T16:16:02.540Z","level":"ERROR","service":"message-broker","msg":"circuit breaker tripped: instance removed","requestId":"e07b…","caller":"message-broker","target":"user-management-service","instance":"5f4bb89d4b73","url":"http://5f4bb89d4b73:8081","endpoint":"GET /users/u1","errors":3,"windowSeconds":35.0,"threshold":3,"lastError":"status 503"}
 ```
 
-Services call each other through the gateway, so their calls get the same
-per-replica removal there; their own breakers stay per target service.
+The gateway drops its own breaker and replica removal from v4.0.0
+(Dackohn/gateway#18): until then it still keeps them as in Lab 3. Each
+service's own breakers stay per target service, in front of the broker.
 
 **Try it:** `docker kill` one replica of a 3-replica service (it can't
-deregister itself) and send requests through the gateway: its 3 turns fail,
-it is removed and deregistered at once (not after the 30 s TTL), and every
-request after that succeeds on the other two. `docker pause` one instead and
-`docker unpause` it after it is removed: it registers again and is back in
-rotation. `GET /health/services` lists each service's `instances` and
-`removed`.
+deregister itself) and send requests that reach it through the broker: its 3
+turns fail and are rerouted, it is removed and deregistered at once (not after
+the 30 s TTL), and every request after that goes to the other two.
 
-Reference implementations: the gateway's `app/breaker.py` and
-`app/instances.py` (Python) and Battle's `internal/clients/httpx/breaker.go`
-(Go).
+Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
+`internal/clients/httpx/breaker.go` (Go).
 
 #### Access per endpoint
 
@@ -1592,7 +1592,7 @@ Claim a free one when you wire up your service and add it here.
 | Package Registry | `8088` |
 | Gateway | `8080` |
 | Service Discovery | `8089` |
-| Message Broker | `8090` (HTTP), `50051` (gRPC, later) |
+| Message Broker | `8090` (HTTP), `50051` (gRPC) |
 | Grafana | `3000` |
 | Prometheus | `9090` |
 | Loki | `3100` (not published: Grafana reads it inside the stack) |
@@ -2238,6 +2238,12 @@ API is in its README.
 - **Thread-per-request:** every request on its own thread, at most
   `BROKER_MAX_THREADS` (`503` above). `GET /topics` lists the topics and their
   subscribers.
+- **Circuit breaker (moved here from the Gateway):** per instance, 3 errors
+  within the timeout × 3.5 remove the instance and deregister it; see
+  [Circuit breaker](#circuit-breaker).
+- **gRPC:** port `50051` (`BROKER_GRPC_PORT` on the host) forwards each call to
+  a healthy replica's `metadata.grpcPort`; see
+  [gRPC between services](#grpc-between-services).
 - **Load balancing (moved here from the Gateway):** each message goes to the
   **least loaded** healthy instance — the one with the fewest messages the
   broker is delivering to it right now; equals take turns (round-robin). So a
