@@ -2287,11 +2287,21 @@ docker compose ps        # wait until everything is healthy
 `docker compose up -d` also starts the monitoring stack, configured from
 [`monitoring/`](monitoring/):
 
-- **Prometheus** (`http://localhost:9090`) scrapes `GET /metrics` on every
-  replica every 15 s. It finds the replicas through Docker's DNS, so scaled
-  replicas show up on their own. Its targets are under Status → Targets.
+- **Prometheus** (`http://localhost:9090`) reads every replica from Service
+  Discovery (`GET /prometheus/targets`), on every machine, and every 15 s:
+  - scrapes `GET /metrics` on the replicas of the services that serve it
+    (job `services`, labelled with the service as `job`);
+  - probes the health URL of **every** replica of **every** service through the
+    **blackbox exporter** (job `health`: `probe_success`, `probe_duration_seconds`),
+    so a service without `/metrics` still shows whether each replica is up. The
+    gateway and Service Discovery, which don't register, are probed too.
+
+  A replica that starts or stops shows up or drops out on its own. The targets
+  are under Status → Targets.
 - **Promtail** ships every container's log lines from this stack to **Loki**,
-  labelled with the Compose `service`, the `container` and the `level`.
+  labelled with the Compose `service`, the `container`, the `level` and the
+  `machine` (`main` here). For replicas on other machines, see
+  [Logs from the other machines](#logs-from-the-other-machines).
 - **Grafana** (`http://localhost:3000`, user `admin`, password
   `GRAFANA_ADMIN_PASSWORD` from `.env`) opens on the **Tamagotchi Go**
   dashboard, provisioned from
@@ -2300,7 +2310,8 @@ docker compose ps        # wait until everything is healthy
 
 | Panel | What it shows |
 |---|---|
-| Replicas up | scraped replicas per service; a stopped replica drops out within 15 s |
+| Replicas up | replicas answering their health check, per service, on every machine; a stopped replica drops out within 15 s |
+| Replicas down / Health check time | the replicas whose health check fails now; the slowest health answer per service |
 | Requests per second / Errors per second (5xx) / Client errors (4xx) | per service |
 | Latency p95 | 95th percentile answer time per service, over 5 minutes |
 | Requests per second per replica / In-flight requests per replica | how the load spreads over the replicas |
@@ -2310,7 +2321,7 @@ docker compose ps        # wait until everything is healthy
 | Event copies by outcome | delivered, acked, retried, dropped |
 | Dead Letter Channel size | event copies dropped after every attempt failed |
 | Events published | per topic and publisher |
-| Logs | every container's logs; filter by service, level, or a `requestId` in the search box |
+| Logs | every container's logs, from every machine; filter by service, machine, level, or a `requestId` in the search box |
 
 **Metrics every service serves**, so the dashboard covers it (`GET /metrics`,
 Prometheus text format, no key, not routed by the gateway):
@@ -2324,13 +2335,32 @@ Prometheus text format, no key, not routed by the gateway):
 
 Leave `/health` and `/metrics` themselves out of the counts. In Node,
 `prom-client` gives these; in Go, `prometheus/client_golang`; in Python,
-`prometheus_client`. Then add a job for your service to
-[`monitoring/prometheus/prometheus.yml`](monitoring/prometheus/prometheus.yml)
-(copy one: the Compose service name and its port). Today Map, Monster Raid, Guild, Package Registry and the Message Broker serve them.
-Tamagotchi, Notification and the Message Broker serve them. Notification also serves
+`prometheus_client`. Then add your service's name to the `keep` list of the
+`services` job in [`monitoring/prometheus/prometheus.yml`](monitoring/prometheus/prometheus.yml).
+Today the Message Broker, Map, Monster Raid, Tamagotchi, Notification, Guild and
+Package Registry serve them. Notification also serves
 `notification_events_total{outcome}` (`handled`, `duplicate`, `failed`, `timed_out`,
 `skipped`) and `notification_events_in_flight`.
 
+#### Logs from the other machines
+
+A machine that runs extra replicas (see [Running across machines](#running-across-machines))
+needs nothing for its metrics: its replicas register their LAN address, and the
+main machine's Prometheus scrapes and probes them there. Its **logs** stay on
+that machine, though, so run one Promtail there, from a checkout of this
+repository:
+
+```bash
+# that machine's .env:
+MONITORING_LOKI_URL=http://192.168.1.10:3100   # the main machine's Loki
+MONITORING_MACHINE_NAME=laptop-2               # its name in Grafana
+
+docker compose -f monitoring/docker-compose.logs.yml --env-file .env up -d
+```
+
+The main machine publishes Loki on `MACHINES_BIND_IP` (port `LOKI_PUBLISHED_PORT`,
+3100) with `docker-compose.machines.yml`. Grafana's **Machine** filter then
+shows each machine's lines.
 
 ### Credentials
 
