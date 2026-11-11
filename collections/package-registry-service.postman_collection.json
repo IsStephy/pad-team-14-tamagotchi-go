@@ -90,6 +90,46 @@
       "response": []
     },
     {
+      "name": "Metrics (Prometheus)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK, with no key', function () { pm.response.to.have.status(200); });",
+              "pm.test('Prometheus text format', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('text/plain'); });",
+              "const body = pm.response.text();",
+              "pm.test('the four agreed metrics', function () {",
+              "  ['http_requests_total', 'http_request_duration_seconds', 'http_requests_in_flight', 'circuit_breaker_state']",
+              "    .forEach(function (name) { pm.expect(body).to.include('# TYPE ' + name + ' '); });",
+              "});",
+              "pm.test('a breaker per called service', function () { pm.expect(body).to.include('circuit_breaker_state{target=\"monster-raid-service\"}'); });",
+              "pm.test('routes are patterns, /health and /metrics not counted', function () {",
+              "  pm.expect(body).to.not.include('route=\"/health\"');",
+              "  pm.expect(body).to.not.include('route=\"/metrics\"');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/metrics",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "metrics"
+          ]
+        },
+        "description": "What Prometheus scrapes from every replica every 15 s: the four metrics every service serves (CPR README, \"Metrics every service serves\"). No key, like /health - Prometheus sends none, and the gateway doesn't route it."
+      },
+      "response": []
+    },
+    {
       "name": "Grant Admin",
       "event": [
         {
