@@ -481,9 +481,10 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${GUILD_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${GUILD_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${GUILD_CIRCUIT_BREAKER_COOLDOWN_MS:-}
-      # User Management (user exists?) through the gateway, as this service:
-      # SERVICE_KEY_GUILD as X-Service-Key. Empty URL = built-in mock. Set it to
-      # http://gateway:8080 once User Management accepts SERVICE_KEY_GUILD.
+      # User Management (user exists?), as this service: SERVICE_KEY_GUILD as
+      # X-Service-Key. Empty URL = built-in mock. Once User Management accepts
+      # SERVICE_KEY_GUILD and the broker's key: http://message-broker:8090 (REST
+      # through the broker), or grpc://message-broker:50051 (gRPC through it).
       USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_GUILD:-}
       # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
@@ -559,9 +560,10 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_COOLDOWN_MS:-}
-      # User Management (user exists?) through the gateway, as this service:
-      # SERVICE_KEY_PACKAGE_REGISTRY as X-Service-Key. Empty URL = built-in mock. Set it to
-      # http://gateway:8080 once User Management accepts SERVICE_KEY_PACKAGE_REGISTRY.
+      # User Management (user exists?), as this service: SERVICE_KEY_PACKAGE_REGISTRY
+      # as X-Service-Key. Empty URL = built-in mock. Once User Management accepts
+      # SERVICE_KEY_PACKAGE_REGISTRY and the broker's key: http://message-broker:8090
+      # (REST through the broker), or grpc://message-broker:50051 (gRPC through it).
       USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
       # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
