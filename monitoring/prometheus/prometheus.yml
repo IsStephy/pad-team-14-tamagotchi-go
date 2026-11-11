@@ -37,3 +37,17 @@ scrape_configs:
         type: A
         port: 8086
         refresh_interval: 15s
+
+  - job_name: guild-service
+    dns_sd_configs:
+      - names: [guild-service]
+        type: A
+        port: 8087
+        refresh_interval: 15s
+
+  - job_name: package-registry-service
+    dns_sd_configs:
+      - names: [package-registry-service]
+        type: A
+        port: 8088
+        refresh_interval: 15s
