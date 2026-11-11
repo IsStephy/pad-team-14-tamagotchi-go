@@ -67,20 +67,32 @@ services:
       # the key survives a database reset.
       JWT_PRIVATE_KEY: ${USER_MANAGEMENT_JWT_PRIVATE_KEY:-}
       # Authorization is at the gateway: only requests carrying its key as
-      # X-Gateway-Key are served, and the player comes as X-User-Id. Services
-      # calling the service-only endpoints keep their own X-Service-Key.
+      # X-Gateway-Key are served, and the player comes as X-User-Id. A service
+      # sends its own X-Service-Key, which opens only the endpoints that list
+      # that service (README, User Management, "Service callers").
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
       SERVICE_KEY_MAP: ${SERVICE_KEY_MAP:-}
+      SERVICE_KEY_GUILD: ${SERVICE_KEY_GUILD:-}
+      SERVICE_KEY_PACKAGE_REGISTRY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
+      # Message Broker (Lab 4): events go to its topics, a service's call it
+      # relays is accepted with BROKER_KEY plus the caller's service key, and
+      # each replica registers the topics it consumes (battle.ended,
+      # raid.completed, taken at POST /events).
+      BROKER_URL: http://message-broker:8090
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # gRPC (GetUser, GetBalance, AdjustCurrency, GetRelationship): registered
+      # with Service Discovery as metadata.grpcPort, reached through the broker.
+      GRPC_PORT: 50081
       # Each replica registers as http://<its hostname>:8081, sends heartbeats
       # and deregisters on shutdown; it keeps retrying while Service Discovery
       # is not up.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${USER_MANAGEMENT_LOG_LEVEL:-info}
-    # No published port: only the gateway reaches it, at
-    # http://user-management-service:8081 on the Compose network.
+    # No published port: the gateway and the broker reach it on the Compose
+    # network (http://<replica>:8081, gRPC on <replica>:50081).
     restart: unless-stopped
 
   # ------------------------------------------------------------- Go / battle
