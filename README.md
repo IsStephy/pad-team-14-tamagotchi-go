@@ -1864,16 +1864,34 @@ Set `PORT` to run somewhere else: `PORT=9081 ./run.sh`.
 `/users/{userId}/tamagotchis/**` (Tamagotchi) and `/users/{userId}/guilds/**`
 (Guild), which the gateway matches first; `GET /.well-known/jwks.json` →
 User Management. `POST /users/register`, `POST /users/login` and the JWKS need
-no token. No WebSocket endpoints, and no outgoing calls.
+no token. No WebSocket endpoints, and no outgoing calls. The gateway answers
+`POST /users/{userId}/currency/adjust` with `404`: only services call it,
+through the broker.
 
 **Through the gateway only.** Every request needs the gateway's
 `X-Gateway-Key` (`401` otherwise), except `/health` and
 `/.well-known/jwks.json`, which the gateway calls itself to probe the service
 and to verify tokens. The player is the gateway's `X-User-Id`; this service
 issues tokens but no longer verifies them. Its access rules stay: acting only
-as yourself (`403` otherwise), `currency/adjust` only with Battle's or Monster
-Raid's `X-Service-Key`, `relationship` also with Map's. Its port is not
-published in the shared stack.
+as yourself (`403` otherwise), and each service's `X-Service-Key` opens only
+the endpoints that list it ([Access per endpoint](#access-per-endpoint)):
+Battle, Monster Raid, Map, Guild (`SERVICE_KEY_GUILD`) and Package Registry
+(`SERVICE_KEY_PACKAGE_REGISTRY`). Its port is not published in the shared
+stack.
+
+**Message Broker (v4.0.0):** a service's call the broker relays is accepted
+with `X-Broker-Key` plus the caller's service key. Its events go to the topics
+`user.friend_request_received`, `user.friend_request_accepted` and
+`user.currency_changed`; each replica registers `battle.ended` and
+`raid.completed` with Service Discovery and pays them at `POST /events`,
+each `messageId` once ([events](#user-management-service-user-battle-go)).
+gRPC on `50081` (`GetUser`, `GetBalance`, `AdjustCurrency`,
+`GetRelationship`), registered as `metadata.grpcPort`. Check that it consumes:
+
+```bash
+curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
+# battle.ended and raid.completed list user-management-service as a subscriber
+```
 
 **Limits:** `504` after `REQUEST_TIMEOUT_MS` (8 s, also Postgres's
 `statement_timeout`), `503` + `Retry-After: 1` above `MAX_CONCURRENT_REQUESTS`
@@ -1982,11 +2000,15 @@ needing it answers `503`, until the cooldown (the window) has passed and one
 trial call succeeds. Timeouts, refused connections and `5xx` count; `4xx`
 doesn't. Tripping is logged as an `ERROR` naming caller, target and endpoint.
 
-**Outgoing calls go through the gateway** too: in the shared stack
-`USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
-`PACKAGE_REGISTRY_SERVICE_URL` all default to `http://gateway:8080`, and every
-call carries Battle's own `X-Service-Key` (`SERVICE_KEY_BATTLE`), never a
-player's token:
+**Outgoing calls** carry Battle's own `X-Service-Key` (`SERVICE_KEY_BATTLE`),
+never a player's token. Until `BATTLE_BROKER_URL` is set they go through the
+gateway (`USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
+`PACKAGE_REGISTRY_SERVICE_URL` default to `http://gateway:8080`). With
+`BATTLE_BROKER_URL=http://message-broker:8090` (once Tamagotchi accepts the
+broker's key) every call goes through the broker, User Management over gRPC
+(`BATTLE_GRPC_DEPENDENCIES`), the `battle.*` events go to its topics, and User
+Management pays the currency from `battle.ended`. Battle has to be on the broker
+before gateway v4.0.0, which forwards no service call:
 
 | Call | Owner |
 |---|---|
