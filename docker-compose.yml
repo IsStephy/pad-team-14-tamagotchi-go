@@ -160,6 +160,19 @@ services:
       PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-http://gateway:8080}
       # The key this service presents to the Service-only endpoints it calls.
       SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
+      # Message Broker (Lab 4), opt-in: set BATTLE_BROKER_URL
+      # (http://message-broker:8090) once Tamagotchi accepts the broker's key.
+      # Then every call above goes through the broker instead, the battle.*
+      # events go to its topics, and User Management pays the currency from
+      # battle.ended. Empty = the URLs above, events only logged.
+      BROKER_URL: ${BATTLE_BROKER_URL:-}
+      BROKER_KEY: ${BROKER_KEY:-}
+      # With the broker: the services called over gRPC instead of REST, at
+      # message-broker:50051. Only services that serve gRPC.
+      GRPC_DEPENDENCIES: ${BATTLE_GRPC_DEPENDENCIES:-user-management-service}
+      # true once Tamagotchi applies battle.ended itself (XP and the transfer):
+      # Battle then stops calling it for them.
+      TAMAGOTCHI_BY_EVENT: ${BATTLE_TAMAGOTCHI_BY_EVENT:-false}
       # Authorization is at the gateway: only requests carrying GATEWAY_KEY as
       # X-Gateway-Key are served, and the player comes as X-User-Id. Live
       # sockets are opened directly with a single-use ticket the gateway signs
