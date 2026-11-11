@@ -1964,11 +1964,13 @@ the replicas.
 **Gateway routes:** `/guilds/**` and `/users/{userId}/guilds/**` → Guild;
 `WS /guilds/{guildId}/chat` is negotiated, never proxied.
 
-**Through the gateway only.** Every request needs the gateway's
-`X-Gateway-Key` (`401` otherwise, except `/health` and `/docs`); the player is
-the gateway's `X-User-Id`, and the service never verifies tokens.
-`GET /guilds/{guildId}` also accepts Monster Raid's `X-Service-Key`
-(`SERVICE_KEY_MONSTER_RAID`). Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s),
+**Through the gateway or the Message Broker.** Every request needs the
+gateway's `X-Gateway-Key` or the broker's `X-Broker-Key` (`401` otherwise,
+except `/health` and `/docs`); the player is the gateway's `X-User-Id`, and
+the service never verifies tokens. A call with only `X-Broker-Key` is a
+service's: its `X-User-Id` is dropped, since every service knows the broker
+key. `GET /guilds/{guildId}` also accepts Monster Raid's `X-Service-Key`
+(`SERVICE_KEY_MONSTER_RAID`), through either. Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s),
 `503` + `Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, chat
 sockets capped at `MAX_WS_CONNECTIONS` (500).
 
@@ -1992,18 +1994,37 @@ Service Discovery registration. `X-Request-Id` is passed on in Guild's own
 calls. Keys, tokens and tickets are never logged.
 
 **Outgoing calls and circuit breaker:** User Management (`GET /users/{userId}`,
-`GET /users/{userId}/relationship/{targetId}`) through the gateway, with Guild's
-own `X-Service-Key`. 3 errors within `REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip the
+`GET /users/{userId}/relationship/{targetId}`) with Guild's own
+`X-Service-Key`: through the broker when `GUILD_USER_MANAGEMENT_URL` is the
+broker's address (`http://message-broker:8090`, sent as
+`/services/user-management-service/...` with `X-Broker-Key`), through the
+gateway when it is the gateway's. 3 errors within `REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip the
 breaker: the request then answers `503` + `Retry-After` without calling, until
 one trial call after the cooldown succeeds. Timeouts, refused connections and
 `5xx` count; `4xx` doesn't. **User Management is still the built-in mock in
 the shared stack** (`GUILD_USER_MANAGEMENT_URL` empty): it accepts only players
-on those endpoints today. Once it accepts `SERVICE_KEY_GUILD`, set
-`GUILD_USER_MANAGEMENT_URL=http://gateway:8080`.
+on those endpoints today. Once it accepts `SERVICE_KEY_GUILD` and the broker's
+key, set `GUILD_USER_MANAGEMENT_URL=http://message-broker:8090`.
 
-**Events:** inviting a member publishes `GuildInvitation` on Notification's
-Redis channel `notification-events`, as
-`{"type":"GuildInvitation","eventId","userId":"<invited player>","payload":{guildId, guildName, invitedBy, sentAt}}`.
+**Events:** inviting a member publishes `GuildInvitation`:
+
+- with `GUILD_BROKER_URL` set (Lab 4) on the broker topic **`guild.invitation`**,
+  payload `{userId, guildId, guildName, invitedBy, sentAt}` — `userId` (the
+  invited player) moves into the payload, since the envelope has no field for
+  it. The broker wraps it in the agreed envelope and delivers it to every
+  subscriber until acked;
+- otherwise on Notification's Redis channel `notification-events`, as
+  `{"type":"GuildInvitation","eventId","userId":"<invited player>","payload":{guildId, guildName, invitedBy, sentAt}}`.
+
+`GUILD_BROKER_URL` is empty in the shared stack until Notification subscribes
+to `guild.invitation` (#163): switching earlier would send invitations to a
+topic nobody reads.
+
+**Receives events:** `POST /events`, broker only (`X-Broker-Key`). Each
+`messageId` is recorded in PostgreSQL in the same transaction as its handling,
+so a redelivered copy is acknowledged as `duplicate` on any replica; a failed
+handler answers `500` and the broker delivers again. Guild subscribes to no
+topic yet.
 
 ### Package Registry Service
 
@@ -2032,10 +2053,12 @@ Interactive API docs: <http://localhost:8088/docs>.
 Package Registry (`GET /packages` and `GET /packages/{packageId}` need no
 token). No WebSocket endpoints.
 
-**Through the gateway only.** Every request needs the gateway's
-`X-Gateway-Key` (`401` otherwise, except `/health` and `/docs`) — the public
-package reads too; the player is the gateway's `X-User-Id`, and the service
-never verifies tokens. Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s), `503` +
+**Through the gateway or the Message Broker.** Every request needs the
+gateway's `X-Gateway-Key` or the broker's `X-Broker-Key` (`401` otherwise,
+except `/health` and `/docs`) — the public package reads too; the player is
+the gateway's `X-User-Id`, and the service never verifies tokens. A call with
+only `X-Broker-Key` is a service's: its `X-User-Id` is dropped, so no service
+can act as a player or admin. Limits: `504` after `REQUEST_TIMEOUT_MS` (8 s), `503` +
 `Retry-After` above `MAX_CONCURRENT_REQUESTS` (40) at once, `504` if Monster
 Raid does not answer within `MONSTER_RAID_TIMEOUT_MS` (5 s).
 
@@ -2056,13 +2079,22 @@ registration. `X-Request-Id` is passed on to Monster Raid. Keys and tokens are
 never logged.
 
 **Outgoing calls and circuit breaker:** Monster Raid (`POST /raids`) and User
-Management (`GET /users/{userId}`), through the gateway with Package Registry's
-own `X-Service-Key`, each behind its own breaker: 3 errors within
+Management (`GET /users/{userId}`), with Package Registry's own
+`X-Service-Key`: each through the broker when its URL
+(`PACKAGE_REGISTRY_MONSTER_RAID_URL`, `PACKAGE_REGISTRY_USER_MANAGEMENT_URL`)
+is the broker's address (`http://message-broker:8090`), through the gateway
+when it is the gateway's. `PACKAGE_REGISTRY_MONSTER_RAID_URL` stays the gateway
+until Monster Raid accepts the broker's key (#164). Each call has its own
+breaker: 3 errors within
 `REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip it, the request then answers `503` +
 `Retry-After` without calling, until one trial call after the cooldown
 succeeds. **User Management is still the built-in mock in the shared stack**
 (`PACKAGE_REGISTRY_USER_MANAGEMENT_URL` empty) until it accepts
 `SERVICE_KEY_PACKAGE_REGISTRY`.
+
+**Events:** publishes none. **Receives** at `POST /events`, broker only
+(`X-Broker-Key`), deduplicated by `messageId` in PostgreSQL like Guild's; it
+subscribes to no topic yet.
 
 ### Service Discovery
 
@@ -2145,6 +2177,21 @@ API is in its README.
 - **Thread-per-request:** every request on its own thread, at most
   `BROKER_MAX_THREADS` (`503` above). `GET /topics` lists the topics and their
   subscribers.
+- **Load balancing (moved here from the Gateway):** each message goes to the
+  **least loaded** healthy instance — the one with the fewest messages the
+  broker is delivering to it right now; equals take turns (round-robin). So a
+  slow replica gets no new work until it catches up. `GET /health` shows the
+  load under `inFlightPerInstance`, and every `request delivered` /
+  `event delivered` log line names the `instance` and its `inFlight`.
+- **High availability:** a delivery that fails (timeout, refused connection,
+  `5xx` — the circuit breaker's definition; never a `4xx`) goes straight to
+  another healthy instance, at most `BROKER_MAX_REROUTES` (2) times, before the
+  sender's deadline, and only when repeating it is safe: events (consumers
+  dedupe by `messageId`), `GET`/`HEAD`/`OPTIONS`/`PUT`/`DELETE`, or any request
+  whose connection was never made. A `POST` that timed out or got a `5xx` is
+  never sent twice. Stopping a replica mid-run therefore gives clients no
+  errors; each reroute is logged as `request rerouted` / `event rerouted`
+  with the failed and the new instance.
 
 **In the shared stack** it runs from `dackohn/message-broker:latest` on port
 `8090`, waits for Service Discovery, registers itself there and reads every

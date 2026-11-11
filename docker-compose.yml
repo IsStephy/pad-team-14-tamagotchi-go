@@ -481,13 +481,21 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${GUILD_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${GUILD_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${GUILD_CIRCUIT_BREAKER_COOLDOWN_MS:-}
-      # User Management (user exists?) through the gateway, as this service:
-      # SERVICE_KEY_GUILD as X-Service-Key. Empty URL = built-in mock. Set it to
-      # http://gateway:8080 once User Management accepts SERVICE_KEY_GUILD.
+      # User Management (user exists?), as this service: SERVICE_KEY_GUILD as
+      # X-Service-Key. Empty URL = built-in mock. Once User Management accepts
+      # SERVICE_KEY_GUILD and the broker's key: http://message-broker:8090 (REST
+      # through the broker), or grpc://message-broker:50051 (gRPC through it).
       USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_GUILD:-}
-      # GuildInvitation events for Notification: its Redis Pub/Sub channel
-      # notification-events, as the README documents for every publisher.
+      # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
+      # accepted with it, and it is sent with Guild's own calls to the broker.
+      # BROKER_URL set = GuildInvitation goes to the topic guild.invitation;
+      # empty until Notification subscribes to it, so invitations still reach
+      # Notification through Redis meanwhile.
+      BROKER_URL: ${GUILD_BROKER_URL:-}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # GuildInvitation events for Notification while BROKER_URL is empty: its
+      # Redis Pub/Sub channel notification-events.
       NOTIFICATION_EVENTS_REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
     # Replicas publish no ports: chat sockets and the Postman
     # collection reach them through ws-proxy (one host port for all replicas).
@@ -552,11 +560,18 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_COOLDOWN_MS:-}
-      # User Management (user exists?) through the gateway, as this service:
-      # SERVICE_KEY_PACKAGE_REGISTRY as X-Service-Key. Empty URL = built-in mock. Set it to
-      # http://gateway:8080 once User Management accepts SERVICE_KEY_PACKAGE_REGISTRY.
+      # User Management (user exists?), as this service: SERVICE_KEY_PACKAGE_REGISTRY
+      # as X-Service-Key. Empty URL = built-in mock. Once User Management accepts
+      # SERVICE_KEY_PACKAGE_REGISTRY and the broker's key: http://message-broker:8090
+      # (REST through the broker), or grpc://message-broker:50051 (gRPC through it).
       USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
+      # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
+      # accepted with it. A call goes through the broker when its URL above is
+      # this BROKER_URL - so setting it alone changes nothing; each URL moves
+      # once the service on the other side accepts the broker's key.
+      BROKER_URL: http://message-broker:8090
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
     # Replicas publish no ports: the gateway finds them in Service
     # Discovery; direct HTTP calls (the Postman collection) go through ws-proxy.
     deploy:
@@ -622,6 +637,8 @@ services:
       MAX_IN_FLIGHT_PER_QUEUE: ${BROKER_MAX_IN_FLIGHT_PER_QUEUE:-50}
       MAX_DELIVERY_ATTEMPTS: ${BROKER_MAX_DELIVERY_ATTEMPTS:-5}
       REDELIVERY_DELAY_SECONDS: ${BROKER_REDELIVERY_DELAY_SECONDS:-2}
+      # A failed message goes to another instance at most this often (0 = never).
+      MAX_REROUTES: ${BROKER_MAX_REROUTES:-2}
       LOG_LEVEL: ${BROKER_LOG_LEVEL:-INFO}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"]
