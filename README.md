@@ -104,7 +104,9 @@ Every request — from a client or from another service — goes through the **A
 
 #### Service keys
 
-Endpoints marked **Service** below are internal: only the listed callers may use them. Service-to-service calls also go through the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token), the gateway passes it on and adds `X-Gateway-Key`, and the callee checks both — the gateway key proves the call came through the gateway, the service key proves *which* service made it. Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others.
+Endpoints marked **Service** below are internal: only the listed callers may use them. Since Lab 4, service-to-service calls go through the **Message Broker**, not the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token) and `X-Broker-Key`, and the callee checks both — the broker key proves the call came through the broker, the service key proves *which* service made it (team decisions, #182). The broker key alone opens nothing but `POST /events`. Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others, and a key opens only the endpoints that list its service: another service's key gets `403`.
+
+**The gateway forwards no service-to-service call** (from gateway v4.0.0, Dackohn/gateway#18). The endpoints that only services call answer `404 {"error": "POST /raids is not available through the gateway"}` there, without reaching the service: `POST /users/{userId}/currency/adjust`, `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` and `POST /raids`. A request with only an `X-Service-Key` gets `401` like any request without a token, and the gateway drops any `X-Service-Key` or `X-Broker-Key` a client sends.
 
 #### WebSockets
 
@@ -233,14 +235,15 @@ Reference implementations: the gateway's `app/breaker.py` and
 | User Management | `POST /users/register` | Public |
 | | `POST /users/login` | Public |
 | | `GET /.well-known/jwks.json` | Public |
-| | `GET /users/{userId}` | Player |
-| | `GET /users/{userId}/currency` | Player (self) |
-| | `POST /users/{userId}/currency/adjust` | **Service** — Battle, Monster Raid (rewards) |
+| | `GET /users/{userId}` | Player, or **Service** — Battle (both players exist), Guild (an invited member), Package Registry (a registered player) |
+| | `GET /users/{userId}/currency` | Player (self), or **Service** — Battle (the stakes) |
+| | `POST /users/{userId}/currency/adjust` | **Service** — Battle, Monster Raid (rewards); not routed by the gateway |
 | | `POST /users/{userId}/friends/{targetId}` | Player (self) |
 | | `GET /users/{userId}/friends` | Player (self) |
 | | `DELETE /users/{userId}/friends/{targetId}` | Player (self) |
 | | `POST /users/{userId}/enemies/{targetId}` | Player (self) |
-| | `GET /users/{userId}/relationship/{targetId}` | Player (self), or **Service** — Map |
+| | `GET /users/{userId}/relationship/{targetId}` | Player (self), or **Service** — Map, Battle, Guild |
+| | `POST /events` | **Message Broker** only (`X-Broker-Key`); not routed by the gateway |
 | Battle | `POST /battles/challenge` | Player (self — the challenger) |
 | | `POST /battles/{battleId}/accept` | Player (self — the challenged player) |
 | | `GET /battles/{battleId}` | Player |
@@ -252,8 +255,8 @@ Reference implementations: the gateway's `app/breaker.py` and
 | | `GET /users/{userId}/tamagotchis` | Player, or **Service** — Battle (the player's Tamagotchis for a battle) |
 | | `PATCH /users/{userId}/tamagotchis/{id}/set-primary` | Player (self — the owner) |
 | | `PATCH /tamagotchis/{id}/stats` | Player (self — the owner) |
-| | `POST /tamagotchis/{id}/xp` | **Service** — Battle |
-| | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle |
+| | `POST /tamagotchis/{id}/xp` | **Service** — Battle; not routed by the gateway |
+| | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle; not routed by the gateway |
 | Notification | `POST /notifications/register-device` | Player (self) |
 | | `GET /notifications/{userId}` | Player (self) |
 | | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
@@ -261,7 +264,7 @@ Reference implementations: the gateway's `app/breaker.py` and
 | Map | `POST /map/location` | Player (self) |
 | | `GET /map/nearby/{userId}` | Player (self) — locations are private |
 | | `WS /map/stream` | Player (self) — gateway ticket; every frame's `userId` must be the ticket's player |
-| Monster Raid | `POST /raids` | **Service** — Package Registry |
+| Monster Raid | `POST /raids` | **Service** — Package Registry; not routed by the gateway |
 | | `POST /raids/{raidId}/join` | Player (self) + member of the raid's guild |
 | | `POST /raids/{raidId}/attack` | Player (self — a participant) |
 | | `GET /raids/{raidId}` | Player |
