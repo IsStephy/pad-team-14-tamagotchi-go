@@ -67,20 +67,32 @@ services:
       # the key survives a database reset.
       JWT_PRIVATE_KEY: ${USER_MANAGEMENT_JWT_PRIVATE_KEY:-}
       # Authorization is at the gateway: only requests carrying its key as
-      # X-Gateway-Key are served, and the player comes as X-User-Id. Services
-      # calling the service-only endpoints keep their own X-Service-Key.
+      # X-Gateway-Key are served, and the player comes as X-User-Id. A service
+      # sends its own X-Service-Key, which opens only the endpoints that list
+      # that service (README, User Management, "Service callers").
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
       SERVICE_KEY_MAP: ${SERVICE_KEY_MAP:-}
+      SERVICE_KEY_GUILD: ${SERVICE_KEY_GUILD:-}
+      SERVICE_KEY_PACKAGE_REGISTRY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
+      # Message Broker (Lab 4): events go to its topics, a service's call it
+      # relays is accepted with BROKER_KEY plus the caller's service key, and
+      # each replica registers the topics it consumes (battle.ended,
+      # raid.completed, taken at POST /events).
+      BROKER_URL: http://message-broker:8090
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # gRPC (GetUser, GetBalance, AdjustCurrency, GetRelationship): registered
+      # with Service Discovery as metadata.grpcPort, reached through the broker.
+      GRPC_PORT: 50081
       # Each replica registers as http://<its hostname>:8081, sends heartbeats
       # and deregisters on shutdown; it keeps retrying while Service Discovery
       # is not up.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${USER_MANAGEMENT_LOG_LEVEL:-info}
-    # No published port: only the gateway reaches it, at
-    # http://user-management-service:8081 on the Compose network.
+    # No published port: the gateway and the broker reach it on the Compose
+    # network (http://<replica>:8081, gRPC on <replica>:50081).
     restart: unless-stopped
 
   # ------------------------------------------------------------- Go / battle
@@ -148,6 +160,19 @@ services:
       PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-http://gateway:8080}
       # The key this service presents to the Service-only endpoints it calls.
       SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
+      # Message Broker (Lab 4), opt-in: set BATTLE_BROKER_URL
+      # (http://message-broker:8090) once Tamagotchi accepts the broker's key.
+      # Then every call above goes through the broker instead, the battle.*
+      # events go to its topics, and User Management pays the currency from
+      # battle.ended. Empty = the URLs above, events only logged.
+      BROKER_URL: ${BATTLE_BROKER_URL:-}
+      BROKER_KEY: ${BROKER_KEY:-}
+      # With the broker: the services called over gRPC instead of REST, at
+      # message-broker:50051. Only services that serve gRPC.
+      GRPC_DEPENDENCIES: ${BATTLE_GRPC_DEPENDENCIES:-user-management-service}
+      # true once Tamagotchi applies battle.ended itself (XP and the transfer):
+      # Battle then stops calling it for them.
+      TAMAGOTCHI_BY_EVENT: ${BATTLE_TAMAGOTCHI_BY_EVENT:-false}
       # Authorization is at the gateway: only requests carrying GATEWAY_KEY as
       # X-Gateway-Key are served, and the player comes as X-User-Id. Live
       # sockets are opened directly with a single-use ticket the gateway signs
@@ -640,6 +665,9 @@ services:
       # A failed message goes to another instance at most this often (0 = never).
       MAX_REROUTES: ${BROKER_MAX_REROUTES:-2}
       LOG_LEVEL: ${BROKER_LOG_LEVEL:-INFO}
+      # gRPC between services (#170): a call to message-broker:50051 is
+      # forwarded to a healthy replica's metadata.grpcPort.
+      GRPC_PORT: 50051
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"]
       interval: 10s
@@ -648,6 +676,7 @@ services:
       retries: 3
     ports:
       - "${BROKER_PORT:-8090}:8090"
+      - "${BROKER_GRPC_PORT:-50051}:50051"
     restart: unless-stopped
 
   # One host port per scaled service for the WebSockets clients open directly
@@ -700,16 +729,23 @@ services:
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
       MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-100}
       MAX_CONCURRENT_PER_SERVICE: ${GATEWAY_MAX_CONCURRENT_PER_SERVICE:-50}
-      # Circuit breaker per service: 3 errors within the request timeout x 3.5
+      # Message Broker (Lab 4, from gateway v4.0.0, Dackohn/gateway#18): every
+      # request goes to the service's queue in the broker, which picks the
+      # instance, runs the circuit breaker and reroutes. The four Service-only
+      # endpoints answer 404, and a service key alone is no credential.
+      BROKER_URL: http://message-broker:8090
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # Gateway v3 only (unused from v4.0.0, where the broker does both):
+      # circuit breaker per service, 3 errors within the request timeout x 3.5
       # (35 s) answer 503 for that service until a trial call succeeds. Empty
       # window and cooldown follow that rule.
       CIRCUIT_BREAKER_THRESHOLD: ${GATEWAY_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_SECONDS: ${GATEWAY_CIRCUIT_BREAKER_WINDOW_SECONDS:-}
       CIRCUIT_BREAKER_COOLDOWN_SECONDS: ${GATEWAY_CIRCUIT_BREAKER_COOLDOWN_SECONDS:-}
       # Each service's replicas, read from Service Discovery every
-      # GATEWAY_DISCOVERY_REFRESH_SECONDS and taken in turn. A replica that
-      # trips its breaker is removed and deregistered; a service Service
-      # Discovery doesn't list is reached at its fixed URL.
+      # GATEWAY_DISCOVERY_REFRESH_SECONDS. Gateway v3 takes them in turn for
+      # every request; from v4.0.0 only /ws/negotiate and /health/services use
+      # them.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       DISCOVERY_REFRESH_SECONDS: ${GATEWAY_DISCOVERY_REFRESH_SECONDS:-5}

@@ -104,7 +104,18 @@ Every request — from a client or from another service — goes through the **A
 
 #### Service keys
 
-Endpoints marked **Service** below are internal: only the listed callers may use them. Service-to-service calls also go through the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token), the gateway passes it on and adds `X-Gateway-Key`, and the callee checks both — the gateway key proves the call came through the gateway, the service key proves *which* service made it. Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others.
+Endpoints marked **Service** below are internal: only the listed callers may use them. Since Lab 4, service-to-service calls go through the **Message Broker**, not the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token) and `X-Broker-Key`, and the callee checks both — the broker key proves the call came through the broker, the service key proves *which* service made it (team decisions, #182). The broker key alone opens nothing but `POST /events`. Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others, and a key opens only the endpoints that list its service: another service's key gets `403`.
+
+**The gateway forwards no service-to-service call** (from gateway v4.0.0, Dackohn/gateway#18). The endpoints that only services call answer `404 {"error": "POST /raids is not available through the gateway"}` there, without reaching the service: `POST /users/{userId}/currency/adjust`, `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` and `POST /raids`. A request with only an `X-Service-Key` gets `401` like any request without a token, and the gateway drops any `X-Service-Key` or `X-Broker-Key` a client sends.
+
+#### gRPC between services
+
+Since Lab 4, calls between services can use gRPC instead of REST, through the Message Broker (#170, #173). The `.proto` files live in [`Dackohn/message-broker`](https://github.com/Dackohn/message-broker) under `proto/` (one package per service, `tamagotchigo.<service>.v1`, e.g. `tamagotchigo.user.v1.UserManagement`); each service keeps a copy and its generated code, pinned to a broker commit. `proto/README.md` there has the calls, the error codes and how to generate the code in Go and TypeScript.
+
+- **Ports:** a service serves gRPC on `5008N`, next to its HTTP port `808N` (User Management `50081`), and registers it with Service Discovery as `metadata.grpcPort`. The broker listens on `50051` and forwards each call to a healthy replica's `grpcPort`, with the same load balancing, circuit breaker and reroutes as HTTP (reads only, or a call whose connection was never made).
+- **Metadata:** the header names, lower-case: `x-broker-key`, `x-service-key`, `x-request-id`, `x-user-id`. The callee checks the broker key and the caller's service key, exactly as over REST, and answers `PERMISSION_DENIED` otherwise.
+- **Errors:** `NOT_FOUND` (404), `INVALID_ARGUMENT` (400), `FAILED_PRECONDITION` (409, e.g. not enough currency), `PERMISSION_DENIED` (401/403), `DEADLINE_EXCEEDED` (504), `UNAVAILABLE` (503/502), `INTERNAL` (500). The last three count for the circuit breaker.
+- **Who serves it now:** User Management (`GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`). Battle calls it over gRPC with `BATTLE_GRPC_DEPENDENCIES=user-management-service`, once it runs on the broker.
 
 #### WebSockets
 
@@ -146,8 +157,9 @@ Every error body is `{"error": "..."}`.
 
 #### Circuit breaker
 
-Every service that calls another one (the gateway, Battle, Guild, Package
-Registry, Tamagotchi, Map, Monster Raid) keeps **one breaker per target**, so
+Every service that calls another one (Battle, Guild, Package Registry,
+Tamagotchi, Map, Monster Raid, and the gateway until v4.0.0) keeps **one
+breaker per target**, so
 one failing service never pauses calls to the others. The rule is the same
 everywhere:
 
@@ -176,47 +188,46 @@ last error; half-open and closed are logged too:
 ```
 
 **Try it:** stop a service (`docker compose stop tamagotchi-service`) and
-send 3 requests that need it. They fail with `502` or `504` and the third
-trips the breaker. The 4th answers `503` at once. Start the service again, and
-the first request after the cooldown closes the breaker. The gateway's
-`GET /health/services` shows each service's `circuit`.
+send 3 requests to a service that needs it (e.g. a battle). They fail with
+`502` or `504` and the third trips the caller's breaker. The 4th answers `503`
+at once. Start the service again, and the first request after the cooldown
+closes the breaker.
 
-**Removing the failing instance.** When the target has replicas in Service
-Discovery, the gateway keeps the breaker **per replica**, not per service, so
-one broken replica never takes its healthy siblings down:
+**Removing the failing instance — in the Message Broker (Lab 4, #168).**
+Every call and event between services, and from gateway v4.0.0 every client
+request too, goes through the broker, so the broker keeps the breaker **per
+instance**, and one broken replica never takes its healthy siblings down:
 
-- The gateway takes the live replicas in turn (round-robin). 3 errors to the
-  same replica within the window **remove** it: out of rotation at once, and
-  deregistered from Service Discovery
+- 3 errors (the same definition as above) to the same instance within the
+  window (`BROKER_REQUEST_TIMEOUT_SECONDS` × 3.5, 35 s) **remove** it: no more
+  messages at once, and deregistered from Service Discovery
   (`DELETE /services/{service}/instances/{instanceId}`). The other replicas
-  keep serving.
+  keep serving, and the failed message is rerouted to one of them when that is
+  safe (`BROKER_MAX_REROUTES`).
 - A removed replica comes back only by **registering again**: its next
-  heartbeat gets `404` and it registers anew, which the gateway sees as a newer
-  `registeredAt` and puts back in rotation.
-- No live replica left: `503 {"error": "<service> has no live instance right now, retry shortly"}`.
-- A service Service Discovery doesn't list yet is reached at its fixed URL,
-  with the breaker per service above.
-- Every removal is logged as an `ERROR` with the service, instance, URL, error
-  count and window:
+  heartbeat gets `404` and it registers anew, with a newer `registeredAt`.
+- No healthy instance left: a request answers `503` + `Retry-After`; an event
+  waits in its queue, without using up a delivery attempt, until one is back.
+- gRPC calls count too: `UNAVAILABLE`, `DEADLINE_EXCEEDED` and `INTERNAL`.
+- The broker's `GET /health` shows each instance's breaker under
+  `circuitBreakers`, and every removal is logged as an `ERROR` with the
+  target, instance, URL, endpoint, error count and window:
 
 ```json
-{"time":"2026-10-28T16:16:02.540Z","level":"ERROR","service":"gateway","instanceId":"19236e53a734","msg":"circuit breaker tripped: instance removed","requestId":"e07b…","caller":"gateway","target":"battle-service","instance":"5f4bb89d4b73","url":"http://5f4bb89d4b73:8082","endpoint":"GET /battles/reference","errors":3,"windowSeconds":35.0,"threshold":3,"lastError":"battle-service is unreachable","remaining":2}
+{"time":"2026-11-10T16:16:02.540Z","level":"ERROR","service":"message-broker","msg":"circuit breaker tripped: instance removed","requestId":"e07b…","caller":"message-broker","target":"user-management-service","instance":"5f4bb89d4b73","url":"http://5f4bb89d4b73:8081","endpoint":"GET /users/u1","errors":3,"windowSeconds":35.0,"threshold":3,"lastError":"status 503"}
 ```
 
-Services call each other through the gateway, so their calls get the same
-per-replica removal there; their own breakers stay per target service.
+The gateway drops its own breaker and replica removal from v4.0.0
+(Dackohn/gateway#18): until then it still keeps them as in Lab 3. Each
+service's own breakers stay per target service, in front of the broker.
 
 **Try it:** `docker kill` one replica of a 3-replica service (it can't
-deregister itself) and send requests through the gateway: its 3 turns fail,
-it is removed and deregistered at once (not after the 30 s TTL), and every
-request after that succeeds on the other two. `docker pause` one instead and
-`docker unpause` it after it is removed: it registers again and is back in
-rotation. `GET /health/services` lists each service's `instances` and
-`removed`.
+deregister itself) and send requests that reach it through the broker: its 3
+turns fail and are rerouted, it is removed and deregistered at once (not after
+the 30 s TTL), and every request after that goes to the other two.
 
-Reference implementations: the gateway's `app/breaker.py` and
-`app/instances.py` (Python) and Battle's `internal/clients/httpx/breaker.go`
-(Go).
+Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
+`internal/clients/httpx/breaker.go` (Go).
 
 #### Access per endpoint
 
@@ -233,14 +244,15 @@ Reference implementations: the gateway's `app/breaker.py` and
 | User Management | `POST /users/register` | Public |
 | | `POST /users/login` | Public |
 | | `GET /.well-known/jwks.json` | Public |
-| | `GET /users/{userId}` | Player |
-| | `GET /users/{userId}/currency` | Player (self) |
-| | `POST /users/{userId}/currency/adjust` | **Service** — Battle, Monster Raid (rewards) |
+| | `GET /users/{userId}` | Player, or **Service** — Battle (both players exist), Guild (an invited member), Package Registry (a registered player) |
+| | `GET /users/{userId}/currency` | Player (self), or **Service** — Battle (the stakes) |
+| | `POST /users/{userId}/currency/adjust` | **Service** — Battle, Monster Raid (rewards); not routed by the gateway |
 | | `POST /users/{userId}/friends/{targetId}` | Player (self) |
 | | `GET /users/{userId}/friends` | Player (self) |
 | | `DELETE /users/{userId}/friends/{targetId}` | Player (self) |
 | | `POST /users/{userId}/enemies/{targetId}` | Player (self) |
-| | `GET /users/{userId}/relationship/{targetId}` | Player (self), or **Service** — Map |
+| | `GET /users/{userId}/relationship/{targetId}` | Player (self), or **Service** — Map, Battle, Guild |
+| | `POST /events` | **Message Broker** only (`X-Broker-Key`); not routed by the gateway |
 | Battle | `POST /battles/challenge` | Player (self — the challenger) |
 | | `POST /battles/{battleId}/accept` | Player (self — the challenged player) |
 | | `GET /battles/{battleId}` | Player |
@@ -252,8 +264,8 @@ Reference implementations: the gateway's `app/breaker.py` and
 | | `GET /users/{userId}/tamagotchis` | Player, or **Service** — Battle (the player's Tamagotchis for a battle) |
 | | `PATCH /users/{userId}/tamagotchis/{id}/set-primary` | Player (self — the owner) |
 | | `PATCH /tamagotchis/{id}/stats` | Player (self — the owner) |
-| | `POST /tamagotchis/{id}/xp` | **Service** — Battle |
-| | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle |
+| | `POST /tamagotchis/{id}/xp` | **Service** — Battle; not routed by the gateway |
+| | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle; not routed by the gateway |
 | Notification | `POST /notifications/register-device` | Player (self) |
 | | `GET /notifications/{userId}` | Player (self) |
 | | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
@@ -261,7 +273,7 @@ Reference implementations: the gateway's `app/breaker.py` and
 | Map | `POST /map/location` | Player (self) |
 | | `GET /map/nearby/{userId}` | Player (self) — locations are private |
 | | `WS /map/stream` | Player (self) — gateway ticket; every frame's `userId` must be the ticket's player |
-| Monster Raid | `POST /raids` | **Service** — Package Registry |
+| Monster Raid | `POST /raids` | **Service** — Package Registry; not routed by the gateway |
 | | `POST /raids/{raidId}/join` | Player (self) + member of the raid's guild |
 | | `POST /raids/{raidId}/attack` | Player (self — a participant) |
 | | `GET /raids/{raidId}` | Player |
@@ -473,6 +485,25 @@ Success Response (200 OK):
 }
 ```
 
+**Events published** (Message Broker topics, see [Topics](#topics)). `userId` is always the player the event is for, the one Notification pushes to:
+
+| Topic | Payload |
+|---|---|
+| `user.friend_request_received` | `{userId, fromUserId, targetId, username}`: `userId` (= `targetId`) received the request; `fromUserId` sent it and `username` is the sender's |
+| `user.friend_request_accepted` | `{userId, friendId}` |
+| `user.currency_changed` | `{userId, localCurrency, globalCurrency, reason}` |
+
+**Events received** at `POST /events` (Message Broker only), each `messageId` handled once (table `processed_events`):
+
+| Topic | What User Management does | Idempotency key |
+|---|---|---|
+| `battle.ended` | pays `rewardCurrency` to `winnerId`, charges `loserCurrencyPenalty` to `loserId` (global currency) | `battle-ended:<battleId>:winner`, `battle-ended:<battleId>:loser` |
+| `raid.completed` | pays each `rewards[].currency` to its `userId` (global currency) | `raid:<raidId>:<userId>`, the key Monster Raid pays with directly |
+
+The keys are the ones Battle and Monster Raid use when they pay directly, so a payment made both ways counts once.
+
+**gRPC** (`tamagotchigo.user.v1.UserManagement`, through the broker at `message-broker:50051`): `GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`, with the same rules and callers as the REST endpoints above, on each replica's `GRPC_PORT` (`50081`). See [gRPC between services](#grpc-between-services).
+
 #### Battle Service (`user-battle`, Go)
 
 **Challenge a Player**
@@ -574,7 +605,7 @@ Server push message:
 
 **Battle Ended (internal event)**
 
-Not client-facing — published when a battle ends, consumed by Notification/Tamagotchi/User Management services. Each consumer must treat this idempotently keyed by `battleId` (e.g. via the `idempotencyKey` on Tamagotchi/User Management writes it triggers) — at-least-once delivery means a consumer can see the same `BattleEnded` event more than once, and reapplying it would double-grant rewards or double-transfer ownership.
+Not client-facing — published on `battle.ended` when a battle ends, consumed by Notification/Tamagotchi/User Management services. Each consumer must treat this idempotently keyed by `battleId` (e.g. via the `idempotencyKey` on Tamagotchi/User Management writes it triggers) — at-least-once delivery means a consumer can see the same `BattleEnded` event more than once, and reapplying it would double-grant rewards or double-transfer ownership.
 
 ```json
 {
@@ -583,9 +614,39 @@ Not client-facing — published when a battle ends, consumed by Notification/Tam
   "loserId": "string",
   "rewardCurrency": "int",
   "rewardXp": "int",
-  "transferredTamagotchiId": "string"
+  "transferredTamagotchiId": "string",
+  "primaryXp": "int",
+  "secondaryXp": "int",
+  "loserCurrencyPenalty": "int",
+  "loserXp": "int",
+  "winnerPrimaryTamagotchiId": "string",
+  "winnerSecondaryTamagotchiId": "string (may be empty)"
 }
 ```
+
+`rewardXp` is split 60/40: `primaryXp` to `winnerPrimaryTamagotchiId`, `secondaryXp` to `winnerSecondaryTamagotchiId`. `loserXp` is not awarded. The settlement and its keys, which Battle uses when it applies them itself and every consumer must reuse:
+
+| What | Applied by | Idempotency key |
+|---|---|---|
+| `rewardCurrency` to `winnerId` | User Management, from the event (Battle itself without the broker) | `battle-ended:<battleId>:winner` |
+| `loserCurrencyPenalty` from `loserId` | User Management, from the event (Battle itself without the broker) | `battle-ended:<battleId>:loser` |
+| `primaryXp` to `winnerPrimaryTamagotchiId` | Battle; Tamagotchi from the event once `BATTLE_TAMAGOTCHI_BY_EVENT=true` | `battle-ended:<battleId>:primary` |
+| `secondaryXp` to `winnerSecondaryTamagotchiId` | as above | `battle-ended:<battleId>:secondary` |
+| `transferredTamagotchiId` to `winnerId` | as above | `battle-ended:<battleId>` |
+
+**Battle Request Received (internal event)** — on `battle.request_received` when a player is challenged; Notification pushes it to `userId`, the challenged player:
+
+```json
+{ "battleId": "string", "challengerId": "string", "targetId": "string", "userId": "string (= targetId)" }
+```
+
+**Tamagotchi Captured (internal event)** — on `battle.tamagotchi_captured` when the loser's primary Tamagotchi changes hands; Notification pushes it to `userId`, the player who lost it:
+
+```json
+{ "battleId": "string", "tamagotchiId": "string", "fromUserId": "string", "toUserId": "string", "userId": "string (= fromUserId)" }
+```
+
+Each event's `messageId` is a UUIDv5 of the topic and its key (`battle-ended:<battleId>`, `battle-request:<battleId>`), so a republish is dropped as a duplicate.
 
 #### Tamagotchi Service (`tamagotchi-notification`, Go)
 
@@ -1531,7 +1592,7 @@ Claim a free one when you wire up your service and add it here.
 | Package Registry | `8088` |
 | Gateway | `8080` |
 | Service Discovery | `8089` |
-| Message Broker | `8090` (HTTP), `50051` (gRPC, later) |
+| Message Broker | `8090` (HTTP), `50051` (gRPC) |
 | Grafana | `3000` |
 | Prometheus | `9090` |
 | Loki | `3100` (not published: Grafana reads it inside the stack) |
@@ -1803,16 +1864,34 @@ Set `PORT` to run somewhere else: `PORT=9081 ./run.sh`.
 `/users/{userId}/tamagotchis/**` (Tamagotchi) and `/users/{userId}/guilds/**`
 (Guild), which the gateway matches first; `GET /.well-known/jwks.json` →
 User Management. `POST /users/register`, `POST /users/login` and the JWKS need
-no token. No WebSocket endpoints, and no outgoing calls.
+no token. No WebSocket endpoints, and no outgoing calls. The gateway answers
+`POST /users/{userId}/currency/adjust` with `404`: only services call it,
+through the broker.
 
 **Through the gateway only.** Every request needs the gateway's
 `X-Gateway-Key` (`401` otherwise), except `/health` and
 `/.well-known/jwks.json`, which the gateway calls itself to probe the service
 and to verify tokens. The player is the gateway's `X-User-Id`; this service
 issues tokens but no longer verifies them. Its access rules stay: acting only
-as yourself (`403` otherwise), `currency/adjust` only with Battle's or Monster
-Raid's `X-Service-Key`, `relationship` also with Map's. Its port is not
-published in the shared stack.
+as yourself (`403` otherwise), and each service's `X-Service-Key` opens only
+the endpoints that list it ([Access per endpoint](#access-per-endpoint)):
+Battle, Monster Raid, Map, Guild (`SERVICE_KEY_GUILD`) and Package Registry
+(`SERVICE_KEY_PACKAGE_REGISTRY`). Its port is not published in the shared
+stack.
+
+**Message Broker (v4.0.0):** a service's call the broker relays is accepted
+with `X-Broker-Key` plus the caller's service key. Its events go to the topics
+`user.friend_request_received`, `user.friend_request_accepted` and
+`user.currency_changed`; each replica registers `battle.ended` and
+`raid.completed` with Service Discovery and pays them at `POST /events`,
+each `messageId` once ([events](#user-management-service-user-battle-go)).
+gRPC on `50081` (`GetUser`, `GetBalance`, `AdjustCurrency`,
+`GetRelationship`), registered as `metadata.grpcPort`. Check that it consumes:
+
+```bash
+curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
+# battle.ended and raid.completed list user-management-service as a subscriber
+```
 
 **Limits:** `504` after `REQUEST_TIMEOUT_MS` (8 s, also Postgres's
 `statement_timeout`), `503` + `Retry-After: 1` above `MAX_CONCURRENT_REQUESTS`
@@ -1921,11 +2000,15 @@ needing it answers `503`, until the cooldown (the window) has passed and one
 trial call succeeds. Timeouts, refused connections and `5xx` count; `4xx`
 doesn't. Tripping is logged as an `ERROR` naming caller, target and endpoint.
 
-**Outgoing calls go through the gateway** too: in the shared stack
-`USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
-`PACKAGE_REGISTRY_SERVICE_URL` all default to `http://gateway:8080`, and every
-call carries Battle's own `X-Service-Key` (`SERVICE_KEY_BATTLE`), never a
-player's token:
+**Outgoing calls** carry Battle's own `X-Service-Key` (`SERVICE_KEY_BATTLE`),
+never a player's token. Until `BATTLE_BROKER_URL` is set they go through the
+gateway (`USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
+`PACKAGE_REGISTRY_SERVICE_URL` default to `http://gateway:8080`). With
+`BATTLE_BROKER_URL=http://message-broker:8090` (once Tamagotchi accepts the
+broker's key) every call goes through the broker, User Management over gRPC
+(`BATTLE_GRPC_DEPENDENCIES`), the `battle.*` events go to its topics, and User
+Management pays the currency from `battle.ended`. Battle has to be on the broker
+before gateway v4.0.0, which forwards no service call:
 
 | Call | Owner |
 |---|---|
@@ -2177,6 +2260,12 @@ API is in its README.
 - **Thread-per-request:** every request on its own thread, at most
   `BROKER_MAX_THREADS` (`503` above). `GET /topics` lists the topics and their
   subscribers.
+- **Circuit breaker (moved here from the Gateway):** per instance, 3 errors
+  within the timeout × 3.5 remove the instance and deregister it; see
+  [Circuit breaker](#circuit-breaker).
+- **gRPC:** port `50051` (`BROKER_GRPC_PORT` on the host) forwards each call to
+  a healthy replica's `metadata.grpcPort`; see
+  [gRPC between services](#grpc-between-services).
 - **Load balancing (moved here from the Gateway):** each message goes to the
   **least loaded** healthy instance — the one with the fewest messages the
   broker is delivering to it right now; equals take turns (round-robin). So a
@@ -2583,7 +2672,7 @@ works without cloning its repo.
 
 | Collection | Service | Targets |
 |---|---|---|
-| [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management, through the gateway | `http://localhost:8080` |
+| [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management, through the gateway and the Message Broker | `http://localhost:8080`, `http://localhost:8090` |
 | [`battle-service`](collections/battle-service.postman_collection.json) | Battle, through the gateway | `http://localhost:8080` |
 | [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi, through the gateway | `http://localhost:8080` |
 | [`notification-service`](collections/notification-service.postman_collection.json) | Notification, through the gateway | `http://localhost:8080` |
@@ -2598,7 +2687,7 @@ press **Run** — each collection runs top to bottom as one scenario, capturing
 ids into collection variables as it goes. They also run headlessly:
 
 ```bash
-npx newman run collections/user-management-service.postman_collection.json --env-var battleServiceKey=<SERVICE_KEY_BATTLE>
+npx newman run collections/user-management-service.postman_collection.json --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var guildServiceKey=<SERVICE_KEY_GUILD> --env-var mapServiceKey=<SERVICE_KEY_MAP>
 npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 npx newman run collections/notification-service.postman_collection.json
@@ -2631,8 +2720,13 @@ The **user-management-service** and **battle-service** collections go through
 the gateway like a client app: their players register and log in through User
 Management, and each acts with their own token. Battle's run ends by checking
 that the winner was paid in User Management, which Battle reaches through the
-gateway. User Management's two currency adjustments are service-only, so they
-send Battle's key (`battleServiceKey`).
+gateway until it runs on the broker. User Management's two currency
+adjustments are service-only, so they go through the Message Broker with its
+key and Battle's (`brokerKey`, `battleServiceKey`). Its "Through the Message
+Broker" folder shows each service key opening only its own endpoints (Guild
+reads a user, Map may not adjust currency, the broker key alone is refused),
+and a `battle.ended` event published twice on the broker paying the winner
+once.
 
 The **tamagotchi-service** and **notification-service** collections go through
 the gateway the same way, with new players on every run. Battle (`xp`,
@@ -2658,6 +2752,8 @@ Postman:
 | guild-service, gateway, tamagotchi-service | `monsterRaidServiceKey` | `SERVICE_KEY_MONSTER_RAID` |
 | monster-raid-service | `packageRegistryServiceKey` | `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY` |
 | user-management-service, tamagotchi-service | `battleServiceKey` | `SERVICE_KEY_BATTLE` |
+| user-management-service | `guildServiceKey`, `mapServiceKey` | `SERVICE_KEY_GUILD`, `SERVICE_KEY_MAP` |
+| user-management-service, notification-service | `brokerKey` | `BROKER_KEY` |
 
 Adding yours: export in Postman **v2.1** format, name it
 `<service-name>.postman_collection.json`, and add a row to the table.
