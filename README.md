@@ -257,6 +257,7 @@ Reference implementations: the gateway's `app/breaker.py` and
 | Notification | `POST /notifications/register-device` | Player (self) |
 | | `GET /notifications/{userId}` | Player (self) |
 | | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
+| | `POST /events` | **Message Broker** only (`X-Broker-Key`); not routed by the gateway |
 | Map | `POST /map/location` | Player (self) |
 | | `GET /map/nearby/{userId}` | Player (self) — locations are private |
 | | `WS /map/stream` | Player (self) — gateway ticket; every frame's `userId` must be the ticket's player |
@@ -784,7 +785,7 @@ Success Response (200 OK):
 }
 ```
 
-> No public "send" endpoint — notifications are triggered internally by consuming events: `FriendRequestReceived` (User Management), `ProximityDetected` (Map Service — corrected here from `NearbyPlayerDetected`, which didn't match what Map Service actually publishes), `BattleRequestReceived`/`BattleEnded` (Battle Service), `TamagotchiCaptured` (Battle Service, part of `BattleEnded`), `GuildInvitation` (Guild Service), `RaidStarted`/`RaidCompleted`/`RaidFailed` (Monster Raid Service). Every publisher's event payload shape is defined once, in that publishing service's own section — this service should not redefine or assume a shape independently, since duplicated definitions are exactly what drifts. Publishers deliver at-least-once; this service should dedupe by an event id rather than assume exactly-once delivery.
+> No public "send" endpoint — notifications are triggered internally by consuming events: `FriendRequestReceived` (User Management), `ProximityDetected` (Map Service — corrected here from `NearbyPlayerDetected`, which didn't match what Map Service actually publishes), `BattleRequestReceived`/`BattleEnded` (Battle Service), `TamagotchiCaptured` (Battle Service, part of `BattleEnded`), `GuildInvitation` (Guild Service), `RaidStarted`/`RaidCompleted`/`RaidFailed` (Monster Raid Service). They arrive on the Message Broker's topics at `POST /events` (see [Topics](#topics)), or on the older Redis channel `notification-events` until every publisher has moved. Each event becomes one notification per player it's for: `BattleEnded` for both `winnerId` and `loserId`, `ProximityDetected` for `userAId` and `userBId`, `RaidCompleted` for every `rewards[].userId`, and every other event for the payload's `userId` (or each id in `userIds`). Every publisher's event payload shape is defined once, in that publishing service's own section — this service should not redefine or assume a shape independently, since duplicated definitions are exactly what drifts. Publishers deliver at-least-once; this service should dedupe by an event id rather than assume exactly-once delivery.
 
 #### Map Service (`map-raid`, TypeScript)
 
@@ -1589,20 +1590,38 @@ endpoint when it trips), and `/health` shows the breaker under `load.circuitBrea
 
 Go, Redis 7. Runs as `NOTIFICATION_REPLICAS` replicas (default 2), each
 registered with Service Discovery under its own address (`http://<hostname>:8084`)
-and reached only through the gateway: no host port. Notifications are created by
-events published to the Redis Pub/Sub channel `notification-events` (there is no
-public create endpoint) and kept for 30 days. Every replica receives every event,
-and each event is stored once: the replicas claim it in the shared Redis by its
-optional `eventId` (or a fingerprint of the message), as the contract's
-at-least-once delivery asks.
+and reached only through the gateway: no host port. There is no public create
+endpoint: notifications come from events, kept for 30 days.
+
+- **From the Message Broker:** with `BROKER_KEY` set, every replica registers for
+  the 9 topics Notification subscribes to (see [Topics](#topics)), and the broker
+  hands each event to one replica at `POST /events`. The replica answers `2xx`
+  only once the notification is stored; `400` (not an event it can use) and `422`
+  (the payload names nobody) aren't stored, and the broker retries them until its
+  attempts run out.
+- **From Redis:** the older channel `notification-events`, which every replica
+  receives, stays until every publisher has moved to topics.
+
+Either way each notification is stored once: the replicas claim it in the shared
+Redis (`msg:<messageId>:<userId>` for a broker event; the `eventId`, or a
+fingerprint of the message, for Redis), as the contract's at-least-once delivery
+asks.
 
 ```bash
 docker compose up -d notification-service
 docker compose ps notification-service           # one line per replica
 docker compose exec notification-service wget -qO- localhost:8084/health
-# {"status":"ok","service":"notification-service","version":"3.1.1",...,"load":{"events":{...,"duplicates":0}}}
+# {"status":"ok","service":"notification-service","version":"4.0.0",...,"load":{"events":{...,"duplicates":0}}}
 
-# Simulate an event (Redis password is NOTIFICATION_REDIS_PASSWORD in .env):
+# The topics it subscribes to (BROKER_KEY is in .env):
+curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
+
+# Publish an event through the broker, as Battle would:
+curl -X POST http://localhost:8090/topics/battle.ended/messages \
+  -H "X-Broker-Key: <BROKER_KEY>" -H "Content-Type: application/json" \
+  -d '{"source":"battle-service","payload":{"battleId":"b1","winnerId":"<user id>","loserId":"<user id>"}}'
+
+# Or the older way, on Redis (password is NOTIFICATION_REDIS_PASSWORD in .env):
 docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning PUBLISH notification-events "{\"type\":\"BattleEnded\",\"userId\":\"11111111-1111-1111-1111-111111111111\",\"payload\":{\"result\":\"won\"}}"'
 ```
 
@@ -1612,8 +1631,9 @@ player can only register their own device and read their own notifications.
 There is no way around the gateway from outside the stack (no host port).
 
 **Gateway routes:** `/notifications/**` → Notification. No WebSocket endpoints
-and no outgoing calls; events arrive on the Redis channel
-`notification-events`, not through the gateway.
+and no outgoing calls; events arrive from the Message Broker at `POST /events`
+(only with `X-Broker-Key`) or on the Redis channel `notification-events`, never
+through the gateway.
 
 ### Map Service
 

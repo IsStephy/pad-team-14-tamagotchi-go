@@ -273,6 +273,10 @@ services:
       # replica receives every event; they store each one once (claimed in Redis).
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      # With BROKER_KEY, each replica also registers for the Message Broker's topics
+      # and takes events at POST /events (one replica per event); empty = events
+      # only from the Redis channel notification-events.
+      BROKER_KEY: ${BROKER_KEY:-}
     # Replicas publish no ports: they're reached only through the gateway.
     deploy:
       replicas: ${NOTIFICATION_REPLICAS:-2}
