@@ -56,6 +56,30 @@
       "key": "missingId",
       "value": "00000000-0000-0000-0000-000000000000",
       "type": "string"
+    },
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "brokerKey",
+      "value": "change_me"
+    },
+    {
+      "key": "guildServiceKey",
+      "value": "change_me"
+    },
+    {
+      "key": "mapServiceKey",
+      "value": "change_me"
+    },
+    {
+      "key": "battleId",
+      "value": ""
+    },
+    {
+      "key": "battleMessageId",
+      "value": ""
     }
   ],
   "item": [
@@ -578,7 +602,7 @@
       ]
     },
     {
-      "name": "Adjust currency (credit a battle reward)",
+      "name": "Adjust currency (credit a battle reward) through the broker",
       "request": {
         "method": "POST",
         "header": [
@@ -589,21 +613,27 @@
           {
             "key": "X-Service-Key",
             "value": "{{battleServiceKey}}"
+          },
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
           }
         ],
         "url": {
-          "raw": "{{gatewayUrl}}/users/{{userId}}/currency/adjust",
+          "raw": "{{brokerUrl}}/services/user-management-service/users/{{userId}}/currency/adjust",
           "host": [
-            "{{gatewayUrl}}"
+            "{{brokerUrl}}"
           ],
           "path": [
+            "services",
+            "user-management-service",
             "users",
             "{{userId}}",
             "currency",
             "adjust"
           ]
         },
-        "description": "Deltas may be positive or negative. The balance change and its ledger entry are written in one transaction.",
+        "description": "Deltas may be positive or negative. The balance change and its ledger entry are written in one transaction. Service-only: Battle calls it through the Message Broker with X-Broker-Key and its own X-Service-Key; the gateway answers it with 404 from v4.0.0.",
         "body": {
           "mode": "raw",
           "raw": "{\n  \"globalCurrencyDelta\": 250,\n  \"localCurrencyDelta\": 10,\n  \"reason\": \"battle reward\"\n}",
@@ -635,7 +665,7 @@
       ]
     },
     {
-      "name": "Adjust currency beyond the balance (rejected)",
+      "name": "Adjust currency beyond the balance through the broker (rejected)",
       "request": {
         "method": "POST",
         "header": [
@@ -646,21 +676,27 @@
           {
             "key": "X-Service-Key",
             "value": "{{battleServiceKey}}"
+          },
+          {
+            "key": "X-Broker-Key",
+            "value": "{{brokerKey}}"
           }
         ],
         "url": {
-          "raw": "{{gatewayUrl}}/users/{{userId}}/currency/adjust",
+          "raw": "{{brokerUrl}}/services/user-management-service/users/{{userId}}/currency/adjust",
           "host": [
-            "{{gatewayUrl}}"
+            "{{brokerUrl}}"
           ],
           "path": [
+            "services",
+            "user-management-service",
             "users",
             "{{userId}}",
             "currency",
             "adjust"
           ]
         },
-        "description": "An adjustment that would overdraw is refused and leaves the balance untouched.",
+        "description": "An adjustment that would overdraw is refused and leaves the balance untouched. Service-only: Battle calls it through the Message Broker with X-Broker-Key and its own X-Service-Key; the gateway answers it with 404 from v4.0.0.",
         "body": {
           "mode": "raw",
           "raw": "{\n  \"globalCurrencyDelta\": -9999,\n  \"reason\": \"battle loss\"\n}",
@@ -724,6 +760,299 @@
               "});"
             ]
           }
+        }
+      ]
+    },
+    {
+      "name": "Through the Message Broker",
+      "description": "Other services reach User Management through the broker: X-Broker-Key plus the caller's own X-Service-Key, and each key opens only the endpoints that list its service (CPR README, Access per endpoint). Events from battle.ended are paid at POST /events, each messageId once.",
+      "item": [
+        {
+          "name": "Guild reads a user through the broker",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{guildServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/user-management-service/users/{{userId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "user-management-service",
+                "users",
+                "{{userId}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the user asked for', function () { pm.expect(pm.response.json().userId).to.eql(pm.collectionVariables.get('userId')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Map may not adjust currency (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{mapServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/user-management-service/users/{{userId}}/currency/adjust",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "user-management-service",
+                "users",
+                "{{userId}}",
+                "currency",
+                "adjust"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"globalCurrencyDelta\": 1000,\n  \"reason\": \"free money\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', function () { pm.response.to.have.status(403); });",
+                  "pm.test('names the reason, not the key', function () { pm.expect(pm.response.json().error).to.eql('this service may not call this endpoint'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The broker key alone is not enough (401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/user-management-service/users/{{userId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "user-management-service",
+                "users",
+                "{{userId}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Battle ended, published on the broker",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/topics/battle.ended/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "topics",
+                "battle.ended",
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"battle-service\",\n  \"messageId\": \"{{battleMessageId}}\",\n  \"payload\": {\n    \"battleId\": \"{{battleId}}\",\n    \"winnerId\": \"{{userId}}\",\n    \"loserId\": \"{{targetUserId}}\",\n    \"rewardCurrency\": 25,\n    \"rewardXp\": 0,\n    \"transferredTamagotchiId\": \"\",\n    \"loserCurrencyPenalty\": 0\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// One battle and one messageId for this run; the next request sends the same event again.",
+                  "pm.collectionVariables.set('battleId', 'postman-' + pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('battleMessageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', function () { pm.response.to.have.status(202); });",
+                  "pm.test('User Management subscribes to battle.ended', function () { pm.expect(pm.response.json().subscribers).to.include('user-management-service'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The same event again, same messageId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/topics/battle.ended/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "topics",
+                "battle.ended",
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"battle-service\",\n  \"messageId\": \"{{battleMessageId}}\",\n  \"payload\": {\n    \"battleId\": \"{{battleId}}\",\n    \"winnerId\": \"{{userId}}\",\n    \"loserId\": \"{{targetUserId}}\",\n    \"rewardCurrency\": 25,\n    \"rewardXp\": 0,\n    \"transferredTamagotchiId\": \"\",\n    \"loserCurrencyPenalty\": 0\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', function () { pm.response.to.have.status(202); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The winner was paid once",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{userId}}/currency",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}",
+                "currency"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The broker delivers at once; give it a moment to reach a replica and be paid.",
+                  "setTimeout(function () {}, 2000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('250 + 25, although the event was published twice', function () { pm.expect(pm.response.json().globalCurrency).to.eql(275); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

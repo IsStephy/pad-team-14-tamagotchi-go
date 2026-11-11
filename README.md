@@ -2669,7 +2669,7 @@ works without cloning its repo.
 
 | Collection | Service | Targets |
 |---|---|---|
-| [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management, through the gateway | `http://localhost:8080` |
+| [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management, through the gateway and the Message Broker | `http://localhost:8080`, `http://localhost:8090` |
 | [`battle-service`](collections/battle-service.postman_collection.json) | Battle, through the gateway | `http://localhost:8080` |
 | [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi, through the gateway | `http://localhost:8080` |
 | [`notification-service`](collections/notification-service.postman_collection.json) | Notification, through the gateway | `http://localhost:8080` |
@@ -2684,7 +2684,7 @@ press **Run** — each collection runs top to bottom as one scenario, capturing
 ids into collection variables as it goes. They also run headlessly:
 
 ```bash
-npx newman run collections/user-management-service.postman_collection.json --env-var battleServiceKey=<SERVICE_KEY_BATTLE>
+npx newman run collections/user-management-service.postman_collection.json --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var guildServiceKey=<SERVICE_KEY_GUILD> --env-var mapServiceKey=<SERVICE_KEY_MAP>
 npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 npx newman run collections/notification-service.postman_collection.json
@@ -2717,8 +2717,13 @@ The **user-management-service** and **battle-service** collections go through
 the gateway like a client app: their players register and log in through User
 Management, and each acts with their own token. Battle's run ends by checking
 that the winner was paid in User Management, which Battle reaches through the
-gateway. User Management's two currency adjustments are service-only, so they
-send Battle's key (`battleServiceKey`).
+gateway until it runs on the broker. User Management's two currency
+adjustments are service-only, so they go through the Message Broker with its
+key and Battle's (`brokerKey`, `battleServiceKey`). Its "Through the Message
+Broker" folder shows each service key opening only its own endpoints (Guild
+reads a user, Map may not adjust currency, the broker key alone is refused),
+and a `battle.ended` event published twice on the broker paying the winner
+once.
 
 The **tamagotchi-service** and **notification-service** collections go through
 the gateway the same way, with new players on every run. Battle (`xp`,
@@ -2744,6 +2749,8 @@ Postman:
 | guild-service, gateway, tamagotchi-service | `monsterRaidServiceKey` | `SERVICE_KEY_MONSTER_RAID` |
 | monster-raid-service | `packageRegistryServiceKey` | `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY` |
 | user-management-service, tamagotchi-service | `battleServiceKey` | `SERVICE_KEY_BATTLE` |
+| user-management-service | `guildServiceKey`, `mapServiceKey` | `SERVICE_KEY_GUILD`, `SERVICE_KEY_MAP` |
+| user-management-service, notification-service | `brokerKey` | `BROKER_KEY` |
 
 Adding yours: export in Postman **v2.1** format, name it
 `<service-name>.postman_collection.json`, and add a row to the table.
