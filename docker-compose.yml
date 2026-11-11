@@ -665,6 +665,9 @@ services:
       # A failed message goes to another instance at most this often (0 = never).
       MAX_REROUTES: ${BROKER_MAX_REROUTES:-2}
       LOG_LEVEL: ${BROKER_LOG_LEVEL:-INFO}
+      # gRPC between services (#170): a call to message-broker:50051 is
+      # forwarded to a healthy replica's metadata.grpcPort.
+      GRPC_PORT: 50051
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"]
       interval: 10s
@@ -673,6 +676,7 @@ services:
       retries: 3
     ports:
       - "${BROKER_PORT:-8090}:8090"
+      - "${BROKER_GRPC_PORT:-50051}:50051"
     restart: unless-stopped
 
   # One host port per scaled service for the WebSockets clients open directly
