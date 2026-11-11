@@ -38,19 +38,6 @@ scrape_configs:
         port: 8086
         refresh_interval: 15s
 
-  - job_name: tamagotchi-service
-    dns_sd_configs:
-      - names: [tamagotchi-service]
-        type: A
-        port: 8083
-        refresh_interval: 15s
-
-  - job_name: notification-service
-    dns_sd_configs:
-      - names: [notification-service]
-        type: A
-        port: 8084
-        
   - job_name: guild-service
     dns_sd_configs:
       - names: [guild-service]
