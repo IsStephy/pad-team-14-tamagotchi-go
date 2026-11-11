@@ -108,6 +108,15 @@ Endpoints marked **Service** below are internal: only the listed callers may use
 
 **The gateway forwards no service-to-service call** (from gateway v4.0.0, Dackohn/gateway#18). The endpoints that only services call answer `404 {"error": "POST /raids is not available through the gateway"}` there, without reaching the service: `POST /users/{userId}/currency/adjust`, `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` and `POST /raids`. A request with only an `X-Service-Key` gets `401` like any request without a token, and the gateway drops any `X-Service-Key` or `X-Broker-Key` a client sends.
 
+#### gRPC between services
+
+Since Lab 4, calls between services can use gRPC instead of REST, through the Message Broker (#170, #173). The `.proto` files live in [`Dackohn/message-broker`](https://github.com/Dackohn/message-broker) under `proto/` (one package per service, `tamagotchigo.<service>.v1`, e.g. `tamagotchigo.user.v1.UserManagement`); each service keeps a copy and its generated code, pinned to a broker commit. `proto/README.md` there has the calls, the error codes and how to generate the code in Go and TypeScript.
+
+- **Ports:** a service serves gRPC on `5008N`, next to its HTTP port `808N` (User Management `50081`), and registers it with Service Discovery as `metadata.grpcPort`. The broker listens on `50051` and forwards each call to a healthy replica's `grpcPort`, with the same load balancing, circuit breaker and reroutes as HTTP (reads only, or a call whose connection was never made).
+- **Metadata:** the header names, lower-case: `x-broker-key`, `x-service-key`, `x-request-id`, `x-user-id`. The callee checks the broker key and the caller's service key, exactly as over REST, and answers `PERMISSION_DENIED` otherwise.
+- **Errors:** `NOT_FOUND` (404), `INVALID_ARGUMENT` (400), `FAILED_PRECONDITION` (409, e.g. not enough currency), `PERMISSION_DENIED` (401/403), `DEADLINE_EXCEEDED` (504), `UNAVAILABLE` (503/502), `INTERNAL` (500). The last three count for the circuit breaker.
+- **Who serves it now:** User Management (`GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`). Battle calls it over gRPC with `BATTLE_GRPC_DEPENDENCIES=user-management-service`, once it runs on the broker.
+
 #### WebSockets
 
 The gateway negotiates sockets but never relays them, so a long-lived connection doesn't tie it up:
@@ -476,6 +485,25 @@ Success Response (200 OK):
 }
 ```
 
+**Events published** (Message Broker topics, see [Topics](#topics)). `userId` is always the player the event is for, the one Notification pushes to:
+
+| Topic | Payload |
+|---|---|
+| `user.friend_request_received` | `{userId, fromUserId, targetId, username}`: `userId` (= `targetId`) received the request; `fromUserId` sent it and `username` is the sender's |
+| `user.friend_request_accepted` | `{userId, friendId}` |
+| `user.currency_changed` | `{userId, localCurrency, globalCurrency, reason}` |
+
+**Events received** at `POST /events` (Message Broker only), each `messageId` handled once (table `processed_events`):
+
+| Topic | What User Management does | Idempotency key |
+|---|---|---|
+| `battle.ended` | pays `rewardCurrency` to `winnerId`, charges `loserCurrencyPenalty` to `loserId` (global currency) | `battle-ended:<battleId>:winner`, `battle-ended:<battleId>:loser` |
+| `raid.completed` | pays each `rewards[].currency` to its `userId` (global currency) | `raid:<raidId>:<userId>`, the key Monster Raid pays with directly |
+
+The keys are the ones Battle and Monster Raid use when they pay directly, so a payment made both ways counts once.
+
+**gRPC** (`tamagotchigo.user.v1.UserManagement`, through the broker at `message-broker:50051`): `GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`, with the same rules and callers as the REST endpoints above, on each replica's `GRPC_PORT` (`50081`). See [gRPC between services](#grpc-between-services).
+
 #### Battle Service (`user-battle`, Go)
 
 **Challenge a Player**
@@ -577,7 +605,7 @@ Server push message:
 
 **Battle Ended (internal event)**
 
-Not client-facing — published when a battle ends, consumed by Notification/Tamagotchi/User Management services. Each consumer must treat this idempotently keyed by `battleId` (e.g. via the `idempotencyKey` on Tamagotchi/User Management writes it triggers) — at-least-once delivery means a consumer can see the same `BattleEnded` event more than once, and reapplying it would double-grant rewards or double-transfer ownership.
+Not client-facing — published on `battle.ended` when a battle ends, consumed by Notification/Tamagotchi/User Management services. Each consumer must treat this idempotently keyed by `battleId` (e.g. via the `idempotencyKey` on Tamagotchi/User Management writes it triggers) — at-least-once delivery means a consumer can see the same `BattleEnded` event more than once, and reapplying it would double-grant rewards or double-transfer ownership.
 
 ```json
 {
@@ -586,9 +614,39 @@ Not client-facing — published when a battle ends, consumed by Notification/Tam
   "loserId": "string",
   "rewardCurrency": "int",
   "rewardXp": "int",
-  "transferredTamagotchiId": "string"
+  "transferredTamagotchiId": "string",
+  "primaryXp": "int",
+  "secondaryXp": "int",
+  "loserCurrencyPenalty": "int",
+  "loserXp": "int",
+  "winnerPrimaryTamagotchiId": "string",
+  "winnerSecondaryTamagotchiId": "string (may be empty)"
 }
 ```
+
+`rewardXp` is split 60/40: `primaryXp` to `winnerPrimaryTamagotchiId`, `secondaryXp` to `winnerSecondaryTamagotchiId`. `loserXp` is not awarded. The settlement and its keys, which Battle uses when it applies them itself and every consumer must reuse:
+
+| What | Applied by | Idempotency key |
+|---|---|---|
+| `rewardCurrency` to `winnerId` | User Management, from the event (Battle itself without the broker) | `battle-ended:<battleId>:winner` |
+| `loserCurrencyPenalty` from `loserId` | User Management, from the event (Battle itself without the broker) | `battle-ended:<battleId>:loser` |
+| `primaryXp` to `winnerPrimaryTamagotchiId` | Battle; Tamagotchi from the event once `BATTLE_TAMAGOTCHI_BY_EVENT=true` | `battle-ended:<battleId>:primary` |
+| `secondaryXp` to `winnerSecondaryTamagotchiId` | as above | `battle-ended:<battleId>:secondary` |
+| `transferredTamagotchiId` to `winnerId` | as above | `battle-ended:<battleId>` |
+
+**Battle Request Received (internal event)** — on `battle.request_received` when a player is challenged; Notification pushes it to `userId`, the challenged player:
+
+```json
+{ "battleId": "string", "challengerId": "string", "targetId": "string", "userId": "string (= targetId)" }
+```
+
+**Tamagotchi Captured (internal event)** — on `battle.tamagotchi_captured` when the loser's primary Tamagotchi changes hands; Notification pushes it to `userId`, the player who lost it:
+
+```json
+{ "battleId": "string", "tamagotchiId": "string", "fromUserId": "string", "toUserId": "string", "userId": "string (= fromUserId)" }
+```
+
+Each event's `messageId` is a UUIDv5 of the topic and its key (`battle-ended:<battleId>`, `battle-request:<battleId>`), so a republish is dropped as a duplicate.
 
 #### Tamagotchi Service (`tamagotchi-notification`, Go)
 
