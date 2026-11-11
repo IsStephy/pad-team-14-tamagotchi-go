@@ -1,0 +1,21 @@
+# Logs from a machine that runs extra replicas, into the main machine's Loki.
+# Run it once on each such machine, next to the replicas, from a checkout of
+# this repository:
+#
+#   docker compose -f monitoring/docker-compose.logs.yml --env-file .env up -d
+#
+# Their metrics need nothing here: replicas register their LAN address with
+# Service Discovery, and the main machine's Prometheus scrapes them from there.
+
+services:
+  promtail:
+    image: grafana/promtail:3.0.0
+    command: -config.file=/etc/promtail/promtail.yml -config.expand-env=true
+    environment:
+      LOKI_URL: ${MONITORING_LOKI_URL:?the main machine's Loki, e.g. http://192.168.1.10:3100}
+      # Shown as the `machine` label in Grafana, e.g. laptop-2.
+      MACHINE: ${MONITORING_MACHINE_NAME:?a name for this machine, e.g. laptop-2}
+    volumes:
+      - ./promtail/promtail-remote.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
