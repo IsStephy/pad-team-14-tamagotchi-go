@@ -614,10 +614,6 @@
               {
                 "key": "X-Broker-Key",
                 "value": "{{brokerKey}}"
-              },
-              {
-                "key": "X-Service-Key",
-                "value": "postman"
               }
             ],
             "url": {
@@ -629,7 +625,7 @@
                 "packages"
               ]
             },
-            "description": "A service's call delivered by the broker: X-Broker-Key, no gateway key. The public package reads need no player, so it is answered."
+            "description": "A service's call delivered by the broker: only X-Broker-Key, no gateway key and no player. The public package reads need neither a player nor a service key, so it is answered."
           },
           "response": []
         },
