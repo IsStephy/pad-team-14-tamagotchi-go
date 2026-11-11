@@ -2326,8 +2326,8 @@ Leave `/health` and `/metrics` themselves out of the counts. In Node,
 `prom-client` gives these; in Go, `prometheus/client_golang`; in Python,
 `prometheus_client`. Then add a job for your service to
 [`monitoring/prometheus/prometheus.yml`](monitoring/prometheus/prometheus.yml)
-(copy one: the Compose service name and its port). Today Map, Monster Raid and
-the Message Broker serve them.
+(copy one: the Compose service name and its port). Today Map, Monster Raid,
+Guild, Package Registry and the Message Broker serve them.
 
 ### Credentials
 
