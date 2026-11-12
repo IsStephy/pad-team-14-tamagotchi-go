@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Map Service (Team 14)",
-    "description": "Geolocation updates, nearby players and proximity detection.\n\nOwner: Dackohn. Port: 8085 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`, port 8080): players log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. The service itself accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.",
+    "description": "Geolocation updates, nearby players and proximity detection.\n\nOwner: Dackohn. Port: 8085 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`, port 8080): players log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. The service itself accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.\n\nMap asks User Management for relationships over gRPC, through the Message Broker (`{{brokerUrl}}`, port 8090; MAP_USER_MANAGEMENT_URL=grpc://message-broker:50051), and publishes map.proximity_detected on the broker. The \"Through the Message Broker\" folder reads the broker's public GET /metrics before and after the Map requests to show both happened there.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -56,6 +56,10 @@
     {
       "key": "wsUrl",
       "value": ""
+    },
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8090"
     }
   ],
   "item": [
@@ -618,6 +622,38 @@
       "name": "Map through the gateway",
       "item": [
         {
+          "name": "Broker counters before",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const count = (name, labels) => pm.response.text().split('\\n').filter(l => l.startsWith(name + '{') && labels.every(x => l.includes(x))).reduce((sum, l) => sum + Number(l.split(' ').pop()), 0);",
+                  "pm.collectionVariables.set('relationshipCalls', count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"GetRelationship\"', 'code=\"OK\"']));",
+                  "pm.collectionVariables.set('proximityEvents', count('broker_events_published_total', ['topic=\"map.proximity_detected\"', 'source=\"map-service\"']));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/metrics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "The broker's counters before the Map requests below: GetRelationship calls it forwarded to User Management, and the map.proximity_detected events Map published."
+          },
+          "response": []
+        },
+        {
           "name": "Alice reports her location",
           "event": [
             {
@@ -828,6 +864,42 @@
               ]
             },
             "description": "Map asks User Management for each relationship, through the gateway, with its own service key."
+          },
+          "response": []
+        },
+        {
+          "name": "Through the broker: GetRelationship over gRPC, proximity event published",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const count = (name, labels) => pm.response.text().split('\\n').filter(l => l.startsWith(name + '{') && labels.every(x => l.includes(x))).reduce((sum, l) => sum + Number(l.split(' ').pop()), 0);",
+                  "pm.test('Map asked User Management over gRPC, through the broker', function () {",
+                  "  pm.expect(count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"GetRelationship\"', 'code=\"OK\"'])).to.be.above(Number(pm.collectionVariables.get('relationshipCalls')));",
+                  "});",
+                  "pm.test('Map published map.proximity_detected on the broker', function () {",
+                  "  pm.expect(count('broker_events_published_total', ['topic=\"map.proximity_detected\"', 'source=\"map-service\"'])).to.be.above(Number(pm.collectionVariables.get('proximityEvents')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/metrics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "Alice's nearby list needs her relationships: Map asked User Management with GetRelationship at message-broker:50051, and the broker counted each call. Dave, 2 m from Alice, made Map publish map.proximity_detected."
           },
           "response": []
         },
