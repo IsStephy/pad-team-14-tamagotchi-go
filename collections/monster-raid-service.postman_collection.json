@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Monster Raid Service (Team 14)",
-    "description": "Cooperative guild raids against a shared monster.\n\nOwner: Dackohn. Port: 8086 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`, port 8080): players log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. The service itself accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.\n\nSet {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from .env (newman: `--env-var packageRegistryServiceKey=<key>`).",
+    "description": "Cooperative guild raids against a shared monster.\n\nOwner: Dackohn. Port: 8086 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`, port 8080): players log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. The service itself accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.\n\nPackage Registry creates the raid through the Message Broker (`{{brokerUrl}}`, port 8090), as it does in the stack: POST /raids is a service-only endpoint the gateway no longer forwards. Set {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY and {{brokerKey}} to BROKER_KEY from .env (newman: `--env-var packageRegistryServiceKey=<key> --env-var brokerKey=<key>`).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -55,6 +55,14 @@
     },
     {
       "key": "packageRegistryServiceKey",
+      "value": "change_me"
+    },
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "brokerKey",
       "value": "change_me"
     }
   ],
@@ -437,7 +445,41 @@
       "name": "Monster Raid through the gateway",
       "item": [
         {
-          "name": "Package Registry creates a raid (service key)",
+          "name": "Broker counters before",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const count = (name, labels) => pm.response.text().split('\\n').filter(l => l.startsWith(name + '{') && labels.every(x => l.includes(x))).reduce((sum, l) => sum + Number(l.split(' ').pop()), 0);",
+                  "pm.collectionVariables.set('guildCalls', count('broker_grpc_calls_total', ['target=\"guild-service\"', 'method=\"GetGuild\"', 'code=\"OK\"']));",
+                  "pm.collectionVariables.set('rewardCalls', count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"AdjustCurrency\"']));",
+                  "pm.collectionVariables.set('tamagotchiRequests', count('broker_requests_total', ['target=\"tamagotchi-service\"']));",
+                  "pm.collectionVariables.set('raidEvents', count('broker_events_published_total', ['topic=\"raid.completed\"', 'source=\"monster-raid-service\"']));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/metrics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "The broker's counters before the raid: GetGuild and AdjustCurrency calls over gRPC, REST requests to Tamagotchi, and raid.completed events."
+          },
+          "response": []
+        },
+        {
+          "name": "Package Registry creates a raid, through the broker",
           "event": [
             {
               "listen": "test",
@@ -458,6 +500,10 @@
                 "value": "application/json"
               },
               {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
                 "key": "X-Service-Key",
                 "value": "{{packageRegistryServiceKey}}"
               }
@@ -467,15 +513,17 @@
               "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
             },
             "url": {
-              "raw": "{{gatewayUrl}}/raids",
+              "raw": "{{brokerUrl}}/services/monster-raid-service/raids",
               "host": [
-                "{{gatewayUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
+                "services",
+                "monster-raid-service",
                 "raids"
               ]
             },
-            "description": "A service-to-service call through the gateway: Package Registry's own X-Service-Key, no player token. Set {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from .env."
+            "description": "A service-to-service call through the Message Broker: the broker key plus Package Registry's own X-Service-Key, no player token. Set {{brokerKey}} to BROKER_KEY and {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from .env."
           },
           "response": []
         },
@@ -772,6 +820,48 @@
             "description": "Rewards (7 currency, 3 xp) were paid through User Management with Monster Raid's service key."
           },
           "response": []
+        },
+        {
+          "name": "Through the broker: Guild and User Management over gRPC, Tamagotchi over REST, raid.completed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const count = (name, labels) => pm.response.text().split('\\n').filter(l => l.startsWith(name + '{') && labels.every(x => l.includes(x))).reduce((sum, l) => sum + Number(l.split(' ').pop()), 0);",
+                  "pm.test('membership was checked with GetGuild over gRPC', function () {",
+                  "  pm.expect(count('broker_grpc_calls_total', ['target=\"guild-service\"', 'method=\"GetGuild\"', 'code=\"OK\"'])).to.be.above(Number(pm.collectionVariables.get('guildCalls')));",
+                  "});",
+                  "pm.test('the reward was paid with AdjustCurrency over gRPC', function () {",
+                  "  pm.expect(count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"AdjustCurrency\"'])).to.be.above(Number(pm.collectionVariables.get('rewardCalls')));",
+                  "});",
+                  "pm.test('the Tamagotchi was read through the broker', function () {",
+                  "  pm.expect(count('broker_requests_total', ['target=\"tamagotchi-service\"'])).to.be.above(Number(pm.collectionVariables.get('tamagotchiRequests')));",
+                  "});",
+                  "pm.test('raid.completed was published on the broker', function () {",
+                  "  pm.expect(count('broker_events_published_total', ['topic=\"raid.completed\"', 'source=\"monster-raid-service\"'])).to.be.above(Number(pm.collectionVariables.get('raidEvents')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/metrics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "Every call Monster Raid made for this raid went through the broker: GetGuild (membership) and AdjustCurrency (the reward) at message-broker:50051, the Tamagotchi over REST at /services/tamagotchi-service, and raid.completed on its topic."
+          },
+          "response": []
         }
       ]
     },
@@ -808,14 +898,14 @@
           "response": []
         },
         {
-          "name": "A player can't create raids (401)",
+          "name": "A player can't create raids (401, or 404 at a gateway that no longer forwards it)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                  "pm.test('401 or 404', function () { pm.expect(pm.response.code).to.be.oneOf([401, 404]); });"
                 ]
               }
             }
@@ -845,12 +935,12 @@
                 "raids"
               ]
             },
-            "description": "POST /raids is internal: only Package Registry's service key, never a player."
+            "description": "POST /raids is service-only: never a player. A gateway without internal routes (from v4.2.0) answers 404 without reaching the service; earlier ones forward it and Monster Raid answers 401."
           },
           "response": []
         },
         {
-          "name": "A wrong service key (401)",
+          "name": "A wrong service key through the broker (401)",
           "event": [
             {
               "listen": "test",
@@ -870,6 +960,10 @@
                 "value": "application/json"
               },
               {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
                 "key": "X-Service-Key",
                 "value": "not-a-real-key"
               }
@@ -879,14 +973,60 @@
               "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
             },
             "url": {
-              "raw": "{{gatewayUrl}}/raids",
+              "raw": "{{brokerUrl}}/services/monster-raid-service/raids",
               "host": [
-                "{{gatewayUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
+                "services",
+                "monster-raid-service",
                 "raids"
               ]
             }
+          },
+          "response": []
+        },
+        {
+          "name": "The broker key alone (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/monster-raid-service/raids",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "monster-raid-service",
+                "raids"
+              ]
+            },
+            "description": "The broker's key says the request came through the broker, not who sent it: Monster Raid also needs a known service key."
           },
           "response": []
         },
