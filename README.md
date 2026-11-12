@@ -1755,8 +1755,12 @@ answers "who is near me?" with distance and friend/enemy/none relationship
 (from User Management), streams locations over a WebSocket, and publishes
 `ProximityDetected` when two unrelated players come within 6 m.
 
-**In the shared stack** it's reached only through the gateway, and calls User
-Management through the gateway with `SERVICE_KEY_MAP`:
+**In the shared stack** players reach it through the gateway. With the values
+in `.env.example`, it calls User Management **over gRPC through the Message
+Broker** (`MAP_USER_MANAGEMENT_URL=grpc://message-broker:50051`,
+`UserManagement/GetRelationship`) with `SERVICE_KEY_MAP` and the broker's key,
+and publishes `map.proximity_detected` on the broker (`MAP_BROKER_URL`). With
+both empty it calls User Management through the gateway and only logs its events.
 
 Stream frames are checked like `POST /map/location`: a bad one gets
 `{"event":"error","data":{"message":...}}` and the stream stays open.
@@ -1818,9 +1822,15 @@ Tamagotchi (membership checked with Guild, ownership with Tamagotchi),
 idempotent attacks, live HP and hits over a WebSocket, and the reward payout
 on a kill or failure when the timer runs out.
 
-**In the shared stack** it's reached only through the gateway, and calls
-Guild, Tamagotchi and User Management through the gateway with
-`SERVICE_KEY_MONSTER_RAID`. `POST /raids` additionally needs Package
+**In the shared stack** players reach it through the gateway. With the values
+in `.env.example`, it calls everyone through the Message Broker with
+`SERVICE_KEY_MONSTER_RAID` and the broker's key: Guild (`GetGuild`) and User
+Management (`AdjustCurrency`, raid rewards) **over gRPC**
+(`grpc://message-broker:50051`), Tamagotchi over REST until it serves gRPC. It
+publishes `raid.started`, `raid.completed` and `raid.failed` on the broker, and
+serves `MonsterRaid/CreateRaid` over gRPC on `50086` for Package Registry. With
+the broker settings empty it calls the others through the gateway and only logs
+its events. `POST /raids` additionally needs Package
 Registry's key (`PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY`). The service runs
 its versioned database migrations on start-up.
 
