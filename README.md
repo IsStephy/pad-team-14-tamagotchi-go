@@ -2148,30 +2148,28 @@ calls. Keys, tokens and tickets are never logged.
 
 **Outgoing calls and circuit breaker:** User Management (`GET /users/{userId}`,
 `GET /users/{userId}/relationship/{targetId}`) with Guild's own
-`X-Service-Key`: through the broker when `GUILD_USER_MANAGEMENT_URL` is the
-broker's address (`http://message-broker:8090`, sent as
-`/services/user-management-service/...` with `X-Broker-Key`), through the
-gateway when it is the gateway's. 3 errors within `REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip the
+`X-Service-Key`, through the broker. In the shared stack
+`GUILD_USER_MANAGEMENT_URL` is `grpc://message-broker:50051`: `GetUser` and
+`GetRelationship` over gRPC. `http://message-broker:8090` sends the REST calls
+through it instead (`/services/user-management-service/...` with
+`X-Broker-Key`). 3 errors within `REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip the
 breaker: the request then answers `503` + `Retry-After` without calling, until
 one trial call after the cooldown succeeds. Timeouts, refused connections and
-`5xx` count; `4xx` doesn't. **User Management is still the built-in mock in
-the shared stack** (`GUILD_USER_MANAGEMENT_URL` empty): it accepts only players
-on those endpoints today. Once it accepts `SERVICE_KEY_GUILD` and the broker's
-key, set `GUILD_USER_MANAGEMENT_URL=http://message-broker:8090`.
+`5xx` count; `4xx` doesn't. Every user must exist in User Management, so the
+Postman collection first registers its players there (folder "Setup: real
+players").
 
 **Events:** inviting a member publishes `GuildInvitation`:
 
-- with `GUILD_BROKER_URL` set (Lab 4) on the broker topic **`guild.invitation`**,
+- with `GUILD_BROKER_URL` set (Lab 4, the shared stack's default) on the
+  broker topic **`guild.invitation`**, which Notification subscribes to,
   payload `{userId, guildId, guildName, invitedBy, sentAt}` — `userId` (the
   invited player) moves into the payload, since the envelope has no field for
   it. The broker wraps it in the agreed envelope and delivers it to every
   subscriber until acked;
-- otherwise on Notification's Redis channel `notification-events`, as
+- with `GUILD_BROKER_URL` set empty in `.env`, on Notification's Redis
+  channel `notification-events`, as in Lab 3:
   `{"type":"GuildInvitation","eventId","userId":"<invited player>","payload":{guildId, guildName, invitedBy, sentAt}}`.
-
-`GUILD_BROKER_URL` is empty in the shared stack until Notification subscribes
-to `guild.invitation` (#163): switching earlier would send invitations to a
-topic nobody reads.
 
 **Receives events:** `POST /events`, broker only (`X-Broker-Key`). Each
 `messageId` is recorded in PostgreSQL in the same transaction as its handling,
@@ -2188,9 +2186,9 @@ deactivate and cancel.
 
 **Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
 v2 — Compose starts PostgreSQL, and the service runs its versioned database
-migrations on start-up. User Management is mocked with fixed test data.
-Monster Raid's `POST /raids` is called for real when `MONSTER_RAID_URL` is set
-(the gateway, in the shared stack) and mocked otherwise.
+migrations on start-up. Run on its own like this, User Management and Monster
+Raid are built-in mocks; the shared stack calls the real ones through the
+Message Broker.
 
 ```bash
 cd package-registry-service
@@ -2233,17 +2231,16 @@ never logged.
 
 **Outgoing calls and circuit breaker:** Monster Raid (`POST /raids`) and User
 Management (`GET /users/{userId}`), with Package Registry's own
-`X-Service-Key`: each through the broker when its URL
-(`PACKAGE_REGISTRY_MONSTER_RAID_URL`, `PACKAGE_REGISTRY_USER_MANAGEMENT_URL`)
-is the broker's address (`http://message-broker:8090`), through the gateway
-when it is the gateway's. `PACKAGE_REGISTRY_MONSTER_RAID_URL` stays the gateway
-until Monster Raid accepts the broker's key (#164). Each call has its own
-breaker: 3 errors within
+`X-Service-Key`, both through the broker. In the shared stack
+`PACKAGE_REGISTRY_MONSTER_RAID_URL` and `PACKAGE_REGISTRY_USER_MANAGEMENT_URL`
+are `grpc://message-broker:50051`: `CreateRaid` and `GetUser` over gRPC.
+`http://message-broker:8090` sends the REST calls through it instead. Each
+call has its own breaker: 3 errors within
 `REQUEST_TIMEOUT_MS` × 3.5 (28 s) trip it, the request then answers `503` +
 `Retry-After` without calling, until one trial call after the cooldown
-succeeds. **User Management is still the built-in mock in the shared stack**
-(`PACKAGE_REGISTRY_USER_MANAGEMENT_URL` empty) until it accepts
-`SERVICE_KEY_PACKAGE_REGISTRY`.
+succeeds. Every user must exist in User Management, so the Postman collection
+first registers its players there (folder "Setup: real players"); the acting
+admin is `admin-1`, seeded from `PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID`.
 
 **Events:** publishes none. **Receives** at `POST /events`, broker only
 (`X-Broker-Key`), deduplicated by `messageId` in PostgreSQL like Guild's; it
