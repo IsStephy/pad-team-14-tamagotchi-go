@@ -2779,8 +2779,8 @@ admins are seeded by user id, and User Management issues new ids on every run.
 The **user-management-service** and **battle-service** collections go through
 the gateway like a client app: their players register and log in through User
 Management, and each acts with their own token. Battle's run ends by checking
-that the winner was paid in User Management, which Battle reaches through the
-gateway until it runs on the broker. User Management's two currency
+that User Management paid the winner from the `battle.ended` event Battle
+published on the Message Broker. User Management's two currency
 adjustments are service-only, so they go through the Message Broker with its
 key and Battle's (`brokerKey`, `battleServiceKey`). Its "Through the Message
 Broker" folder shows each service key opening only its own endpoints (Guild
