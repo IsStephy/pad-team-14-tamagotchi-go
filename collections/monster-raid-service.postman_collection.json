@@ -935,7 +935,7 @@
                 "raids"
               ]
             },
-            "description": "POST /raids is service-only: never a player. Gateway v4.1.0 and later answer 404 without reaching the service; earlier ones forward it and Monster Raid answers 401."
+            "description": "POST /raids is service-only: never a player. A gateway without internal routes (from v4.2.0) answers 404 without reaching the service; earlier ones forward it and Monster Raid answers 401."
           },
           "response": []
         },
