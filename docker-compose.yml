@@ -152,27 +152,28 @@ services:
       DB_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
       DB_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
       DB_SSLMODE: disable
-      # Service-to-service REST goes through the gateway, like client traffic:
-      # currency adjust (User Management), types, xp and transfer-owner
+      # Only without the broker (BATTLE_BROKER_URL set empty): where Battle's
+      # calls go - users and balances (User Management), types and Tamagotchis
       # (Tamagotchi) and package stat definitions (Package Registry).
       USER_MANAGEMENT_SERVICE_URL: ${BATTLE_USER_MANAGEMENT_URL:-http://gateway:8080}
       TAMAGOTCHI_SERVICE_URL: ${BATTLE_TAMAGOTCHI_SERVICE_URL:-http://gateway:8080}
       PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-http://gateway:8080}
       # The key this service presents to the Service-only endpoints it calls.
       SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
-      # Message Broker (Lab 4), opt-in: set BATTLE_BROKER_URL
-      # (http://message-broker:8090) once Tamagotchi accepts the broker's key.
-      # Then every call above goes through the broker instead, the battle.*
-      # events go to its topics, and User Management pays the currency from
-      # battle.ended. Empty = the URLs above, events only logged.
-      BROKER_URL: ${BATTLE_BROKER_URL:-}
-      BROKER_KEY: ${BROKER_KEY:-}
-      # With the broker: the services called over gRPC instead of REST, at
-      # message-broker:50051. Only services that serve gRPC.
-      GRPC_DEPENDENCIES: ${BATTLE_GRPC_DEPENDENCIES:-user-management-service}
-      # true once Tamagotchi applies battle.ended itself (XP and the transfer):
-      # Battle then stops calling it for them.
-      TAMAGOTCHI_BY_EVENT: ${BATTLE_TAMAGOTCHI_BY_EVENT:-false}
+      # Message Broker (Lab 4): every call goes through it (the URLs above are
+      # unused), and battle.ended, battle.request_received and
+      # battle.tamagotchi_captured go to its topics. BATTLE_BROKER_URL set
+      # empty in .env turns it off.
+      BROKER_URL: ${BATTLE_BROKER_URL-http://message-broker:8090}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # Called over gRPC at message-broker:50051 instead of REST: the services
+      # that serve it. Package Registry stays on REST through the broker.
+      GRPC_DEPENDENCIES: ${BATTLE_GRPC_DEPENDENCIES-user-management-service,tamagotchi-service}
+      # The settlement comes from battle.ended: User Management pays the
+      # currency, and with this Tamagotchi awards the XP and moves the captured
+      # Tamagotchi, so Battle calls neither. false = Battle calls Tamagotchi's
+      # xp and transfer-owner itself (same keys, so never twice).
+      TAMAGOTCHI_BY_EVENT: ${BATTLE_TAMAGOTCHI_BY_EVENT:-true}
       # Authorization is at the gateway: only requests carrying GATEWAY_KEY as
       # X-Gateway-Key are served, and the player comes as X-User-Id. Live
       # sockets are opened directly with a single-use ticket the gateway signs
