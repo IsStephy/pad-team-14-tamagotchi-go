@@ -1,16 +1,25 @@
 flowchart TB
     %% Architecture diagram - the source of architecture.png (render steps in the README).
-    %% Solid dark arrows: REST from clients, routed by the Gateway to the owning service.
-    %% Amber arrows: service-to-service REST, which also goes through the Gateway.
+    %% Solid dark arrows: client requests, from the Gateway through the broker to one replica.
+    %% Amber arrows: service-to-service calls, through the broker.
     %% Thick blue arrows: WebSockets - negotiated by the Gateway, then through ws-proxy to a replica.
-    %% Dotted grey arrows: events on Redis Pub/Sub for Notification Service.
-    %% Teal arrows: Service Discovery (Lab 3) - registration, health checks, alerts.
+    %% Dotted grey arrows: events published on a topic; the broker hands a copy to each subscribed service.
+    %% Teal arrows: Service Discovery - registration with topics, health checks, alerts, instance lists.
+    %% Purple arrows: monitoring - Prometheus scrapes /metrics, Promtail ships logs to Loki, Grafana shows both.
 
     Client(["Client apps"])
     GW["<b>API Gateway</b><br/>Python · port 8080<br/>tokens · routing · limits"]
+    MB["<b>Message Broker</b><br/>Python · port 8090<br/>service queues · topics · thread-per-request"]
     WP["<b>ws-proxy</b><br/>nginx · ports 8082, 8085–8088<br/>one host port per scaled service"]
     SD["<b>Service Discovery</b><br/>Python · port 8089<br/>registry · health checks · alerts"]
     TGM(["Telegram<br/>alerts topic"])
+
+    subgraph Monitoring["Monitoring"]
+        PM["<b>Prometheus</b><br/>port 9090"]
+        PT["<b>Promtail</b>"]
+        LK["<b>Loki</b>"]
+        GF["<b>Grafana</b><br/>port 3000 · dashboard"]
+    end
 
     subgraph Services["Services · each runs as 2–3 replicas"]
         UM["User Management"]
@@ -35,25 +44,26 @@ flowchart TB
     %% Clients reach the system only through the Gateway.
     Client -->|"REST · Bearer token<br/>GET /ws/negotiate"| GW
 
-    %% The Gateway routes every REST request to the service that owns it,
-    %% forwarding X-User-Id + X-Gateway-Key instead of the token.
-    GW --> UM
-    GW --> BT
-    GW --> TG
-    GW --> NT
-    GW --> MP
-    GW --> MR
-    GW --> GD
-    GW --> PR
+    %% The Gateway checks the token and puts the request on the target
+    %% service's queue in the broker; one replica answers.
+    GW -->|"request for a service<br/>(subscriber-based queue)"| MB
+    MB --> UM
+    MB --> BT
+    MB --> TG
+    MB --> NT
+    MB --> MP
+    MB --> MR
+    MB --> GD
+    MB --> PR
 
-    %% Service-to-service REST also goes through the Gateway, carrying the
-    %% caller's own X-Service-Key.
-    BT -->|"to User Management,<br/>Tamagotchi, Package Registry"| GW
-    MR -->|"to User Management,<br/>Tamagotchi, Guild"| GW
-    PR -->|"to Monster Raid"| GW
-    MP -->|"to User Management"| GW
-    TG -->|"to Package Registry,<br/>User Management"| GW
-    GD -->|"to User Management"| GW
+    %% Service-to-service calls also go on the target's queue in the broker,
+    %% carrying the caller's own X-Service-Key.
+    BT -->|"to User Management,<br/>Tamagotchi, Package Registry"| MB
+    MR -->|"to User Management,<br/>Tamagotchi, Guild"| MB
+    PR -->|"to Monster Raid"| MB
+    MP -->|"to User Management"| MB
+    TG -->|"to Package Registry,<br/>User Management"| MB
+    GD -->|"to User Management"| MB
 
     %% WebSockets: negotiated by the Gateway; the client connects to ws-proxy,
     %% which hands the socket to one replica.
@@ -63,12 +73,14 @@ flowchart TB
     WP ==> MR
     WP ==> GD
 
-    %% Events for Notification Service (Redis Pub/Sub, not through the Gateway).
-    UM -.->|events| NT
-    BT -.->|events| NT
-    MP -.->|events| NT
-    MR -.->|events| NT
-    GD -.->|events| NT
+    %% Events: the publisher names only a topic; the broker hands one copy to
+    %% one replica of every subscribed service.
+    UM -.->|"events on topics"| MB
+    BT -.-> MB
+    MP -.-> MB
+    MR -.-> MB
+    GD -.-> MB
+    MB -.->|"a copy per subscribed service"| NT
 
     %% Each service owns its data store, shared by all of its replicas.
     UM --- UMdb
@@ -80,34 +92,49 @@ flowchart TB
     GD --- GDdb
     PR --- PRdb
 
-    %% Service Discovery: every replica registers its own address on start-up,
-    %% sends heartbeats and deregisters on shutdown; Service Discovery checks
-    %% each one's /health and alerts the team.
-    Services -->|"register · heartbeat · deregister<br/>(every replica, own address)"| SD
+    %% Service Discovery: every replica registers its own address and the
+    %% topics it wants; the broker reads both to route.
+    Services -->|"register (address, topics) · heartbeat · deregister"| SD
     SD -.->|"GET /health · 10 s"| Services
     SD -->|"critical load, unreachable"| TGM
+    MB -->|"instances and topics · 5 s"| SD
+
+    %% Monitoring: Prometheus scrapes GET /metrics on every replica (found
+    %% through Docker's DNS); Promtail ships every container's logs to Loki;
+    %% Grafana shows both on a provisioned dashboard.
+    PM -.->|"GET /metrics · 15 s"| Services
+    PM -.-> MB
+    PT -->|"container logs"| LK
+    GF --> PM
+    GF --> LK
 
     classDef client fill:#eef1f4,stroke:#5a6470,stroke-width:2px,color:#1f2933
     classDef gateway fill:#fdecc8,stroke:#c27c0e,stroke-width:3px,color:#3d2a05
+    classDef broker fill:#fbe3d6,stroke:#b5502b,stroke-width:3px,color:#3b170a
     classDef blue fill:#dbe8f7,stroke:#2f6db5,stroke-width:2px,color:#10243e
     classDef purple fill:#e6e1f5,stroke:#5b48a2,stroke-width:2px,color:#1d1638
     classDef green fill:#dcefe2,stroke:#2e7d4f,stroke-width:2px,color:#0f2d1b
     classDef infra fill:#d9f0ec,stroke:#1f7a6c,stroke-width:2px,color:#0b2e29
+    classDef monitor fill:#efe2f4,stroke:#7a3e9d,stroke-width:2px,color:#2b1236
     classDef db fill:#f4f6f8,stroke:#9aa5b1,color:#3c4650
 
     class Client,TGM client
     class GW gateway
+    class MB broker
     class MR,BT,GD,MP blue
     class TG,PR purple
     class UM,NT green
     class SD,WP infra
+    class PM,PT,LK,GF monitor
     class UMdb,BTdb,TGdb,NTdb,MPdb,MRdb,GDdb,PRdb db
     style Services fill:#fafbfc,stroke:#9aa5b1,stroke-dasharray:6 4,color:#3c4650
+    style Monitoring fill:#fbf7fc,stroke:#b08bc2,stroke-dasharray:6 4,color:#2b1236
 
-    %% Edge colours: client and routed REST dark, service calls amber,
-    %% WebSockets blue, events grey, Service Discovery teal.
-    linkStyle 0,1,2,3,4,5,6,7,8 stroke:#3c4650,stroke-width:2px
-    linkStyle 9,10,11,12,13,14 stroke:#c27c0e,stroke-width:2px
-    linkStyle 15,16,17,18,19 stroke:#2f6db5,stroke-width:3px
-    linkStyle 20,21,22,23,24 stroke:#8a939c,stroke-width:1.5px
-    linkStyle 33,34,35 stroke:#1f7a6c,stroke-width:2px
+    %% Edge colours: client requests dark, service calls amber, WebSockets
+    %% blue, events grey, Service Discovery teal, monitoring purple.
+    linkStyle 0,1,2,3,4,5,6,7,8,9 stroke:#3c4650,stroke-width:2px
+    linkStyle 10,11,12,13,14,15 stroke:#c27c0e,stroke-width:2px
+    linkStyle 16,17,18,19,20 stroke:#2f6db5,stroke-width:3px
+    linkStyle 21,22,23,24,25,26 stroke:#8a939c,stroke-width:1.5px
+    linkStyle 35,36,37,38 stroke:#1f7a6c,stroke-width:2px
+    linkStyle 39,40,41,42,43 stroke:#7a3e9d,stroke-width:2px

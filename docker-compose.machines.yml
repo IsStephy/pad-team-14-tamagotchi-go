@@ -18,6 +18,10 @@
 # Each one can be changed with its *_PUBLISHED_PORT variable.
 
 services:
+  # Loki, for the Promtail on every other machine (monitoring/docker-compose.logs.yml).
+  loki:
+    ports:
+      - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${LOKI_PUBLISHED_PORT:-3100}:3100"
   user-management-service-db:
     ports:
       - "${MACHINES_BIND_IP:?set it in .env - the main machine's LAN IP, see Running across machines in the README}:${USER_MANAGEMENT_DB_PUBLISHED_PORT:-5431}:5432"

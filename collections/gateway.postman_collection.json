@@ -52,6 +52,10 @@
     {
       "key": "chatUrl",
       "value": ""
+    },
+    {
+      "key": "adminKey",
+      "value": "change_me"
     }
   ],
   "item": [
@@ -873,15 +877,15 @@
           "response": []
         },
         {
-          "name": "Monster Raid reads the guild with its service key",
+          "name": "A service key alone is no credential at the gateway (401)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-                  "pm.test('sees the members', function () { pm.expect(pm.response.json().members).to.be.an('array'); });"
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('asks for a player token', function () { pm.expect(pm.response.json().error).to.eql('missing bearer token'); });"
                 ]
               }
             }
@@ -904,7 +908,7 @@
                 "{{guildId}}"
               ]
             },
-            "description": "No player token: Monster Raid Service checks raid joiners' membership as itself. The gateway passes X-Service-Key on and adds its own key; Guild Service accepts Monster Raid's key on this one endpoint. Set monsterRaidServiceKey to SERVICE_KEY_MONSTER_RAID from .env."
+            "description": "Services call each other through the Message Broker since Lab 4, never through the gateway: Monster Raid reads the guild with its key through the broker (X-Broker-Key + X-Service-Key). At the gateway a service key alone is no credential and is never passed on. Set monsterRaidServiceKey to SERVICE_KEY_MONSTER_RAID from .env."
           },
           "response": []
         },
@@ -939,7 +943,7 @@
                 "{{guildId}}"
               ]
             },
-            "description": "The gateway forwards it - service keys are checked by the service that owns the endpoint - and Guild Service refuses it."
+            "description": "Refused at the gateway, which takes no service keys: services go through the Message Broker."
           },
           "response": []
         },
@@ -978,6 +982,235 @@
               ]
             },
             "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Service-only endpoints (404 at the gateway)",
+      "description": "The endpoints only services call are not routed by the gateway since Lab 4 (gateway v4.2.0): services reach them through the Message Broker.",
+      "item": [
+        {
+          "name": "Adjust currency is not routed (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says it is not available through the gateway', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('is not available through the gateway');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/currency/adjust",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "currency",
+                "adjust"
+              ]
+            },
+            "description": "Service-only: other services call it through the Message Broker. The gateway answers 404 without reaching the service, even with a player token and a service key."
+          },
+          "response": []
+        },
+        {
+          "name": "Award XP is not routed (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says it is not available through the gateway', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('is not available through the gateway');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/t-postman/xp",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "t-postman",
+                "xp"
+              ]
+            },
+            "description": "Service-only: other services call it through the Message Broker. The gateway answers 404 without reaching the service, even with a player token and a service key."
+          },
+          "response": []
+        },
+        {
+          "name": "Transfer a Tamagotchi is not routed (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says it is not available through the gateway', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('is not available through the gateway');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/t-postman/transfer-owner",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "t-postman",
+                "transfer-owner"
+              ]
+            },
+            "description": "Service-only: other services call it through the Message Broker. The gateway answers 404 without reaching the service, even with a player token and a service key."
+          },
+          "response": []
+        },
+        {
+          "name": "Create a raid is not routed (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says it is not available through the gateway', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('is not available through the gateway');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/raids",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids"
+              ]
+            },
+            "description": "Service-only: other services call it through the Message Broker. The gateway answers 404 without reaching the service, even with a player token and a service key."
           },
           "response": []
         }
@@ -1387,6 +1620,272 @@
               "mode": "raw",
               "raw": "{\n  \"userId\": \"{{memberId}}\"\n}"
             }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Log download (GET /logs)",
+      "description": "The gateway's GET /logs (#180): every service's logs, read from Loki, as an NDJSON file. Needs the admin key (adminKey = BROKER_ADMIN_KEY from the CPR .env) and the monitoring stack (Loki, Promtail) running.",
+      "item": [
+        {
+          "name": "A request to follow",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the gateway kept our request id', function () { pm.expect(pm.response.headers.get('X-Request-Id')).to.eql('logs-' + pm.collectionVariables.get('runId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "logs-{{runId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/packages",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
+            "description": "A public request with our own X-Request-Id, so the next requests can find its log lines in every service."
+          },
+          "response": []
+        },
+        {
+          "name": "Download the logs (admin key)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Promtail ships the lines to Loki every few seconds.",
+                  "setTimeout(function () {}, 4000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('an NDJSON attachment', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/x-ndjson');",
+                  "    pm.expect(pm.response.headers.get('Content-Disposition')).to.match(/^attachment; filename=\"logs-.*\\.ndjson\"$/);",
+                  "});",
+                  "const lines = pm.response.text().split('\\n').filter(function (l) { return l; }).map(function (l) { return JSON.parse(l); });",
+                  "pm.test('X-Logs-Lines counts the lines', function () { pm.expect(Number(pm.response.headers.get('X-Logs-Lines'))).to.eql(lines.length); });",
+                  "pm.test('the logs of several services', function () {",
+                  "    const services = new Set(lines.map(function (l) { return l.service; }));",
+                  "    pm.expect(services.has('gateway')).to.be.true;",
+                  "    pm.expect(services.size).to.be.above(2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/logs?since=15m&limit=5000",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "15m"
+                },
+                {
+                  "key": "limit",
+                  "value": "5000"
+                }
+              ]
+            },
+            "description": "Every service's logs from the last 15 minutes. curl -OJ saves the same answer as logs-<since>-<until>.ndjson."
+          },
+          "response": []
+        },
+        {
+          "name": "Follow one request by its id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const lines = pm.response.text().split('\\n').filter(function (l) { return l; }).map(function (l) { return JSON.parse(l); });",
+                  "const id = 'logs-' + pm.collectionVariables.get('runId');",
+                  "pm.test('only that request', function () {",
+                  "    pm.expect(lines.length).to.be.above(0);",
+                  "    lines.forEach(function (l) { pm.expect(JSON.stringify(l)).to.include(id); });",
+                  "});",
+                  "pm.test('the gateway and Package Registry, the services it went through', function () {",
+                  "    const services = lines.map(function (l) { return l.service; });",
+                  "    pm.expect(services).to.include('gateway');",
+                  "    pm.expect(services).to.include('package-registry-service');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/logs?requestId=logs-{{runId}}&since=15m",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "requestId",
+                  "value": "logs-{{runId}}"
+                },
+                {
+                  "key": "since",
+                  "value": "15m"
+                }
+              ]
+            },
+            "description": "?requestId= finds the lines of one request in every service it touched."
+          },
+          "response": []
+        },
+        {
+          "name": "An unknown level - 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });",
+                  "pm.test('says what is wrong', function () { pm.expect(pm.response.json().error).to.include('level must be one of'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/logs?level=loud",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "level",
+                  "value": "loud"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Without the admin key - 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('says why', function () { pm.expect(pm.response.json().error).to.eql('missing or invalid X-Admin-Key'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/logs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "logs"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "A wrong admin key - 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "wrong-{{runId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/logs",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "logs"
+              ]
+            },
+            "description": ""
           },
           "response": []
         }

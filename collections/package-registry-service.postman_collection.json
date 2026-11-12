@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Package Registry Service (Team 14)",
-    "description": "Registry of client packages, their package-local Tamagotchi stat definitions, and Monster Raid configuration.\n\nOwner: IsStephy. Default port: 8088.\n\nEvery request goes through the gateway in the shared stack: the gateway verifies the player's token, drops it, and forwards `X-Gateway-Key` (proving the request came through it) plus `X-User-Id` (the player). This service never verifies tokens and answers 401 to anything without a valid `X-Gateway-Key`, except /health and /docs.\n\nThis collection talks to the service directly, so it sends those two headers itself - it plays the gateway. Set the `gatewayKey` variable to the GATEWAY_KEY in your .env (the default, `change_me`, matches .env.example). To go through the real gateway with real logins, use collections/gateway.postman_collection.json.\n\n`GET /packages` and `GET /packages/{id}` need no player, but still the gateway key. Admin and package-moderator roles are checked by this service against its own data.\n\nThe first admin is seeded from PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID (admin-1 by default), which is the `adminId` this collection uses.",
+    "description": "Registry of client packages, their package-local Tamagotchi stat definitions, and Monster Raid configuration.\n\nOwner: IsStephy. Default port: 8088.\n\nEvery request goes through the gateway in the shared stack: the gateway verifies the player's token, drops it, and forwards `X-Gateway-Key` (proving the request came through it) plus `X-User-Id` (the player). This service never verifies tokens and answers 401 to anything without a valid `X-Gateway-Key`, except /health and /docs.\n\nThis collection talks to the service directly, so it sends those two headers itself - it plays the gateway. Set the `gatewayKey` variable to the GATEWAY_KEY in your .env (the default, `change_me`, matches .env.example). To go through the real gateway with real logins, use collections/gateway.postman_collection.json.\n\n`GET /packages` and `GET /packages/{id}` need no player, but still the gateway key. Admin and package-moderator roles are checked by this service against its own data.\n\nThe first admin is seeded from PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID (admin-1 by default), which is the `adminId` this collection uses.\n\nLab 4: the `Message Broker (Lab 4)` folder plays the Message Broker - it sends `X-Broker-Key` (set the `brokerKey` variable to BROKER_KEY in your .env; the default `change_me` matches .env.example). It needs a service started with BROKER_KEY set.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -19,7 +19,7 @@
     },
     {
       "key": "moderatorId",
-      "value": "mod-1"
+      "value": ""
     },
     {
       "key": "adminId",
@@ -27,7 +27,7 @@
     },
     {
       "key": "userId",
-      "value": "u-owner-1"
+      "value": ""
     },
     {
       "key": "guildId",
@@ -40,6 +40,30 @@
     {
       "key": "gatewayKey",
       "value": "change_me"
+    },
+    {
+      "key": "brokerKey",
+      "value": "change_me"
+    },
+    {
+      "key": "eventMessageId",
+      "value": ""
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "password",
+      "value": "correct-horse-battery"
+    },
+    {
+      "key": "secondModeratorId",
+      "value": ""
+    },
+    {
+      "key": "newAdminId",
+      "value": ""
     }
   ],
   "item": [
@@ -82,6 +106,280 @@
       "response": []
     },
     {
+      "name": "Metrics (Prometheus)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK, with no key', function () { pm.response.to.have.status(200); });",
+              "pm.test('Prometheus text format', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('text/plain'); });",
+              "const body = pm.response.text();",
+              "pm.test('the four agreed metrics', function () {",
+              "  ['http_requests_total', 'http_request_duration_seconds', 'http_requests_in_flight', 'circuit_breaker_state']",
+              "    .forEach(function (name) { pm.expect(body).to.include('# TYPE ' + name + ' '); });",
+              "});",
+              "pm.test('a breaker per called service', function () { pm.expect(body).to.include('circuit_breaker_state{target=\"monster-raid-service\"}'); });",
+              "pm.test('routes are patterns, /health and /metrics not counted', function () {",
+              "  pm.expect(body).to.not.include('route=\"/health\"');",
+              "  pm.expect(body).to.not.include('route=\"/metrics\"');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/metrics",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "metrics"
+          ]
+        },
+        "description": "What Prometheus scrapes from every replica every 15 s: the four metrics every service serves (CPR README, \"Metrics every service serves\"). No key, like /health - Prometheus sends none, and the gateway doesn't route it."
+      },
+      "response": []
+    },
+    {
+      "name": "Setup: real players (User Management)",
+      "description": "Real players for the requests below, created in User Management through the gateway ({{gatewayUrl}}). The service looks every user up in User Management over gRPC through the Message Broker - there is no mock in the shared stack - so the ids must exist. Usernames carry a timestamp, so the collection can be re-run.",
+      "item": [
+        {
+          "name": "Register the moderator",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'pr_mod_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('moderatorId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: moderates the package registered below. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the second moderator",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'pr_mod2_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('secondModeratorId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: is added as a moderator. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the player",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'pr_player_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('userId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: registers to the package. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the new admin",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'pr_admin_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('newAdminId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: is granted admin by the seeded admin-1. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Grant Admin",
       "event": [
         {
@@ -89,10 +387,9 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "// 200 the first time, 409 on later runs - both mean admin-2 exists.",
-              "pm.test('200 OK or 409 already an admin', function () {",
-              "    pm.expect([200, 409]).to.include(pm.response.code);",
-              "});"
+              "// A fresh player each run, so always 200. {{adminId}} is admin-1, the admin",
+              "// the stack seeds from PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID.",
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
             ]
           }
         }
@@ -115,7 +412,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"userId\": \"admin-2\"\n}"
+          "raw": "{\n  \"userId\": \"{{newAdminId}}\"\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/admins",
@@ -340,7 +637,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"userId\": \"mod-2\"\n}"
+          "raw": "{\n  \"userId\": \"{{secondModeratorId}}\"\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/packages/{{packageId}}/moderators",
@@ -497,7 +794,7 @@
             "activate"
           ]
         },
-        "description": "Activates a raid configuration, spinning up a live raid.\n\nThe live raid is created by Monster Raid Service via its internal POST /raids, and that service owns the raidId - this service returns the id it was given. Reactivating a paused config reuses the same raid.\n\nMonster Raid Service is mocked in Lab 1; a monster name starting with 'unavailable' makes the mock refuse, returning 502."
+        "description": "Activates a raid configuration, spinning up a live raid.\n\nThe live raid is created by Monster Raid Service via its internal POST /raids, and that service owns the raidId - this service returns the id it was given. Reactivating a paused config reuses the same raid.\n\nIn the shared stack the raid is created by the real Monster Raid Service, over gRPC through the Message Broker (CreateRaid)."
       },
       "response": []
     },
@@ -582,6 +879,273 @@
         "description": "Permanently cancels the config. Any live raid instance is force-ended without rewards, and the config can never be activated again."
       },
       "response": []
+    },
+    {
+      "name": "Message Broker (Lab 4)",
+      "description": "Calls and events as the Message Broker delivers them. The broker passes on the sender's headers and adds X-Broker-Key; a call with only that key is a service's, and POST /events is where subscribed topics arrive (at least once, deduplicated by messageId).",
+      "item": [
+        {
+          "name": "A service reads packages through the broker (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
+            "description": "A service's call delivered by the broker: only X-Broker-Key, no gateway key and no player. The public package reads need neither a player nor a service key, so it is answered."
+          },
+          "response": []
+        },
+        {
+          "name": "Broker-only call cannot act as an admin (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('no player', function () { pm.expect(pm.response.json().error).to.eql('this endpoint requires a player'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{adminId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"monsterName\": \"Forged {{$timestamp}}\",\n  \"maxHp\": 1,\n  \"duration\": 1,\n  \"createdByAdminId\": \"{{adminId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs"
+              ]
+            },
+            "description": "Every service sends the broker key, so a call with only the broker key is a service's: its X-User-Id is dropped - no service can act as an admin."
+          },
+          "response": []
+        },
+        {
+          "name": "Event delivered by the broker (200, ignored)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('eventMessageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('acknowledged, no handler', function () { pm.expect(pm.response.json().status).to.eql('ignored'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{eventMessageId}}\",\n  \"topic\": \"raid.completed\",\n  \"source\": \"monster-raid-service\",\n  \"requestId\": \"postman-event\",\n  \"timestamp\": \"2026-11-10T12:00:00.000Z\",\n  \"payload\": {\n    \"raidId\": \"postman-raid\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "What the Message Broker does when Package Registry is subscribed to a topic: POST /events with the envelope and X-Broker-Key. The messageId is new on every run ({{$guid}}). Package Registry handles no topic yet, so it acknowledges the event as \"ignored\" - and records the messageId."
+          },
+          "response": []
+        },
+        {
+          "name": "Same event again (200, duplicate)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('recognised as a duplicate', function () { pm.expect(pm.response.json().status).to.eql('duplicate'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{eventMessageId}}\",\n  \"topic\": \"raid.completed\",\n  \"source\": \"monster-raid-service\",\n  \"requestId\": \"postman-event\",\n  \"timestamp\": \"2026-11-10T12:00:00.000Z\",\n  \"payload\": {\n    \"raidId\": \"postman-raid\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "The broker delivers at least once: a copy whose acknowledgement got lost comes again. The messageId is already in handled_messages, so it is acknowledged without being handled twice."
+          },
+          "response": []
+        },
+        {
+          "name": "Event without the broker key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{eventMessageId}}\",\n  \"topic\": \"raid.completed\",\n  \"source\": \"monster-raid-service\",\n  \"requestId\": \"postman-event\",\n  \"timestamp\": \"2026-11-10T12:00:00.000Z\",\n  \"payload\": {\n    \"raidId\": \"postman-raid\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Only the broker delivers events: even the gateway's key is not enough."
+          },
+          "response": []
+        },
+        {
+          "name": "Event that is not an envelope (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });",
+                  "pm.test('names what is missing', function () { pm.expect(pm.response.json().error).to.eql('messageId is required'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic\": \"raid.completed\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "No messageId: delivering it again would not fix it, so 400."
+          },
+          "response": []
+        }
+      ]
     },
     {
       "name": "Error cases",
@@ -1105,6 +1669,7 @@
           "const url = pm.request.url.toString();",
           "const headers = JSON.stringify(pm.request.headers);",
           "const needed = [",
+          "    { name: 'moderatorId', setBy: 'Setup: real players (User Management)' },",
           "    { name: 'packageId', setBy: 'Register Package' },",
           "    { name: 'raidConfigId', setBy: 'Create Raid Config' },",
           "];",

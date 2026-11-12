@@ -67,20 +67,32 @@ services:
       # the key survives a database reset.
       JWT_PRIVATE_KEY: ${USER_MANAGEMENT_JWT_PRIVATE_KEY:-}
       # Authorization is at the gateway: only requests carrying its key as
-      # X-Gateway-Key are served, and the player comes as X-User-Id. Services
-      # calling the service-only endpoints keep their own X-Service-Key.
+      # X-Gateway-Key are served, and the player comes as X-User-Id. A service
+      # sends its own X-Service-Key, which opens only the endpoints that list
+      # that service (README, User Management, "Service callers").
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       SERVICE_KEY_BATTLE: ${SERVICE_KEY_BATTLE:-}
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
       SERVICE_KEY_MAP: ${SERVICE_KEY_MAP:-}
+      SERVICE_KEY_GUILD: ${SERVICE_KEY_GUILD:-}
+      SERVICE_KEY_PACKAGE_REGISTRY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
+      # Message Broker (Lab 4): events go to its topics, a service's call it
+      # relays is accepted with BROKER_KEY plus the caller's service key, and
+      # each replica registers the topics it consumes (battle.ended,
+      # raid.completed, taken at POST /events).
+      BROKER_URL: http://message-broker:8090
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # gRPC (GetUser, GetBalance, AdjustCurrency, GetRelationship): registered
+      # with Service Discovery as metadata.grpcPort, reached through the broker.
+      GRPC_PORT: 50081
       # Each replica registers as http://<its hostname>:8081, sends heartbeats
       # and deregisters on shutdown; it keeps retrying while Service Discovery
       # is not up.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${USER_MANAGEMENT_LOG_LEVEL:-info}
-    # No published port: only the gateway reaches it, at
-    # http://user-management-service:8081 on the Compose network.
+    # No published port: the gateway and the broker reach it on the Compose
+    # network (http://<replica>:8081, gRPC on <replica>:50081).
     restart: unless-stopped
 
   # ------------------------------------------------------------- Go / battle
@@ -140,14 +152,28 @@ services:
       DB_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
       DB_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
       DB_SSLMODE: disable
-      # Service-to-service REST goes through the gateway, like client traffic:
-      # currency adjust (User Management), types, xp and transfer-owner
+      # Only without the broker (BATTLE_BROKER_URL set empty): where Battle's
+      # calls go - users and balances (User Management), types and Tamagotchis
       # (Tamagotchi) and package stat definitions (Package Registry).
       USER_MANAGEMENT_SERVICE_URL: ${BATTLE_USER_MANAGEMENT_URL:-http://gateway:8080}
       TAMAGOTCHI_SERVICE_URL: ${BATTLE_TAMAGOTCHI_SERVICE_URL:-http://gateway:8080}
       PACKAGE_REGISTRY_SERVICE_URL: ${BATTLE_PACKAGE_REGISTRY_URL:-http://gateway:8080}
       # The key this service presents to the Service-only endpoints it calls.
       SERVICE_KEY: ${SERVICE_KEY_BATTLE:-}
+      # Message Broker (Lab 4): every call goes through it (the URLs above are
+      # unused), and battle.ended, battle.request_received and
+      # battle.tamagotchi_captured go to its topics. BATTLE_BROKER_URL set
+      # empty in .env turns it off.
+      BROKER_URL: ${BATTLE_BROKER_URL-http://message-broker:8090}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # Called over gRPC at message-broker:50051 instead of REST: the services
+      # that serve it. Package Registry stays on REST through the broker.
+      GRPC_DEPENDENCIES: ${BATTLE_GRPC_DEPENDENCIES-user-management-service,tamagotchi-service}
+      # The settlement comes from battle.ended: User Management pays the
+      # currency, and with this Tamagotchi awards the XP and moves the captured
+      # Tamagotchi, so Battle calls neither. false = Battle calls Tamagotchi's
+      # xp and transfer-owner itself (same keys, so never twice).
+      TAMAGOTCHI_BY_EVENT: ${BATTLE_TAMAGOTCHI_BY_EVENT:-true}
       # Authorization is at the gateway: only requests carrying GATEWAY_KEY as
       # X-Gateway-Key are served, and the player comes as X-User-Id. Live
       # sockets are opened directly with a single-use ticket the gateway signs
@@ -214,6 +240,21 @@ services:
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
       # Empty = Package Registry through the gateway (http://gateway:8080).
       PACKAGE_REGISTRY_URL: ${TAMAGOTCHI_PACKAGE_REGISTRY_URL:-}
+      # With BROKER_KEY, Battle and Monster Raid can call through the Message Broker
+      # (its key plus their own), and each replica subscribes to battle.ended and
+      # applies it at POST /events (one replica per event). TAMAGOTCHI_BROKER_URL
+      # (http://message-broker:8090) also sends the Package Registry call through the
+      # broker; empty = PACKAGE_REGISTRY_URL above.
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      BROKER_URL: ${TAMAGOTCHI_BROKER_URL:-}
+      # gRPC (GetTamagotchi, ListByOwner, GetTypeAdvantages, AddXp, TransferOwner):
+      # registered with Service Discovery as metadata.grpcPort, reached through the
+      # broker with the same keys as REST. Needs BROKER_KEY.
+      GRPC_PORT: 50083
+      # Services called over gRPC through the broker at BROKER_GRPC_ADDR instead of
+      # REST. Only package-registry-service, once it serves gRPC (#172); empty = REST.
+      GRPC_DEPENDENCIES: ${TAMAGOTCHI_GRPC_DEPENDENCIES:-}
+      BROKER_GRPC_ADDR: message-broker:50051
       LOG_LEVEL: ${TAMAGOTCHI_LOG_LEVEL:-INFO}
       # The circuit breaker on the call to Package Registry; an empty window or cooldown
       # = the request timeout x 3.5 (17.5 s).
@@ -273,6 +314,10 @@ services:
       # replica receives every event; they store each one once (claimed in Redis).
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      # With BROKER_KEY, each replica also registers for the Message Broker's topics
+      # and takes events at POST /events (one replica per event); empty = events
+      # only from the Redis channel notification-events.
+      BROKER_KEY: ${BROKER_KEY:-}
     # Replicas publish no ports: they're reached only through the gateway.
     deploy:
       replicas: ${NOTIFICATION_REPLICAS:-2}
@@ -312,9 +357,9 @@ services:
       # Every request must carry this key (X-Gateway-Key); stream tickets are
       # signed with it too. The service no longer verifies user tokens.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
-      # Relationships come from User Management, through the gateway, as Map
-      # (X-Service-Key).
-      USER_MANAGEMENT_URL: ${MAP_USER_MANAGEMENT_URL:-http://gateway:8080}
+      # Relationships come from User Management as Map (X-Service-Key), over
+      # gRPC through the broker (GetRelationship). An http:// URL calls REST.
+      USER_MANAGEMENT_URL: ${MAP_USER_MANAGEMENT_URL:-grpc://message-broker:50051}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_MAP:-}
       REQUEST_TIMEOUT_MS: ${MAP_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${MAP_MAX_CONCURRENT_REQUESTS:-100}
@@ -327,6 +372,11 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${MAP_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${MAP_CIRCUIT_BREAKER_WINDOW_MS:-17500}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${MAP_CIRCUIT_BREAKER_COOLDOWN_MS:-30000}
+      # REST calls and events go through the Message Broker. MAP_BROKER_URL set
+      # empty in .env turns it off (REST calls as above, events only logged).
+      # Requests the broker delivers carry BROKER_KEY next to the sender's key.
+      BROKER_URL: ${MAP_BROKER_URL-http://message-broker:8090}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${MAP_LOG_LEVEL:-info}
     # Replicas publish no ports: clients reach the location stream through ws-proxy.
     deploy:
@@ -384,11 +434,13 @@ services:
       # are signed with it too. The service no longer verifies user tokens.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       # Guild (membership), Tamagotchi (ownership, attack power) and User
-      # Management (rewards) are called through the gateway, as Monster Raid:
-      # each call carries SERVICE_KEY_MONSTER_RAID as X-Service-Key.
-      GUILD_SERVICE_URL: ${MONSTER_RAID_GUILD_SERVICE_URL:-http://gateway:8080}
-      TAMAGOTCHI_SERVICE_URL: ${MONSTER_RAID_TAMAGOTCHI_SERVICE_URL:-http://gateway:8080}
-      USER_MANAGEMENT_URL: ${MONSTER_RAID_USER_MANAGEMENT_URL:-http://gateway:8080}
+      # Management (rewards) are called through the broker, as Monster Raid:
+      # each call carries SERVICE_KEY_MONSTER_RAID as X-Service-Key. Guild and
+      # User Management over gRPC (GetGuild, AdjustCurrency), Tamagotchi over
+      # REST (its URL is only used with the broker off).
+      GUILD_SERVICE_URL: ${MONSTER_RAID_GUILD_SERVICE_URL:-grpc://message-broker:50051}
+      TAMAGOTCHI_SERVICE_URL: ${MONSTER_RAID_TAMAGOTCHI_SERVICE_URL:-}
+      USER_MANAGEMENT_URL: ${MONSTER_RAID_USER_MANAGEMENT_URL:-grpc://message-broker:50051}
       GUILD_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
       TAMAGOTCHI_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
@@ -407,6 +459,12 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${MONSTER_RAID_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${MONSTER_RAID_CIRCUIT_BREAKER_WINDOW_MS:-17500}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${MONSTER_RAID_CIRCUIT_BREAKER_COOLDOWN_MS:-30000}
+      # REST calls and events go through the Message Broker, and with
+      # BROKER_KEY it serves CreateRaid over gRPC (50086) for Package Registry.
+      # MONSTER_RAID_BROKER_URL set empty in .env turns the broker off.
+      # Requests the broker delivers carry BROKER_KEY next to the sender's key.
+      BROKER_URL: ${MONSTER_RAID_BROKER_URL-http://message-broker:8090}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${MONSTER_RAID_LOG_LEVEL:-info}
     # Replicas publish no ports: clients reach the live raid socket through ws-proxy.
     deploy:
@@ -465,13 +523,21 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${GUILD_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${GUILD_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${GUILD_CIRCUIT_BREAKER_COOLDOWN_MS:-}
-      # User Management (user exists?) through the gateway, as this service:
-      # SERVICE_KEY_GUILD as X-Service-Key. Empty URL = built-in mock. Set it to
-      # http://gateway:8080 once User Management accepts SERVICE_KEY_GUILD.
-      USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-}
+      # User Management (user exists? enemies?), as this service:
+      # SERVICE_KEY_GUILD as X-Service-Key, over gRPC through the broker
+      # (GetUser, GetRelationship). An http://message-broker:8090 URL calls REST
+      # through it instead.
+      USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-grpc://message-broker:50051}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_GUILD:-}
-      # GuildInvitation events for Notification: its Redis Pub/Sub channel
-      # notification-events, as the README documents for every publisher.
+      # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
+      # accepted with it, and it is sent with Guild's own calls to the broker.
+      # GuildInvitation goes to the topic guild.invitation, which Notification
+      # subscribes to. GUILD_BROKER_URL set empty in .env turns it off:
+      # invitations then reach Notification through Redis, as in Lab 3.
+      BROKER_URL: ${GUILD_BROKER_URL-http://message-broker:8090}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # GuildInvitation events for Notification while BROKER_URL is empty: its
+      # Redis Pub/Sub channel notification-events.
       NOTIFICATION_EVENTS_REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
     # Replicas publish no ports: chat sockets and the Postman
     # collection reach them through ws-proxy (one host port for all replicas).
@@ -519,9 +585,10 @@ services:
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       # POST /admins itself needs an admin, so the first one is seeded here.
       PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID: ${PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID:-admin-1}
-      # POST /raids goes through the gateway, like all service-to-service
-      # REST, carrying our service key.
-      MONSTER_RAID_URL: ${PACKAGE_REGISTRY_MONSTER_RAID_URL:-http://gateway:8080}
+      # Activating a raid config creates the raid in Monster Raid, carrying our
+      # service key, over gRPC through the broker (CreateRaid). An
+      # http://message-broker:8090 URL calls POST /raids through it instead.
+      MONSTER_RAID_URL: ${PACKAGE_REGISTRY_MONSTER_RAID_URL:-grpc://message-broker:50051}
       MONSTER_RAID_SERVICE_KEY: ${PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY:-}
       REQUEST_TIMEOUT_MS: ${PACKAGE_REGISTRY_REQUEST_TIMEOUT_MS:-8000}
       MONSTER_RAID_TIMEOUT_MS: ${PACKAGE_REGISTRY_MONSTER_RAID_TIMEOUT_MS:-5000}
@@ -536,11 +603,16 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_COOLDOWN_MS:-}
-      # User Management (user exists?) through the gateway, as this service:
-      # SERVICE_KEY_PACKAGE_REGISTRY as X-Service-Key. Empty URL = built-in mock. Set it to
-      # http://gateway:8080 once User Management accepts SERVICE_KEY_PACKAGE_REGISTRY.
-      USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-}
+      # User Management (user exists?), as this service: SERVICE_KEY_PACKAGE_REGISTRY
+      # as X-Service-Key, over gRPC through the broker (GetUser). An
+      # http://message-broker:8090 URL calls REST through it instead.
+      USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-grpc://message-broker:50051}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
+      # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
+      # accepted with it. A REST call goes through the broker when its URL above
+      # is this BROKER_URL; a grpc:// URL goes to the broker's gRPC port.
+      BROKER_URL: http://message-broker:8090
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
     # Replicas publish no ports: the gateway finds them in Service
     # Discovery; direct HTTP calls (the Postman collection) go through ws-proxy.
     deploy:
@@ -584,6 +656,52 @@ services:
       retries: 3
     ports:
       - "${DISCOVERY_PORT:-8089}:8089"
+    restart: unless-stopped
+
+  # ------------------------------------------------- Python / message broker
+  # Carries service-to-service traffic. Requests for a service go on
+  # that service's queue and one instance answers (subscriber-based); events go
+  # on a topic and every subscribed service gets a copy (topic-based). It reads
+  # the instances, and the topics they subscribe to, from Service Discovery.
+  message-broker:
+    image: dackohn/message-broker:latest
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+    environment:
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      DISCOVERY_REFRESH_SECONDS: ${BROKER_DISCOVERY_REFRESH_SECONDS:-5}
+      REQUEST_TIMEOUT_SECONDS: ${BROKER_REQUEST_TIMEOUT_SECONDS:-10}
+      MAX_THREADS: ${BROKER_MAX_THREADS:-200}
+      MAX_IN_FLIGHT_PER_QUEUE: ${BROKER_MAX_IN_FLIGHT_PER_QUEUE:-50}
+      MAX_DELIVERY_ATTEMPTS: ${BROKER_MAX_DELIVERY_ATTEMPTS:-5}
+      REDELIVERY_DELAY_SECONDS: ${BROKER_REDELIVERY_DELAY_SECONDS:-2}
+      # A failed message goes to another instance at most this often (0 = never).
+      MAX_REROUTES: ${BROKER_MAX_REROUTES:-2}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-INFO}
+      # gRPC between services (#170): a call to message-broker:50051 is
+      # forwarded to a healthy replica's metadata.grpcPort.
+      GRPC_PORT: 50051
+      # Durable queues: every event copy is stored on the broker-data volume
+      # before the broker answers 202, and survives a restart. A subscriber
+      # has ACK_TIMEOUT_SECONDS to acknowledge (empty = the request timeout).
+      ACK_TIMEOUT_SECONDS: ${BROKER_ACK_TIMEOUT_SECONDS:-}
+      # GET /dead-letters (the Dead Letter Channel) needs this key, not the
+      # broker key every service holds. Empty = the endpoint refuses everyone.
+      ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
+    volumes:
+      - broker-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    ports:
+      - "${BROKER_PORT:-8090}:8090"
+      - "${BROKER_GRPC_PORT:-50051}:50051"
     restart: unless-stopped
 
   # One host port per scaled service for the WebSockets clients open directly
@@ -636,20 +754,23 @@ services:
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
       MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-100}
       MAX_CONCURRENT_PER_SERVICE: ${GATEWAY_MAX_CONCURRENT_PER_SERVICE:-50}
-      # Circuit breaker per service: 3 errors within the request timeout x 3.5
-      # (35 s) answer 503 for that service until a trial call succeeds. Empty
-      # window and cooldown follow that rule.
-      CIRCUIT_BREAKER_THRESHOLD: ${GATEWAY_CIRCUIT_BREAKER_THRESHOLD:-3}
-      CIRCUIT_BREAKER_WINDOW_SECONDS: ${GATEWAY_CIRCUIT_BREAKER_WINDOW_SECONDS:-}
-      CIRCUIT_BREAKER_COOLDOWN_SECONDS: ${GATEWAY_CIRCUIT_BREAKER_COOLDOWN_SECONDS:-}
+      # Message Broker (Lab 4, gateway v4.2.0, Dackohn/gateway#18): every
+      # request goes to the service's queue in the broker, which picks the
+      # instance, runs the circuit breaker and reroutes. The four Service-only
+      # endpoints answer 404, and a service key alone is no credential.
+      BROKER_URL: http://message-broker:8090
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       # Each service's replicas, read from Service Discovery every
-      # GATEWAY_DISCOVERY_REFRESH_SECONDS and taken in turn. A replica that
-      # trips its breaker is removed and deregistered; a service Service
-      # Discovery doesn't list is reached at its fixed URL.
+      # GATEWAY_DISCOVERY_REFRESH_SECONDS, for /ws/negotiate and
+      # /health/services: the broker picks the instance for every request.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       DISCOVERY_REFRESH_SECONDS: ${GATEWAY_DISCOVERY_REFRESH_SECONDS:-5}
       LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+      # GET /logs (from gateway v4.0.0): every service's logs, read from Loki,
+      # behind X-Admin-Key. The same admin key as the broker's /dead-letters.
+      LOKI_URL: ${GATEWAY_LOKI_URL-http://loki:3100}
+      ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
       # What GET /ws/negotiate hands to clients: each service's own host port,
       # since the socket connects to the service directly.
       BATTLE_WS_PUBLIC_URL: ws://localhost:${BATTLE_PORT:-8082}
@@ -658,6 +779,101 @@ services:
       GUILD_WS_PUBLIC_URL: ws://localhost:${GUILD_PORT:-8087}
     ports:
       - "${GATEWAY_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  # ------------------------------------------------------------- monitoring
+  # Prometheus scrapes GET /metrics on every replica (monitoring/prometheus),
+  # Promtail ships every container's logs to Loki, and Grafana shows both on a
+  # provisioned dashboard: http://localhost:${GRAFANA_PORT:-3000}.
+  # Its targets come from Service Discovery, so it scrapes replicas on every
+  # machine. The discovery key goes to a file first: Prometheus reads a bearer
+  # token only from its config or a file, never from the environment.
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    depends_on:
+      - service-discovery
+      - blackbox-exporter
+    environment:
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '%s' "$$DISCOVERY_KEY" > /tmp/discovery_key &&
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml
+        --storage.tsdb.path=/prometheus
+        --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+
+  # Probes every replica's health URL for Prometheus (job "health").
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    command: --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./monitoring/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.0.0
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 5
+    restart: unless-stopped
+
+  # Reads the containers from the Docker socket, read-only.
+  promtail:
+    image: grafana/promtail:3.0.0
+    command: -config.file=/etc/promtail/promtail.yml -config.expand-env=true
+    depends_on:
+      - loki
+    environment:
+      # Only this stack's containers, not other Compose projects on the machine.
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
+      # The `machine` label on every line; each extra machine sets its own
+      # (monitoring/docker-compose.logs.yml).
+      MACHINE: ${MONITORING_MACHINE_NAME:-main}
+    volumes:
+      - ./monitoring/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    depends_on:
+      - prometheus
+      - loki
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/tamagotchi-go.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 5
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
     restart: unless-stopped
 
 # Named volumes keep each database's data across restarts and rebuilds.
@@ -673,3 +889,7 @@ volumes:
   monster-raid-service-cache-data:
   guild-service-db-data:
   package-registry-service-db-data:
+  prometheus-data:
+  broker-data:
+  loki-data:
+  grafana-data:

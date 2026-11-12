@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Guild Service (Team 14)",
-    "description": "Guild identity, membership, roles and real-time guild chat.\n\nOwner: IsStephy. Default port: 8087.\n\nEvery request goes through the gateway in the shared stack: the gateway verifies the player's token, drops it, and forwards `X-Gateway-Key` (proving the request came through it) plus `X-User-Id` (the player). This service never verifies tokens and answers 401 to anything without a valid `X-Gateway-Key`, except /health and /docs.\n\nThis collection talks to the service directly, so it sends those two headers itself - it plays the gateway. Set the `gatewayKey` variable to the GATEWAY_KEY in your .env (the default, `change_me`, matches .env.example). To go through the real gateway with real logins, use collections/gateway.postman_collection.json.\n\nGuild roles are checked by this service against its own data. `GET /guilds/{guildId}` also accepts Monster Raid's `X-Service-Key` instead of a player (set `monsterRaidServiceKey` to SERVICE_KEY_MONSTER_RAID).\n\nRun the requests top to bottom: `Create Guild` saves the new guildId, so every later request works without copy-pasting anything.\n\nThe WebSocket chat endpoint cannot be stored in Postman's collection file format; see the `Guild Chat (WebSocket)` folder for how to open it in the app.",
+    "description": "Guild identity, membership, roles and real-time guild chat.\n\nOwner: IsStephy. Default port: 8087.\n\nEvery request goes through the gateway in the shared stack: the gateway verifies the player's token, drops it, and forwards `X-Gateway-Key` (proving the request came through it) plus `X-User-Id` (the player). This service never verifies tokens and answers 401 to anything without a valid `X-Gateway-Key`, except /health and /docs.\n\nThis collection talks to the service directly, so it sends those two headers itself - it plays the gateway. Set the `gatewayKey` variable to the GATEWAY_KEY in your .env (the default, `change_me`, matches .env.example). To go through the real gateway with real logins, use collections/gateway.postman_collection.json.\n\nGuild roles are checked by this service against its own data. `GET /guilds/{guildId}` also accepts Monster Raid's `X-Service-Key` instead of a player (set `monsterRaidServiceKey` to SERVICE_KEY_MONSTER_RAID).\n\nRun the requests top to bottom: `Create Guild` saves the new guildId, so every later request works without copy-pasting anything.\n\nThe WebSocket chat endpoint cannot be stored in Postman's collection file format; see the `Guild Chat (WebSocket)` folder for how to open it in the app.\n\nLab 4: the `Message Broker (Lab 4)` folder plays the Message Broker - it sends `X-Broker-Key` (set the `brokerKey` variable to BROKER_KEY in your .env; the default `change_me` matches .env.example). It needs a service started with BROKER_KEY set.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -15,15 +15,15 @@
     },
     {
       "key": "ownerId",
-      "value": "u-owner-1"
+      "value": ""
     },
     {
       "key": "memberId",
-      "value": "u-member-2"
+      "value": ""
     },
     {
       "key": "inviteeId",
-      "value": "u-member-3"
+      "value": ""
     },
     {
       "key": "unknownUserId",
@@ -36,6 +36,34 @@
     {
       "key": "monsterRaidServiceKey",
       "value": "change_me"
+    },
+    {
+      "key": "brokerKey",
+      "value": "change_me"
+    },
+    {
+      "key": "eventMessageId",
+      "value": ""
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "password",
+      "value": "correct-horse-battery"
+    },
+    {
+      "key": "enemyId",
+      "value": ""
+    },
+    {
+      "key": "ownerUsername",
+      "value": ""
+    },
+    {
+      "key": "ownerToken",
+      "value": ""
     }
   ],
   "item": [
@@ -78,6 +106,382 @@
         "description": "Status endpoint (Lab 3): always 200 while the process runs, with the replica (instanceId = container hostname), uptimeSeconds, inFlightRequests and maxConcurrentRequests, plus openChatSockets / maxChatSockets. Public: no gateway key needed."
       },
       "response": []
+    },
+    {
+      "name": "Metrics (Prometheus)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK, with no key', function () { pm.response.to.have.status(200); });",
+              "pm.test('Prometheus text format', function () { pm.expect(pm.response.headers.get('Content-Type')).to.include('text/plain'); });",
+              "const body = pm.response.text();",
+              "pm.test('the four agreed metrics', function () {",
+              "  ['http_requests_total', 'http_request_duration_seconds', 'http_requests_in_flight', 'circuit_breaker_state']",
+              "    .forEach(function (name) { pm.expect(body).to.include('# TYPE ' + name + ' '); });",
+              "});",
+              "pm.test('a breaker per called service', function () { pm.expect(body).to.include('circuit_breaker_state{target=\"user-management-service\"}'); });",
+              "pm.test('routes are patterns, /health and /metrics not counted', function () {",
+              "  pm.expect(body).to.not.include('route=\"/health\"');",
+              "  pm.expect(body).to.not.include('route=\"/metrics\"');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/metrics",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "metrics"
+          ]
+        },
+        "description": "What Prometheus scrapes from every replica every 15 s: the four metrics every service serves (CPR README, \"Metrics every service serves\"). No key, like /health - Prometheus sends none, and the gateway doesn't route it."
+      },
+      "response": []
+    },
+    {
+      "name": "Setup: real players (User Management)",
+      "description": "Real players for the requests below, created in User Management through the gateway ({{gatewayUrl}}). The service looks every user up in User Management over gRPC through the Message Broker - there is no mock in the shared stack - so the ids must exist. Usernames carry a timestamp, so the collection can be re-run.",
+      "item": [
+        {
+          "name": "Register the guild owner",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'g_owner_' + Date.now().toString().slice(-9));",
+                  "pm.collectionVariables.set('ownerUsername', pm.variables.get('newUsername'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('ownerId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: creates the guild. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the member",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'g_member_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('memberId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: joins the guild and becomes an officer. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the invitee",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'g_invitee_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('inviteeId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: is invited, then removed. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the enemy player",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'g_enemy_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('enemyId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: the owner marks them as an enemy below. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Log in as the owner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('a token for the owner', function () {",
+                  "    pm.expect(body.token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.userId).to.eql(pm.collectionVariables.get('ownerId'));",
+                  "});",
+                  "pm.collectionVariables.set('ownerToken', body.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ownerUsername}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Only the player themselves may set their relationships, so the owner logs in."
+          },
+          "response": []
+        },
+        {
+          "name": "The owner marks the enemy player as an enemy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the relationship is enemy', function () { pm.expect(pm.response.json().relationship).to.eql('enemy'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"enemy\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/relationship/{{enemyId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "relationship",
+                "{{enemyId}}"
+              ]
+            },
+            "description": "Guild asks User Management for the inviter's relationship to the invitee (GetRelationship); this is what makes \"Invite a user marked as enemy\" answer 403."
+          },
+          "response": []
+        }
+      ]
     },
     {
       "name": "Create Guild",
@@ -129,7 +533,7 @@
             "guilds"
           ]
         },
-        "description": "Creates a new guild. The ownerId becomes the guild's first member with role `owner`.\n\nIdentity is verified against User Management Service (mocked in Lab 1) - an unknown ownerId returns 404."
+        "description": "Creates a new guild. The ownerId becomes the guild's first member with role `owner`.\n\nIdentity is verified against User Management Service (over gRPC through the Message Broker) - an unknown ownerId returns 404."
       },
       "response": []
     },
@@ -468,6 +872,278 @@
       "response": []
     },
     {
+      "name": "Message Broker (Lab 4)",
+      "description": "Calls and events as the Message Broker delivers them. The broker passes on the sender's headers and adds X-Broker-Key; a call with only that key is a service's, and POST /events is where subscribed topics arrive (at least once, deduplicated by messageId).",
+      "item": [
+        {
+          "name": "Monster Raid reads a guild through the broker (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": "A service's call delivered by the broker: X-Broker-Key plus the caller's own X-Service-Key, and no gateway key. Accepted (#182: the broker key replaces the gateway key for service calls)."
+          },
+          "response": []
+        },
+        {
+          "name": "Broker-only call cannot act as a player (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('no player', function () { pm.expect(pm.response.json().error).to.eql('this endpoint requires a player'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{ownerId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Forged {{$timestamp}}\",\n  \"ownerId\": \"{{ownerId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/guilds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "guilds"
+              ]
+            },
+            "description": "Every service sends the broker key, so a call with only the broker key is a service's: its X-User-Id is dropped, and a player-only endpoint answers 401."
+          },
+          "response": []
+        },
+        {
+          "name": "Event delivered by the broker (200, ignored)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('eventMessageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('acknowledged, no handler', function () { pm.expect(pm.response.json().status).to.eql('ignored'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{eventMessageId}}\",\n  \"topic\": \"raid.completed\",\n  \"source\": \"monster-raid-service\",\n  \"requestId\": \"postman-event\",\n  \"timestamp\": \"2026-11-10T12:00:00.000Z\",\n  \"payload\": {\n    \"raidId\": \"postman-raid\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "What the Message Broker does when Guild Service is subscribed to a topic: POST /events with the envelope and X-Broker-Key. The messageId is new on every run ({{$guid}}). Guild Service handles no topic yet, so it acknowledges the event as \"ignored\" - and records the messageId."
+          },
+          "response": []
+        },
+        {
+          "name": "Same event again (200, duplicate)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('recognised as a duplicate', function () { pm.expect(pm.response.json().status).to.eql('duplicate'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{eventMessageId}}\",\n  \"topic\": \"raid.completed\",\n  \"source\": \"monster-raid-service\",\n  \"requestId\": \"postman-event\",\n  \"timestamp\": \"2026-11-10T12:00:00.000Z\",\n  \"payload\": {\n    \"raidId\": \"postman-raid\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "The broker delivers at least once: a copy whose acknowledgement got lost comes again. The messageId is already in handled_messages, so it is acknowledged without being handled twice."
+          },
+          "response": []
+        },
+        {
+          "name": "Event without the broker key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{eventMessageId}}\",\n  \"topic\": \"raid.completed\",\n  \"source\": \"monster-raid-service\",\n  \"requestId\": \"postman-event\",\n  \"timestamp\": \"2026-11-10T12:00:00.000Z\",\n  \"payload\": {\n    \"raidId\": \"postman-raid\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Only the broker delivers events: even the gateway's key is not enough."
+          },
+          "response": []
+        },
+        {
+          "name": "Event that is not an envelope (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });",
+                  "pm.test('names what is missing', function () { pm.expect(pm.response.json().error).to.eql('messageId is required'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic\": \"raid.completed\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "No messageId: delivering it again would not fix it, so 400."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Error cases",
       "description": "Requests that are expected to fail - they demonstrate the validation rules.",
       "item": [
@@ -515,7 +1191,7 @@
                 "join"
               ]
             },
-            "description": "The gateway names a player User Management does not know. The identity check passes (X-User-Id matches the body), but the mock of User Management treats any userId starting with 'unknown' as non-existent, so the service answers 404."
+            "description": "The gateway names a player User Management does not know. The identity check passes (X-User-Id matches the body), but User Management answers \"not found\" for {{unknownUserId}}, so Guild answers 404."
           },
           "response": []
         },
@@ -810,7 +1486,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"u-enemy-7\",\n  \"invitedBy\": \"{{ownerId}}\"\n}"
+              "raw": "{\n  \"userId\": \"{{enemyId}}\",\n  \"invitedBy\": \"{{ownerId}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/guilds/{{guildId}}/members",
@@ -823,7 +1499,7 @@
                 "members"
               ]
             },
-            "description": "Invitation rules resolve the relationship of users, not just identity. The mocked User Management treats any id containing \"enemy\" as an enemy."
+            "description": "Invitation rules resolve the relationship of users, not just identity. The setup had the owner mark {{enemyId}} as an enemy in User Management."
           },
           "response": []
         },
@@ -1009,6 +1685,7 @@
           "const url = pm.request.url.toString();",
           "const headers = JSON.stringify(pm.request.headers);",
           "const needed = [",
+          "    { name: 'ownerId', setBy: 'Setup: real players (User Management)' },",
           "    { name: 'guildId', setBy: 'Create Guild' },",
           "];",
           "",

@@ -1178,7 +1178,7 @@
       ]
     },
     {
-      "name": "Winner was paid through the gateway",
+      "name": "Winner was paid from battle.ended",
       "request": {
         "method": "GET",
         "header": [
@@ -1197,9 +1197,20 @@
             "{{player2Id}}",
             "currency"
           ]
-        }
+        },
+        "description": "Battle publishes battle.ended on the Message Broker, and User Management pays the reward from it (key battle-ended:<battleId>:winner). Read through the gateway as the winner."
       },
       "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// The broker delivers battle.ended at once; give User Management a moment to pay it.",
+              "setTimeout(function () {}, 2000);"
+            ]
+          }
+        },
         {
           "listen": "test",
           "script": {
@@ -1208,7 +1219,7 @@
               "pm.test(\"responds 200\", function () {",
               "    pm.response.to.have.status(200);",
               "});",
-              "pm.test(\"Battle credited the reward via User Management\", function () {",
+              "pm.test(\"User Management paid the reward from battle.ended\", function () {",
               "    pm.expect(pm.response.json().globalCurrency)",
               "        .to.eql(Number(pm.collectionVariables.get(\"rewardCurrency\")));",
               "});"

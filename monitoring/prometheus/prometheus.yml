@@ -1,0 +1,97 @@
+# Prometheus for the whole stack, on every machine.
+#
+# The targets come from Service Discovery (GET /prometheus/targets): every
+# replica that registered, with the address it registered. Replicas on other
+# machines register their LAN address, so they're scraped too, and a replica
+# that stops drops out on its own. Prometheus sends the discovery key as a
+# bearer token, written to /tmp/discovery_key at start-up (docker-compose.yml).
+#
+# Two jobs per replica:
+# - `services`: its own GET /metrics, for the services in the `keep` list;
+# - `health`: its health URL, probed through the blackbox exporter, for every
+#   service, so even one without /metrics shows whether each replica is up.
+#
+# To add your service's /metrics: add its name to the `keep` regex below.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # GET /metrics on every replica of the services that serve it. The job label
+  # becomes the service name; `instance` is the replica's host:port.
+  - job_name: services
+    http_sd_configs:
+      - url: http://service-discovery:8089/prometheus/targets
+        refresh_interval: 15s
+        authorization:
+          type: Bearer
+          credentials_file: /tmp/discovery_key
+    relabel_configs:
+      - source_labels: [service]
+        regex: message-broker|user-management-service|battle-service|map-service|monster-raid-service|tamagotchi-service|notification-service|guild-service|package-registry-service
+        action: keep
+      - source_labels: [service]
+        target_label: job
+      - source_labels: [instance_id]
+        target_label: replica
+      - regex: service|instance_id|health_url
+        action: labeldrop
+
+  # The health URL of every replica of every registered service, probed by the
+  # blackbox exporter: probe_success (1 up, 0 down) and probe_duration_seconds,
+  # labelled with `service`, `instance` (host:port) and `replica`.
+  - job_name: health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    http_sd_configs:
+      - url: http://service-discovery:8089/prometheus/targets
+        refresh_interval: 15s
+        authorization:
+          type: Bearer
+          credentials_file: /tmp/discovery_key
+    relabel_configs:
+      - source_labels: [health_url]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [instance_id]
+        target_label: replica
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+      - regex: instance_id|health_url
+        action: labeldrop
+
+  # The gateway's GET /metrics: it doesn't register with Service Discovery, so
+  # it is listed here. `job` is `gateway`, like its health probe's `service`.
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8080"]
+
+  # Service Discovery's own GET /metrics, listed here for the same reason.
+  - job_name: service-discovery
+    static_configs:
+      - targets: ["service-discovery:8089"]
+
+  # The two that don't register with Service Discovery.
+  - job_name: health-static
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://gateway:8080/health"]
+        labels: { service: gateway }
+      - targets: ["http://service-discovery:8089/health"]
+        labels: { service: service-discovery }
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

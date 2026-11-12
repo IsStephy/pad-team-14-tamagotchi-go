@@ -51,6 +51,18 @@
       "key": "notificationId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "brokerKey",
+      "value": "change_me"
+    },
+    {
+      "key": "battleMessageId",
+      "value": ""
     }
   ],
   "item": [
@@ -251,6 +263,216 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"other-{{runId}}\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Events from the Message Broker",
+      "description": "A battle.ended event published on the broker reaches Notification at POST /events and becomes one BattleEnded notification for the winner and one for the loser. It is published twice with the same messageId, as a redelivery would be, and is still stored once. Needs brokerKey (BROKER_KEY in .env).",
+      "item": [
+        {
+          "name": "Battle ended, published on the broker",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// One id for this run's event; the next request sends it again.",
+                  "pm.collectionVariables.set('battleMessageId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', function () { pm.response.to.have.status(202); });",
+                  "pm.test('Notification subscribes to battle.ended', function () {",
+                  "    pm.expect(pm.response.json().subscribers).to.include('notification-service');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"battle-service\",\n  \"messageId\": \"{{battleMessageId}}\",\n  \"payload\": {\n    \"battleId\": \"battle-{{runId}}\",\n    \"winnerId\": \"{{playerId}}\",\n    \"loserId\": \"{{otherId}}\",\n    \"rewardCurrency\": 50,\n    \"rewardXp\": 20,\n    \"transferredTamagotchiId\": \"\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/topics/battle.ended/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "topics",
+                "battle.ended",
+                "messages"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The same event again, same messageId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', function () { pm.response.to.have.status(202); });",
+                  "pm.test('the same messageId', function () {",
+                  "    pm.expect(pm.response.json().messageId).to.eql(pm.collectionVariables.get('battleMessageId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"battle-service\",\n  \"messageId\": \"{{battleMessageId}}\",\n  \"payload\": {\n    \"battleId\": \"battle-{{runId}}\",\n    \"winnerId\": \"{{playerId}}\",\n    \"loserId\": \"{{otherId}}\",\n    \"rewardCurrency\": 50,\n    \"rewardXp\": 20,\n    \"transferredTamagotchiId\": \"\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/topics/battle.ended/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "topics",
+                "battle.ended",
+                "messages"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The winner got it once",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The broker delivers at once; give it a moment to reach a replica and be stored.",
+                  "setTimeout(function () {}, 2000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const battle = 'battle-' + pm.collectionVariables.get('runId');",
+                  "const mine = pm.response.json().filter(function (n) { return n.type === 'BattleEnded' && n.payload && n.payload.battleId === battle; });",
+                  "pm.test('exactly one BattleEnded for this battle, although it was published twice', function () { pm.expect(mine.length).to.eql(1); });",
+                  "pm.test('the payload as Battle published it', function () {",
+                  "    pm.expect(mine[0].payload.winnerId).to.eql(pm.collectionVariables.get('playerId'));",
+                  "    pm.expect(mine[0].payload.loserId).to.eql(pm.collectionVariables.get('otherId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{playerId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{playerId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The loser got it once",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The broker delivers at once; give it a moment to reach a replica and be stored.",
+                  "setTimeout(function () {}, 2000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const battle = 'battle-' + pm.collectionVariables.get('runId');",
+                  "const mine = pm.response.json().filter(function (n) { return n.type === 'BattleEnded' && n.payload && n.payload.battleId === battle; });",
+                  "pm.test('exactly one BattleEnded for this battle, although it was published twice', function () { pm.expect(mine.length).to.eql(1); });",
+                  "pm.test('the payload as Battle published it', function () {",
+                  "    pm.expect(mine[0].payload.winnerId).to.eql(pm.collectionVariables.get('playerId'));",
+                  "    pm.expect(mine[0].payload.loserId).to.eql(pm.collectionVariables.get('otherId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{otherToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notifications/{{otherId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{otherId}}"
+              ]
             }
           },
           "response": []
@@ -622,7 +844,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
-                  "pm.test('error: invalid service key', function () { pm.expect(pm.response.json().error).to.eql(\"invalid service key\"); });"
+                  "pm.test('the gateway asks for a player token', function () { pm.expect(pm.response.json().error).to.eql('missing bearer token'); });"
                 ]
               }
             }
@@ -645,7 +867,7 @@
                 "{{playerId}}"
               ]
             },
-            "description": "Notification has no service-to-service endpoints, so any X-Service-Key is refused."
+            "description": "A service key is no credential at the gateway (v4.2.0): services go through the Message Broker. Notification has no service-to-service endpoints anyway."
           },
           "response": []
         }

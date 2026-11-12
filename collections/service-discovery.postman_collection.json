@@ -55,6 +55,92 @@
       "response": []
     },
     {
+      "name": "Health checks are running",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const checks = pm.response.json().healthChecks;",
+              "pm.test('checks every instance at an interval', () => {",
+              "    pm.expect(checks.intervalSeconds).to.be.a('number').and.above(0);",
+              "    pm.expect(checks.rounds).to.be.at.least(1);",
+              "    pm.expect(checks.instancesWatched).to.be.at.least(1);",
+              "});",
+              "pm.test('lists the instances alerting right now', () => pm.expect(checks.alerting).to.be.an('object'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{discoveryUrl}}/health",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Lab 3 Grade 8: Service Discovery calls every registered instance's /health every intervalSeconds and alerts on critical load, no answer or not ok. `alerting` lists the open alerts."
+      },
+      "response": []
+    },
+    {
+      "name": "Send a test alert to Telegram (only when sendTestAlert is true)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.collectionVariables.get('sendTestAlert') !== 'true') {",
+              "    pm.execution.skipRequest();",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.collectionVariables.get('sendTestAlert') !== 'true') { return; }",
+              "pm.test('Telegram accepted the test message', () => {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().sent).to.eql(true);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Discovery-Key",
+            "value": "{{discoveryKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{discoveryUrl}}/alerts/test",
+          "host": [
+            "{{discoveryUrl}}"
+          ],
+          "path": [
+            "alerts",
+            "test"
+          ]
+        },
+        "description": "Lab 3 Grade 9: posts a real test message to the team's Telegram alerts topic, so it is skipped unless the collection variable `sendTestAlert` is `true`. Answers 409 when Telegram is not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID empty)."
+      },
+      "response": []
+    },
+    {
       "name": "Register without the key -> 401",
       "event": [
         {
@@ -744,6 +830,10 @@
     {
       "key": "instanceId",
       "value": ""
+    },
+    {
+      "key": "sendTestAlert",
+      "value": "false"
     }
   ]
 }
