@@ -56,14 +56,6 @@
     {
       "key": "packageRegistryServiceKey",
       "value": "change_me"
-    },
-    {
-      "key": "brokerUrl",
-      "value": "http://localhost:8090"
-    },
-    {
-      "key": "brokerKey",
-      "value": "change_me"
     }
   ],
   "item": [
@@ -468,10 +460,6 @@
               {
                 "key": "X-Service-Key",
                 "value": "{{packageRegistryServiceKey}}"
-              },
-              {
-                "key": "X-Broker-Key",
-                "value": "{{brokerKey}}"
               }
             ],
             "body": {
@@ -479,17 +467,15 @@
               "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
             },
             "url": {
-              "raw": "{{brokerUrl}}/services/monster-raid-service/raids",
+              "raw": "{{gatewayUrl}}/raids",
               "host": [
-                "{{brokerUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
-                "services",
-                "monster-raid-service",
                 "raids"
               ]
             },
-            "description": "A service-to-service call through the Message Broker, as Package Registry makes it: the broker's X-Broker-Key and Package Registry's own X-Service-Key, no player token. The gateway answers POST /raids with 404 since v4.2.0. Set {{brokerKey}} to BROKER_KEY and {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from .env."
+            "description": "A service-to-service call through the gateway: Package Registry's own X-Service-Key, no player token. Set {{packageRegistryServiceKey}} to PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY from .env."
           },
           "response": []
         },
@@ -844,10 +830,6 @@
               {
                 "key": "Authorization",
                 "value": "Bearer {{ownerToken}}"
-              },
-              {
-                "key": "X-Broker-Key",
-                "value": "{{brokerKey}}"
               }
             ],
             "body": {
@@ -855,17 +837,15 @@
               "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
             },
             "url": {
-              "raw": "{{brokerUrl}}/services/monster-raid-service/raids",
+              "raw": "{{gatewayUrl}}/raids",
               "host": [
-                "{{brokerUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
-                "services",
-                "monster-raid-service",
                 "raids"
               ]
             },
-            "description": "POST /raids is internal: only Package Registry's service key, never a player, even through the broker."
+            "description": "POST /raids is internal: only Package Registry's service key, never a player."
           },
           "response": []
         },
@@ -892,10 +872,6 @@
               {
                 "key": "X-Service-Key",
                 "value": "not-a-real-key"
-              },
-              {
-                "key": "X-Broker-Key",
-                "value": "{{brokerKey}}"
               }
             ],
             "body": {
@@ -903,17 +879,14 @@
               "raw": "{\n  \"configId\": \"cfg-{{runId}}\",\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Gateway Golem\",\n  \"maxHp\": 4,\n  \"duration\": 600,\n  \"rewards\": {\n    \"currency\": 7,\n    \"xp\": 3\n  }\n}"
             },
             "url": {
-              "raw": "{{brokerUrl}}/services/monster-raid-service/raids",
+              "raw": "{{gatewayUrl}}/raids",
               "host": [
-                "{{brokerUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
-                "services",
-                "monster-raid-service",
                 "raids"
               ]
-            },
-            "description": "Through the broker, with a key Monster Raid doesn't know."
+            }
           },
           "response": []
         },

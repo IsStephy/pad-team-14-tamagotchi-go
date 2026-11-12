@@ -2822,7 +2822,7 @@ npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 npx newman run collections/notification-service.postman_collection.json --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/map-service.postman_collection.json
-npx newman run collections/monster-raid-service.postman_collection.json --env-var brokerKey=<BROKER_KEY> --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY>
+npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY>
 npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY>
 npx newman run collections/gateway.postman_collection.json --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID> --env-var adminKey=<BROKER_ADMIN_KEY>
@@ -2834,9 +2834,7 @@ players, logs them in at User Management, and uses real data — friendships
 and an enemy from User Management for Map; a guild from Guild and a Tamagotchi
 from Tamagotchi for Monster Raid. They also show what the services refuse
 (no token, acting as someone else, a player on an internal endpoint, a direct
-call that skips the gateway). Monster Raid's run creates its raid the way
-Package Registry does, through the Message Broker (`brokerKey`), since the
-gateway answers `POST /raids` with `404`.
+call that skips the gateway).
 
 The **gateway** collection exercises the system the way a client app does:
 players register and log in through the gateway (real User Management tokens),
@@ -2887,7 +2885,7 @@ Postman:
 | monster-raid-service | `packageRegistryServiceKey` | `PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY` |
 | user-management-service, tamagotchi-service | `battleServiceKey` | `SERVICE_KEY_BATTLE` |
 | user-management-service | `guildServiceKey`, `mapServiceKey` | `SERVICE_KEY_GUILD`, `SERVICE_KEY_MAP` |
-| user-management-service, notification-service, monster-raid-service | `brokerKey` | `BROKER_KEY` |
+| user-management-service, notification-service | `brokerKey` | `BROKER_KEY` |
 
 Adding yours: export in Postman **v2.1** format, name it
 `<service-name>.postman_collection.json`, and add a row to the table.
