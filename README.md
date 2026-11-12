@@ -2473,7 +2473,8 @@ docker compose ps        # wait until everything is healthy
   Discovery (`GET /prometheus/targets`), on every machine, and every 15 s:
   - scrapes `GET /metrics` on the replicas of the services that serve it
     (job `services`, labelled with the service as `job`), and on the gateway
-    (job `gateway`, listed in the config since it doesn't register);
+    and Service Discovery (jobs `gateway` and `service-discovery`, listed in
+    the config since they don't register);
   - probes the health URL of **every** replica of **every** service through the
     **blackbox exporter** (job `health`: `probe_success`, `probe_duration_seconds`),
     so a service without `/metrics` still shows whether each replica is up. The
@@ -2521,9 +2522,10 @@ Leave `/health` and `/metrics` themselves out of the counts. In Node,
 `prometheus_client`. Then add your service's name to the `keep` list of the
 `services` job in [`monitoring/prometheus/prometheus.yml`](monitoring/prometheus/prometheus.yml).
 Today the Message Broker, User Management, Battle, Map, Monster Raid, Tamagotchi,
-Notification, Guild and Package Registry serve them, and so does the gateway
+Notification, Guild and Package Registry serve them, and so do the gateway
 (its `http_requests_total` also has `target`, the service a request was
-forwarded to). User Management and Battle use no library: a small exporter in
+forwarded to) and Service Discovery (plus `discovery_instances{service}`, the
+live instances it lists per service). User Management and Battle use no library: a small exporter in
 `internal/platform/metrics`, and Battle reports `circuit_breaker_state` for
 each service it calls. Notification also serves
 `notification_events_total{outcome}` (`handled`, `duplicate`, `failed`, `timed_out`,
