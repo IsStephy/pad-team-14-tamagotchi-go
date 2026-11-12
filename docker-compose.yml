@@ -523,18 +523,18 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${GUILD_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${GUILD_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${GUILD_CIRCUIT_BREAKER_COOLDOWN_MS:-}
-      # User Management (user exists?), as this service: SERVICE_KEY_GUILD as
-      # X-Service-Key. Empty URL = built-in mock. Once User Management accepts
-      # SERVICE_KEY_GUILD and the broker's key: http://message-broker:8090 (REST
-      # through the broker), or grpc://message-broker:50051 (gRPC through it).
-      USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-}
+      # User Management (user exists? enemies?), as this service:
+      # SERVICE_KEY_GUILD as X-Service-Key, over gRPC through the broker
+      # (GetUser, GetRelationship). An http://message-broker:8090 URL calls REST
+      # through it instead.
+      USER_MANAGEMENT_URL: ${GUILD_USER_MANAGEMENT_URL:-grpc://message-broker:50051}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_GUILD:-}
       # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
       # accepted with it, and it is sent with Guild's own calls to the broker.
-      # BROKER_URL set = GuildInvitation goes to the topic guild.invitation;
-      # empty until Notification subscribes to it, so invitations still reach
-      # Notification through Redis meanwhile.
-      BROKER_URL: ${GUILD_BROKER_URL:-}
+      # GuildInvitation goes to the topic guild.invitation, which Notification
+      # subscribes to. GUILD_BROKER_URL set empty in .env turns it off:
+      # invitations then reach Notification through Redis, as in Lab 3.
+      BROKER_URL: ${GUILD_BROKER_URL-http://message-broker:8090}
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       # GuildInvitation events for Notification while BROKER_URL is empty: its
       # Redis Pub/Sub channel notification-events.
@@ -585,9 +585,10 @@ services:
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       # POST /admins itself needs an admin, so the first one is seeded here.
       PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID: ${PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID:-admin-1}
-      # POST /raids goes through the gateway, like all service-to-service
-      # REST, carrying our service key.
-      MONSTER_RAID_URL: ${PACKAGE_REGISTRY_MONSTER_RAID_URL:-http://gateway:8080}
+      # Activating a raid config creates the raid in Monster Raid, carrying our
+      # service key, over gRPC through the broker (CreateRaid). An
+      # http://message-broker:8090 URL calls POST /raids through it instead.
+      MONSTER_RAID_URL: ${PACKAGE_REGISTRY_MONSTER_RAID_URL:-grpc://message-broker:50051}
       MONSTER_RAID_SERVICE_KEY: ${PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY:-}
       REQUEST_TIMEOUT_MS: ${PACKAGE_REGISTRY_REQUEST_TIMEOUT_MS:-8000}
       MONSTER_RAID_TIMEOUT_MS: ${PACKAGE_REGISTRY_MONSTER_RAID_TIMEOUT_MS:-5000}
@@ -603,15 +604,13 @@ services:
       CIRCUIT_BREAKER_WINDOW_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${PACKAGE_REGISTRY_CIRCUIT_BREAKER_COOLDOWN_MS:-}
       # User Management (user exists?), as this service: SERVICE_KEY_PACKAGE_REGISTRY
-      # as X-Service-Key. Empty URL = built-in mock. Once User Management accepts
-      # SERVICE_KEY_PACKAGE_REGISTRY and the broker's key: http://message-broker:8090
-      # (REST through the broker), or grpc://message-broker:50051 (gRPC through it).
-      USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-}
+      # as X-Service-Key, over gRPC through the broker (GetUser). An
+      # http://message-broker:8090 URL calls REST through it instead.
+      USER_MANAGEMENT_URL: ${PACKAGE_REGISTRY_USER_MANAGEMENT_URL:-grpc://message-broker:50051}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_PACKAGE_REGISTRY:-}
       # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
-      # accepted with it. A call goes through the broker when its URL above is
-      # this BROKER_URL - so setting it alone changes nothing; each URL moves
-      # once the service on the other side accepts the broker's key.
+      # accepted with it. A REST call goes through the broker when its URL above
+      # is this BROKER_URL; a grpc:// URL goes to the broker's gRPC port.
       BROKER_URL: http://message-broker:8090
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
     # Replicas publish no ports: the gateway finds them in Service

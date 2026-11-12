@@ -15,15 +15,15 @@
     },
     {
       "key": "ownerId",
-      "value": "u-owner-1"
+      "value": ""
     },
     {
       "key": "memberId",
-      "value": "u-member-2"
+      "value": ""
     },
     {
       "key": "inviteeId",
-      "value": "u-member-3"
+      "value": ""
     },
     {
       "key": "unknownUserId",
@@ -43,6 +43,26 @@
     },
     {
       "key": "eventMessageId",
+      "value": ""
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "password",
+      "value": "correct-horse-battery"
+    },
+    {
+      "key": "enemyId",
+      "value": ""
+    },
+    {
+      "key": "ownerUsername",
+      "value": ""
+    },
+    {
+      "key": "ownerToken",
       "value": ""
     }
   ],
@@ -128,6 +148,342 @@
       "response": []
     },
     {
+      "name": "Setup: real players (User Management)",
+      "description": "Real players for the requests below, created in User Management through the gateway ({{gatewayUrl}}). The service looks every user up in User Management over gRPC through the Message Broker - there is no mock in the shared stack - so the ids must exist. Usernames carry a timestamp, so the collection can be re-run.",
+      "item": [
+        {
+          "name": "Register the guild owner",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'g_owner_' + Date.now().toString().slice(-9));",
+                  "pm.collectionVariables.set('ownerUsername', pm.variables.get('newUsername'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('ownerId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: creates the guild. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the member",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'g_member_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('memberId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: joins the guild and becomes an officer. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the invitee",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'g_invitee_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('inviteeId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: is invited, then removed. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the enemy player",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'g_enemy_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('enemyId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: the owner marks them as an enemy below. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Log in as the owner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('a token for the owner', function () {",
+                  "    pm.expect(body.token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.userId).to.eql(pm.collectionVariables.get('ownerId'));",
+                  "});",
+                  "pm.collectionVariables.set('ownerToken', body.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ownerUsername}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "description": "Only the player themselves may set their relationships, so the owner logs in."
+          },
+          "response": []
+        },
+        {
+          "name": "The owner marks the enemy player as an enemy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the relationship is enemy', function () { pm.expect(pm.response.json().relationship).to.eql('enemy'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"enemy\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/relationship/{{enemyId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "relationship",
+                "{{enemyId}}"
+              ]
+            },
+            "description": "Guild asks User Management for the inviter's relationship to the invitee (GetRelationship); this is what makes \"Invite a user marked as enemy\" answer 403."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Create Guild",
       "event": [
         {
@@ -177,7 +533,7 @@
             "guilds"
           ]
         },
-        "description": "Creates a new guild. The ownerId becomes the guild's first member with role `owner`.\n\nIdentity is verified against User Management Service (mocked in Lab 1) - an unknown ownerId returns 404."
+        "description": "Creates a new guild. The ownerId becomes the guild's first member with role `owner`.\n\nIdentity is verified against User Management Service (over gRPC through the Message Broker) - an unknown ownerId returns 404."
       },
       "response": []
     },
@@ -835,7 +1191,7 @@
                 "join"
               ]
             },
-            "description": "The gateway names a player User Management does not know. The identity check passes (X-User-Id matches the body), but the mock of User Management treats any userId starting with 'unknown' as non-existent, so the service answers 404."
+            "description": "The gateway names a player User Management does not know. The identity check passes (X-User-Id matches the body), but User Management answers \"not found\" for {{unknownUserId}}, so Guild answers 404."
           },
           "response": []
         },
@@ -1130,7 +1486,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"u-enemy-7\",\n  \"invitedBy\": \"{{ownerId}}\"\n}"
+              "raw": "{\n  \"userId\": \"{{enemyId}}\",\n  \"invitedBy\": \"{{ownerId}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/guilds/{{guildId}}/members",
@@ -1143,7 +1499,7 @@
                 "members"
               ]
             },
-            "description": "Invitation rules resolve the relationship of users, not just identity. The mocked User Management treats any id containing \"enemy\" as an enemy."
+            "description": "Invitation rules resolve the relationship of users, not just identity. The setup had the owner mark {{enemyId}} as an enemy in User Management."
           },
           "response": []
         },
@@ -1329,6 +1685,7 @@
           "const url = pm.request.url.toString();",
           "const headers = JSON.stringify(pm.request.headers);",
           "const needed = [",
+          "    { name: 'ownerId', setBy: 'Setup: real players (User Management)' },",
           "    { name: 'guildId', setBy: 'Create Guild' },",
           "];",
           "",

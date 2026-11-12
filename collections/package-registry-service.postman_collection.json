@@ -19,7 +19,7 @@
     },
     {
       "key": "moderatorId",
-      "value": "mod-1"
+      "value": ""
     },
     {
       "key": "adminId",
@@ -27,7 +27,7 @@
     },
     {
       "key": "userId",
-      "value": "u-owner-1"
+      "value": ""
     },
     {
       "key": "guildId",
@@ -47,6 +47,22 @@
     },
     {
       "key": "eventMessageId",
+      "value": ""
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "password",
+      "value": "correct-horse-battery"
+    },
+    {
+      "key": "secondModeratorId",
+      "value": ""
+    },
+    {
+      "key": "newAdminId",
       "value": ""
     }
   ],
@@ -130,6 +146,240 @@
       "response": []
     },
     {
+      "name": "Setup: real players (User Management)",
+      "description": "Real players for the requests below, created in User Management through the gateway ({{gatewayUrl}}). The service looks every user up in User Management over gRPC through the Message Broker - there is no mock in the shared stack - so the ids must exist. Usernames carry a timestamp, so the collection can be re-run.",
+      "item": [
+        {
+          "name": "Register the moderator",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'pr_mod_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('moderatorId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: moderates the package registered below. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the second moderator",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'pr_mod2_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('secondModeratorId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: is added as a moderator. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the player",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'pr_player_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('userId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: registers to the package. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        },
+        {
+          "name": "Register the new admin",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A unique username per run, so the collection can be re-run.",
+                  "pm.variables.set('newUsername', 'pr_admin_' + Date.now().toString().slice(-9));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created in User Management', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('returns the new userId', function () { pm.expect(body.userId).to.be.a('string').and.not.empty; });",
+                  "pm.collectionVariables.set('newAdminId', body.userId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{newUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{newUsername}}@tamagotchi.go\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
+            "description": "A real player in User Management, through the gateway: is granted admin by the seeded admin-1. The service checks it over gRPC through the Message Broker, so a made-up id would get 404."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Grant Admin",
       "event": [
         {
@@ -137,10 +387,9 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "// 200 the first time, 409 on later runs - both mean admin-2 exists.",
-              "pm.test('200 OK or 409 already an admin', function () {",
-              "    pm.expect([200, 409]).to.include(pm.response.code);",
-              "});"
+              "// A fresh player each run, so always 200. {{adminId}} is admin-1, the admin",
+              "// the stack seeds from PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID.",
+              "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
             ]
           }
         }
@@ -163,7 +412,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"userId\": \"admin-2\"\n}"
+          "raw": "{\n  \"userId\": \"{{newAdminId}}\"\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/admins",
@@ -388,7 +637,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"userId\": \"mod-2\"\n}"
+          "raw": "{\n  \"userId\": \"{{secondModeratorId}}\"\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/packages/{{packageId}}/moderators",
@@ -545,7 +794,7 @@
             "activate"
           ]
         },
-        "description": "Activates a raid configuration, spinning up a live raid.\n\nThe live raid is created by Monster Raid Service via its internal POST /raids, and that service owns the raidId - this service returns the id it was given. Reactivating a paused config reuses the same raid.\n\nMonster Raid Service is mocked in Lab 1; a monster name starting with 'unavailable' makes the mock refuse, returning 502."
+        "description": "Activates a raid configuration, spinning up a live raid.\n\nThe live raid is created by Monster Raid Service via its internal POST /raids, and that service owns the raidId - this service returns the id it was given. Reactivating a paused config reuses the same raid.\n\nIn the shared stack the raid is created by the real Monster Raid Service, over gRPC through the Message Broker (CreateRaid)."
       },
       "response": []
     },
@@ -1420,6 +1669,7 @@
           "const url = pm.request.url.toString();",
           "const headers = JSON.stringify(pm.request.headers);",
           "const needed = [",
+          "    { name: 'moderatorId', setBy: 'Setup: real players (User Management)' },",
           "    { name: 'packageId', setBy: 'Register Package' },",
           "    { name: 'raidConfigId', setBy: 'Create Raid Config' },",
           "];",
