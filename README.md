@@ -2436,6 +2436,18 @@ curl -s "http://localhost:8090/dead-letters?topic=raid.completed&limit=20" -H "X
 It needs `BROKER_ADMIN_KEY`, not the broker key that every service holds.
 `/health` shows `eventsStored` and `deadLetters`.
 
+**Log download:** the gateway's `GET /logs` reads every service's logs from
+Loki, as one NDJSON line per log line, with the same admin key:
+
+```bash
+curl -s "http://localhost:8080/logs?service=message-broker&since=15m" -H "X-Admin-Key: <BROKER_ADMIN_KEY>" -o broker.ndjson
+curl -s "http://localhost:8080/logs?requestId=<id>" -H "X-Admin-Key: <BROKER_ADMIN_KEY>"
+```
+
+Filters: `service`, `level`, `requestId`, `since`, `until` and `limit` (at most
+24 h and 5,000 lines per download). Tokens are redacted. It answers `401`
+without the key and `503` when Loki is down.
+
 ## Running the Whole System
 
 [`docker-compose.yml`](docker-compose.yml) in this repository runs every

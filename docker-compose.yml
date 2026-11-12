@@ -776,6 +776,10 @@ services:
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       DISCOVERY_REFRESH_SECONDS: ${GATEWAY_DISCOVERY_REFRESH_SECONDS:-5}
       LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+      # GET /logs (from gateway v4.0.0): every service's logs, read from Loki,
+      # behind X-Admin-Key. The same admin key as the broker's /dead-letters.
+      LOKI_URL: ${GATEWAY_LOKI_URL-http://loki:3100}
+      ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
       # What GET /ws/negotiate hands to clients: each service's own host port,
       # since the socket connects to the service directly.
       BATTLE_WS_PUBLIC_URL: ws://localhost:${BATTLE_PORT:-8082}
