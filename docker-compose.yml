@@ -675,6 +675,15 @@ services:
       # gRPC between services (#170): a call to message-broker:50051 is
       # forwarded to a healthy replica's metadata.grpcPort.
       GRPC_PORT: 50051
+      # Durable queues: every event copy is stored on the broker-data volume
+      # before the broker answers 202, and survives a restart. A subscriber
+      # has ACK_TIMEOUT_SECONDS to acknowledge (empty = the request timeout).
+      ACK_TIMEOUT_SECONDS: ${BROKER_ACK_TIMEOUT_SECONDS:-}
+      # GET /dead-letters (the Dead Letter Channel) needs this key, not the
+      # broker key every service holds. Empty = the endpoint refuses everyone.
+      ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
+    volumes:
+      - broker-data:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"]
       interval: 10s
@@ -854,5 +863,6 @@ volumes:
   guild-service-db-data:
   package-registry-service-db-data:
   prometheus-data:
+  broker-data:
   loki-data:
   grafana-data:
