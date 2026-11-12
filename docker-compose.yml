@@ -779,12 +779,23 @@ services:
   # Prometheus scrapes GET /metrics on every replica (monitoring/prometheus),
   # Promtail ships every container's logs to Loki, and Grafana shows both on a
   # provisioned dashboard: http://localhost:${GRAFANA_PORT:-3000}.
+  # Its targets come from Service Discovery, so it scrapes replicas on every
+  # machine. The discovery key goes to a file first: Prometheus reads a bearer
+  # token only from its config or a file, never from the environment.
   prometheus:
     image: prom/prometheus:v2.53.0
+    depends_on:
+      - service-discovery
+      - blackbox-exporter
+    environment:
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
+      - >-
+        printf '%s' "$$DISCOVERY_KEY" > /tmp/discovery_key &&
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml
+        --storage.tsdb.path=/prometheus
+        --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -795,6 +806,14 @@ services:
       retries: 5
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+
+  # Probes every replica's health URL for Prometheus (job "health").
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    command: --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./monitoring/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
     restart: unless-stopped
 
   loki:
@@ -819,6 +838,9 @@ services:
     environment:
       # Only this stack's containers, not other Compose projects on the machine.
       COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
+      # The `machine` label on every line; each extra machine sets its own
+      # (monitoring/docker-compose.logs.yml).
+      MACHINE: ${MONITORING_MACHINE_NAME:-main}
     volumes:
       - ./monitoring/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

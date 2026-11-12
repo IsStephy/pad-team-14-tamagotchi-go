@@ -25,13 +25,32 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(up{job!=\"prometheus\"}, job)",
+          "query": "label_values(probe_success, service)",
           "refId": "service"
         },
-        "definition": "label_values(up{job!=\"prometheus\"}, job)",
+        "definition": "label_values(probe_success, service)",
         "includeAll": true,
         "multi": true,
         "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 2
+      },
+      {
+        "name": "machine",
+        "label": "Machine",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "loki"
+        },
+        "query": "label_values(machine)",
+        "definition": "label_values(machine)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
         "current": {
           "text": "All",
           "value": "$__all"
@@ -81,7 +100,7 @@
       "id": 2,
       "type": "stat",
       "title": "Replicas up",
-      "description": "Scraped replicas per service. A stopped replica drops out within 15 s; a stopped service shows no value.",
+      "description": "Replicas answering their health check, per service, on every machine (from Service Discovery). A stopped replica drops out within 15 s.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -93,8 +112,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (job) (up{job=~\"$service\", job!=\"prometheus\"})",
-          "legendFormat": "{{job}}"
+          "expr": "sum by (service) (probe_success{service=~\"$service\"})",
+          "legendFormat": "{{service}}"
         }
       ],
       "fieldConfig": {
@@ -402,7 +421,7 @@
     {
       "id": 11,
       "type": "row",
-      "title": "Message Broker",
+      "title": "Health (every replica, every machine)",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -414,6 +433,92 @@
     },
     {
       "id": 12,
+      "type": "table",
+      "title": "Replicas down",
+      "description": "Replicas Service Discovery lists whose health check fails right now. Empty is good.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_success{service=~\"$service\"} == 0",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 0,
+        "y": 39
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Health check time",
+      "description": "How long each service takes to answer its health check (slowest replica).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (service) (probe_duration_seconds{service=~\"$service\"})",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "gridPos": {
+        "w": 12,
+        "h": 8,
+        "x": 12,
+        "y": 39
+      }
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Message Broker",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "w": 24,
+        "h": 1,
+        "x": 0,
+        "y": 47
+      }
+    },
+    {
+      "id": 15,
       "type": "timeseries",
       "title": "Request queue length",
       "description": "Requests waiting on each service's queue in the broker.",
@@ -441,11 +546,11 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 39
+        "y": 48
       }
     },
     {
-      "id": 13,
+      "id": 16,
       "type": "timeseries",
       "title": "Event queue length",
       "description": "Event copies waiting on each topic queue, per subscriber, and copies not yet acked per topic.",
@@ -482,11 +587,11 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 39
+        "y": 48
       }
     },
     {
-      "id": 14,
+      "id": 17,
       "type": "timeseries",
       "title": "Requests through the broker",
       "description": "Requests on service queues per second, by target and reply status (503/504/502 included).",
@@ -516,11 +621,11 @@
         "w": 12,
         "h": 8,
         "x": 0,
-        "y": 47
+        "y": 56
       }
     },
     {
-      "id": 15,
+      "id": 18,
       "type": "timeseries",
       "title": "Event copies by outcome",
       "description": "Copies delivered, acked, retried and dropped per second.",
@@ -550,11 +655,11 @@
         "w": 12,
         "h": 8,
         "x": 12,
-        "y": 47
+        "y": 56
       }
     },
     {
-      "id": 16,
+      "id": 19,
       "type": "stat",
       "title": "Dead Letter Channel size",
       "description": "Event copies dropped after every delivery attempt failed, since the broker started.",
@@ -604,11 +709,11 @@
         "w": 8,
         "h": 8,
         "x": 0,
-        "y": 55
+        "y": 64
       }
     },
     {
-      "id": 17,
+      "id": 20,
       "type": "timeseries",
       "title": "Events published",
       "description": "Events accepted per topic and publisher, per second.",
@@ -638,11 +743,11 @@
         "w": 16,
         "h": 8,
         "x": 8,
-        "y": 55
+        "y": 64
       }
     },
     {
-      "id": 18,
+      "id": 21,
       "type": "row",
       "title": "Logs",
       "collapsed": false,
@@ -651,11 +756,11 @@
         "w": 24,
         "h": 1,
         "x": 0,
-        "y": 63
+        "y": 72
       }
     },
     {
-      "id": 19,
+      "id": 22,
       "type": "logs",
       "title": "Logs",
       "description": "Every container's log lines from Loki. Filter with the service and level variables, or search for a requestId.",
@@ -670,7 +775,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=~\"$service\", level=~\"$level\"} |~ \"$search\""
+          "expr": "{service=~\"$service\", machine=~\"$machine\", level=~\"$level\"} |~ \"$search\""
         }
       ],
       "fieldConfig": {
@@ -687,7 +792,7 @@
         "w": 24,
         "h": 14,
         "x": 0,
-        "y": 64
+        "y": 73
       }
     }
   ]

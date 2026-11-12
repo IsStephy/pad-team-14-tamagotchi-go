@@ -1,0 +1,10 @@
+# The blackbox exporter's probe for every service's health URL: up when it
+# answers 2xx within 3 s (a service's /health answers 200 even under load).
+modules:
+  http_2xx:
+    prober: http
+    timeout: 3s
+    http:
+      method: GET
+      preferred_ip_protocol: ip4
+      valid_status_codes: []  # = any 2xx

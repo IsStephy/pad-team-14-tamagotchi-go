@@ -2,7 +2,9 @@
 #
 # It reads the containers from the Docker socket (read-only), keeps only this
 # Compose project's (COMPOSE_PROJECT, set by docker-compose.yml), and labels
-# each line with its Compose `service` and `container`. Lines in the team's JSON log
+# each line with its Compose `service`, `container` and `machine` (MACHINE,
+# "main" here; replicas on other machines ship theirs with
+# docker-compose.logs.yml). Lines in the team's JSON log
 # format also get a `level` label; `requestId`, `msg` and the other fields stay
 # in the line, so Grafana can filter on them with `| json`.
 
@@ -33,6 +35,8 @@ scrape_configs:
       - source_labels: [__meta_docker_container_name]
         regex: /?(.*)
         target_label: container
+      - target_label: machine
+        replacement: ${MACHINE:-main}
     pipeline_stages:
       - json:
           expressions:

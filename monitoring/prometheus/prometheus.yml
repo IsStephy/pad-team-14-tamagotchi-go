@@ -1,12 +1,17 @@
-# Prometheus for the whole stack.
+# Prometheus for the whole stack, on every machine.
 #
-# Every service that serves GET /metrics gets a job here. The targets come from
-# Docker's DNS: a Compose service name resolves to the address of every one of
-# its replicas, so each replica is scraped on its own (the `instance` label)
-# and replicas added with `--scale` show up within the refresh interval.
+# The targets come from Service Discovery (GET /prometheus/targets): every
+# replica that registered, with the address it registered. Replicas on other
+# machines register their LAN address, so they're scraped too, and a replica
+# that stops drops out on its own. Prometheus sends the discovery key as a
+# bearer token, written to /tmp/discovery_key at start-up (docker-compose.yml).
 #
-# To add your service: copy a job, set job_name to the Compose service name and
-# the port it listens on inside the stack.
+# Two jobs per replica:
+# - `services`: its own GET /metrics, for the services in the `keep` list;
+# - `health`: its health URL, probed through the blackbox exporter, for every
+#   service, so even one without /metrics shows whether each replica is up.
+#
+# To add your service's /metrics: add its name to the `keep` regex below.
 
 global:
   scrape_interval: 15s
@@ -17,50 +22,65 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  - job_name: message-broker
-    dns_sd_configs:
-      - names: [message-broker]
-        type: A
-        port: 8090
+  # GET /metrics on every replica of the services that serve it. The job label
+  # becomes the service name; `instance` is the replica's host:port.
+  - job_name: services
+    http_sd_configs:
+      - url: http://service-discovery:8089/prometheus/targets
         refresh_interval: 15s
+        authorization:
+          type: Bearer
+          credentials_file: /tmp/discovery_key
+    relabel_configs:
+      - source_labels: [service]
+        regex: message-broker|map-service|monster-raid-service|tamagotchi-service|notification-service|guild-service|package-registry-service
+        action: keep
+      - source_labels: [service]
+        target_label: job
+      - source_labels: [instance_id]
+        target_label: replica
+      - regex: service|instance_id|health_url
+        action: labeldrop
 
-  - job_name: map-service
-    dns_sd_configs:
-      - names: [map-service]
-        type: A
-        port: 8085
+  # The health URL of every replica of every registered service, probed by the
+  # blackbox exporter: probe_success (1 up, 0 down) and probe_duration_seconds,
+  # labelled with `service`, `instance` (host:port) and `replica`.
+  - job_name: health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    http_sd_configs:
+      - url: http://service-discovery:8089/prometheus/targets
         refresh_interval: 15s
+        authorization:
+          type: Bearer
+          credentials_file: /tmp/discovery_key
+    relabel_configs:
+      - source_labels: [health_url]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [instance_id]
+        target_label: replica
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+      - regex: instance_id|health_url
+        action: labeldrop
 
-  - job_name: monster-raid-service
-    dns_sd_configs:
-      - names: [monster-raid-service]
-        type: A
-        port: 8086
-        refresh_interval: 15s
-
-  - job_name: tamagotchi-service
-    dns_sd_configs:
-      - names: [tamagotchi-service]
-        type: A
-        port: 8083
-        refresh_interval: 15s
-
-  - job_name: notification-service
-    dns_sd_configs:
-      - names: [notification-service]
-        type: A
-        port: 8084
-        
-  - job_name: guild-service
-    dns_sd_configs:
-      - names: [guild-service]
-        type: A
-        port: 8087
-        refresh_interval: 15s
-
-  - job_name: package-registry-service
-    dns_sd_configs:
-      - names: [package-registry-service]
-        type: A
-        port: 8088
-        refresh_interval: 15s
+  # The two that don't register with Service Discovery.
+  - job_name: health-static
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://gateway:8080/health"]
+        labels: { service: gateway }
+      - targets: ["http://service-discovery:8089/health"]
+        labels: { service: service-discovery }
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
