@@ -877,15 +877,15 @@
           "response": []
         },
         {
-          "name": "Monster Raid reads the guild with its service key",
+          "name": "A service key alone is no credential at the gateway (401)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
-                  "pm.test('sees the members', function () { pm.expect(pm.response.json().members).to.be.an('array'); });"
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('asks for a player token', function () { pm.expect(pm.response.json().error).to.eql('missing bearer token'); });"
                 ]
               }
             }
@@ -908,7 +908,7 @@
                 "{{guildId}}"
               ]
             },
-            "description": "No player token: Monster Raid Service checks raid joiners' membership as itself. The gateway passes X-Service-Key on and adds its own key; Guild Service accepts Monster Raid's key on this one endpoint. Set monsterRaidServiceKey to SERVICE_KEY_MONSTER_RAID from .env."
+            "description": "Services call each other through the Message Broker since Lab 4, never through the gateway: Monster Raid reads the guild with its key through the broker (X-Broker-Key + X-Service-Key). At the gateway a service key alone is no credential and is never passed on. Set monsterRaidServiceKey to SERVICE_KEY_MONSTER_RAID from .env."
           },
           "response": []
         },
@@ -943,7 +943,7 @@
                 "{{guildId}}"
               ]
             },
-            "description": "The gateway forwards it - service keys are checked by the service that owns the endpoint - and Guild Service refuses it."
+            "description": "Refused at the gateway, which takes no service keys: services go through the Message Broker."
           },
           "response": []
         },
@@ -982,6 +982,235 @@
               ]
             },
             "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Service-only endpoints (404 at the gateway)",
+      "description": "The endpoints only services call are not routed by the gateway since Lab 4 (gateway v4.2.0): services reach them through the Message Broker.",
+      "item": [
+        {
+          "name": "Adjust currency is not routed (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says it is not available through the gateway', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('is not available through the gateway');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/currency/adjust",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "currency",
+                "adjust"
+              ]
+            },
+            "description": "Service-only: other services call it through the Message Broker. The gateway answers 404 without reaching the service, even with a player token and a service key."
+          },
+          "response": []
+        },
+        {
+          "name": "Award XP is not routed (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says it is not available through the gateway', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('is not available through the gateway');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/t-postman/xp",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "t-postman",
+                "xp"
+              ]
+            },
+            "description": "Service-only: other services call it through the Message Broker. The gateway answers 404 without reaching the service, even with a player token and a service key."
+          },
+          "response": []
+        },
+        {
+          "name": "Transfer a Tamagotchi is not routed (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says it is not available through the gateway', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('is not available through the gateway');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/t-postman/transfer-owner",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "t-postman",
+                "transfer-owner"
+              ]
+            },
+            "description": "Service-only: other services call it through the Message Broker. The gateway answers 404 without reaching the service, even with a player token and a service key."
+          },
+          "response": []
+        },
+        {
+          "name": "Create a raid is not routed (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', function () { pm.response.to.have.status(404); });",
+                  "pm.test('says it is not available through the gateway', function () {",
+                  "    pm.expect(pm.response.json().error).to.include('is not available through the gateway');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{monsterRaidServiceKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gatewayUrl}}/raids",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids"
+              ]
+            },
+            "description": "Service-only: other services call it through the Message Broker. The gateway answers 404 without reaching the service, even with a player token and a service key."
           },
           "response": []
         }
