@@ -357,9 +357,9 @@ services:
       # Every request must carry this key (X-Gateway-Key); stream tickets are
       # signed with it too. The service no longer verifies user tokens.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
-      # Relationships come from User Management, through the gateway, as Map
-      # (X-Service-Key).
-      USER_MANAGEMENT_URL: ${MAP_USER_MANAGEMENT_URL:-http://gateway:8080}
+      # Relationships come from User Management as Map (X-Service-Key), over
+      # gRPC through the broker (GetRelationship). An http:// URL calls REST.
+      USER_MANAGEMENT_URL: ${MAP_USER_MANAGEMENT_URL:-grpc://message-broker:50051}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_MAP:-}
       REQUEST_TIMEOUT_MS: ${MAP_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${MAP_MAX_CONCURRENT_REQUESTS:-100}
@@ -372,12 +372,11 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${MAP_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${MAP_CIRCUIT_BREAKER_WINDOW_MS:-17500}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${MAP_CIRCUIT_BREAKER_COOLDOWN_MS:-30000}
-      # Set MAP_BROKER_URL (e.g. http://message-broker:8090) to send calls to
-      # other services and events through the Message Broker; empty = calls as
-      # above and events only logged. Requests the broker delivers carry
-      # BROKER_KEY next to the sender's own key.
-      BROKER_URL: ${MAP_BROKER_URL:-}
-      BROKER_KEY: ${BROKER_KEY:-}
+      # REST calls and events go through the Message Broker. MAP_BROKER_URL set
+      # empty in .env turns it off (REST calls as above, events only logged).
+      # Requests the broker delivers carry BROKER_KEY next to the sender's key.
+      BROKER_URL: ${MAP_BROKER_URL-http://message-broker:8090}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${MAP_LOG_LEVEL:-info}
     # Replicas publish no ports: clients reach the location stream through ws-proxy.
     deploy:
@@ -435,11 +434,13 @@ services:
       # are signed with it too. The service no longer verifies user tokens.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       # Guild (membership), Tamagotchi (ownership, attack power) and User
-      # Management (rewards) are called through the gateway, as Monster Raid:
-      # each call carries SERVICE_KEY_MONSTER_RAID as X-Service-Key.
-      GUILD_SERVICE_URL: ${MONSTER_RAID_GUILD_SERVICE_URL:-http://gateway:8080}
-      TAMAGOTCHI_SERVICE_URL: ${MONSTER_RAID_TAMAGOTCHI_SERVICE_URL:-http://gateway:8080}
-      USER_MANAGEMENT_URL: ${MONSTER_RAID_USER_MANAGEMENT_URL:-http://gateway:8080}
+      # Management (rewards) are called through the broker, as Monster Raid:
+      # each call carries SERVICE_KEY_MONSTER_RAID as X-Service-Key. Guild and
+      # User Management over gRPC (GetGuild, AdjustCurrency), Tamagotchi over
+      # REST (its URL is only used with the broker off).
+      GUILD_SERVICE_URL: ${MONSTER_RAID_GUILD_SERVICE_URL:-grpc://message-broker:50051}
+      TAMAGOTCHI_SERVICE_URL: ${MONSTER_RAID_TAMAGOTCHI_SERVICE_URL:-}
+      USER_MANAGEMENT_URL: ${MONSTER_RAID_USER_MANAGEMENT_URL:-grpc://message-broker:50051}
       GUILD_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
       TAMAGOTCHI_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
       USER_MANAGEMENT_SERVICE_KEY: ${SERVICE_KEY_MONSTER_RAID:-}
@@ -458,12 +459,12 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${MONSTER_RAID_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${MONSTER_RAID_CIRCUIT_BREAKER_WINDOW_MS:-17500}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${MONSTER_RAID_CIRCUIT_BREAKER_COOLDOWN_MS:-30000}
-      # Set MONSTER_RAID_BROKER_URL (e.g. http://message-broker:8090) to send calls to
-      # other services and events through the Message Broker; empty = calls as
-      # above and events only logged. Requests the broker delivers carry
-      # BROKER_KEY next to the sender's own key.
-      BROKER_URL: ${MONSTER_RAID_BROKER_URL:-}
-      BROKER_KEY: ${BROKER_KEY:-}
+      # REST calls and events go through the Message Broker, and with
+      # BROKER_KEY it serves CreateRaid over gRPC (50086) for Package Registry.
+      # MONSTER_RAID_BROKER_URL set empty in .env turns the broker off.
+      # Requests the broker delivers carry BROKER_KEY next to the sender's key.
+      BROKER_URL: ${MONSTER_RAID_BROKER_URL-http://message-broker:8090}
+      BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       LOG_LEVEL: ${MONSTER_RAID_LOG_LEVEL:-info}
     # Replicas publish no ports: clients reach the live raid socket through ws-proxy.
     deploy:
