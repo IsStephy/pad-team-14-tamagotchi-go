@@ -2409,9 +2409,24 @@ is the envelope:
 **At least once**, per subscribed service. A copy that isn't acked (no `2xx`,
 no answer, or no reachable instance) is delivered again every
 `BROKER_REDELIVERY_DELAY_SECONDS` (2 s), up to `BROKER_MAX_DELIVERY_ATTEMPTS`
-(5) in all, and then dropped and counted in `eventsDropped` on `/health`. So
-the same event can arrive twice: dedupe by `messageId`. The queues are kept in
-memory, so copies not yet acked are lost if the broker restarts.
+(5) in all, and then moved to the **Dead Letter Channel**. So the same event can
+arrive twice: dedupe by `messageId`.
+
+**Durable queues:** every copy is stored on disk (SQLite on the `broker-data`
+volume) before the broker answers `202`, and deleted once acked. After a broker
+restart, the stored copies are delivered again. A subscriber with no running
+instance keeps its copies waiting; they use no attempts.
+
+**Dead Letter Channel:** copies whose attempts ran out, and events on a topic
+nobody subscribes to, are kept with the reason and the last error:
+
+```bash
+curl -s http://localhost:8090/dead-letters -H "X-Admin-Key: <BROKER_ADMIN_KEY>"
+curl -s "http://localhost:8090/dead-letters?topic=raid.completed&limit=20" -H "X-Admin-Key: <BROKER_ADMIN_KEY>"
+```
+
+It needs `BROKER_ADMIN_KEY`, not the broker key that every service holds.
+`/health` shows `eventsStored` and `deadLetters`.
 
 ## Running the Whole System
 
