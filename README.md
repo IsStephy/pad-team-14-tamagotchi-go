@@ -43,7 +43,7 @@ The team works in **2 languages**, split by repo/member pair:
 |---|---|---|---|---|
 | `user-management-service` | User Management | **Go** (e.g. Gin/Echo) | REST CRUD (auth, profile, currency checks) | Publishes friend/relationship/currency-change events for other services to consume |
 | `battle-service` | Battle | **Go** (e.g. Gin/Echo) | REST to create/query a match; WebSocket pushes live turn/state updates during a match | Publishes battle-end events (reward/XP/currency change, Tamagotchi transfer) for Notification/Tamagotchi/User Management to consume |
-| `tamagotchi-service` | Tamagotchi | **Go** (e.g. Gin/Echo) | REST CRUD (create/level/read stats) | Publishes Tamagotchi-updated/transferred events |
+| `tamagotchi-service` | Tamagotchi | **Go** (e.g. Gin/Echo) | REST CRUD (create/level/read stats) | Consumes `battle.ended` from the Message Broker (the winner's XP and the captured Tamagotchi); publishes none |
 | `notification-service` | Notification | **Go** (e.g. Gin/Echo) | REST for device registration only | Purely event-driven: consumes events from every other service and delivers via Firebase push; no service should call it synchronously for delivery |
 | `map-service` | Map | **TypeScript** (Node.js 22, Express) | REST for nearby-user queries; WebSocket/streaming for continuous geolocation updates | Emits proximity events (async, fire-and-forget) rather than blocking callers |
 | `monster-raid-service` | Monster Raid | **TypeScript** (Node.js 22, Express) | REST for raid queries/attacks (current HP/status) | Publishes raid-complete/raid-failed events for rewards |
@@ -266,6 +266,7 @@ Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
 | | `PATCH /tamagotchis/{id}/stats` | Player (self — the owner) |
 | | `POST /tamagotchis/{id}/xp` | **Service** — Battle; not routed by the gateway |
 | | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle; not routed by the gateway |
+| | `POST /events` | **Message Broker** only (`X-Broker-Key`); not routed by the gateway |
 | Notification | `POST /notifications/register-device` | Player (self) |
 | | `GET /notifications/{userId}` | Player (self) |
 | | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
@@ -757,11 +758,12 @@ Success Response (200 OK):
 
 **Add XP**
 
-`POST` `/tamagotchis/{id}/xp` — Description: Adds experience points to a Tamagotchi, possibly leveling it up. Payload:
+`POST` `/tamagotchis/{id}/xp` — Description: Adds experience points to a Tamagotchi, possibly leveling it up. `idempotencyKey` is optional: a key already used for this award adds nothing and answers `200` with the Tamagotchi as it is, so a retried call never awards twice; a key already used for another Tamagotchi or for a transfer answers `409` and changes nothing. Battle sends `battle-ended:<battleId>:primary` / `:secondary` (see [Battle Ended](#battle-service-user-battle-go)), the keys the `battle.ended` event uses too, so an award made both ways counts once. Payload:
 
 ```json
 {
-  "xpAmount": "int"
+  "xpAmount": "int",
+  "idempotencyKey": "string (optional, at most 255 characters)"
 }
 ```
 
@@ -777,11 +779,12 @@ Success Response (200 OK):
 
 **Transfer Ownership**
 
-`POST` `/tamagotchis/{id}/transfer-owner` — Description: Transfers a Tamagotchi to a new owner (e.g. on battle loss). This mutates the existing record's `ownerId` in place — per spec, a Tamagotchi acquired this way is a **reference to the existing entry, never a new row**. The transferred Tamagotchi defaults to `isPrimary: false` for its new owner (use `set-primary` above to promote it). Payload:
+`POST` `/tamagotchis/{id}/transfer-owner` — Description: Transfers a Tamagotchi to a new owner (e.g. on battle loss). This mutates the existing record's `ownerId` in place — per spec, a Tamagotchi acquired this way is a **reference to the existing entry, never a new row**. The transferred Tamagotchi defaults to `isPrimary: false` for its new owner (use `set-primary` above to promote it). `idempotencyKey` is optional and works as on `xp` above: Battle sends `battle-ended:<battleId>`, so a transfer made both by Battle's call and by the event happens once. Payload:
 
 ```json
 {
-  "newOwnerId": "string"
+  "newOwnerId": "string",
+  "idempotencyKey": "string (optional, at most 255 characters)"
 }
 ```
 
@@ -793,6 +796,18 @@ Success Response (200 OK):
   "ownerId": "string"
 }
 ```
+
+**Events published:** none.
+
+**Events received** at `POST /events` (Message Broker only), each change applied once, by the same keys as Battle's direct calls (table `idempotency_keys`):
+
+| Topic | What Tamagotchi does | Idempotency key |
+|---|---|---|
+| `battle.ended` | `primaryXp` to `winnerPrimaryTamagotchiId` | `battle-ended:<battleId>:primary` |
+| | `secondaryXp` to `winnerSecondaryTamagotchiId`, when it isn't empty | `battle-ended:<battleId>:secondary` |
+| | `transferredTamagotchiId` to `winnerId`, when one was captured | `battle-ended:<battleId>` |
+
+Each change is its own transaction. The answer is the ack: `200 {messageId, applied, duplicates}` once every change is made (a redelivery answers `200` with `applied: 0`); `400` for an event it can't read; `422` when a change can never be made (e.g. a Tamagotchi that doesn't exist; the others are still made); `503` + `Retry-After` when it may work later.
 
 #### Notification Service (`tamagotchi-notification`, Go)
 
@@ -1605,46 +1620,70 @@ and reached only through the gateway: no host port. The schema is created on
 start-up under a lock, so the replicas can start together. On `docker compose stop`
 each replica deregisters first, then lets its requests in progress finish.
 
+- **Calls from Battle and Monster Raid** come through the Message Broker, with the
+  broker's `X-Broker-Key` and their own `X-Service-Key` (the broker key alone opens
+  nothing but `POST /events`).
+- **`battle.ended`:** with `BROKER_KEY` set, every replica registers for the topic,
+  and the broker hands each event to one replica at `POST /events`. It awards
+  `primaryXp` and `secondaryXp` to the winner's Tamagotchis and moves
+  `transferredTamagotchiId` to the winner, with Battle's own idempotency keys (see
+  [Battle Ended](#battle-service-user-battle-go)), so a redelivered event, or a
+  change Battle already made itself, is applied once. It answers `2xx` once every
+  change is made; `400` (not an event it can read) and `422` (e.g. a Tamagotchi
+  that doesn't exist) end in the broker's Dead Letter Channel after its attempts.
+
 ```bash
 docker compose up -d tamagotchi-service
 docker compose ps tamagotchi-service             # one line per replica
 docker compose exec tamagotchi-service wget -qO- localhost:8083/health
-# {"status":"ok","service":"tamagotchi-service","version":"3.1.1","instanceId":"3f2a9c1b7d4e",
-#  "uptimeSeconds":12,"inFlightRequests":0,"maxConcurrentRequests":10,"checks":{...},"load":{...}}
+# {"status":"ok","service":"tamagotchi-service","version":"4.1.0",...,
+#  "load":{...,"events":{"handled":0,"duplicates":0,"refused":0,"failed":0}}}
 
 # The replicas Service Discovery knows (DISCOVERY_KEY is in .env):
 curl -s localhost:8089/services/tamagotchi-service -H "X-Discovery-Key: <DISCOVERY_KEY>"
+
+# battle.ended lists tamagotchi-service as a subscriber (BROKER_KEY is in .env):
+curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
+
+# Publish a battle.ended through the broker, as Battle would: 60 XP to the winner's
+# primary Tamagotchi. Publishing it again adds nothing (same battleId, same key).
+curl -X POST http://localhost:8090/topics/battle.ended/messages \
+  -H "X-Broker-Key: <BROKER_KEY>" -H "Content-Type: application/json" \
+  -d '{"source":"battle-service","payload":{"battleId":"b1","winnerId":"<user id>","loserId":"<user id>","primaryXp":60,"winnerPrimaryTamagotchiId":"<tamagotchi id>"}}'
+docker compose logs tamagotchi-service | grep battle.ended
 ```
 
-**In the shared stack** it's reached only through the gateway: every endpoint
-except `GET /health` needs the gateway's `X-Gateway-Key`, players are
-identified by `X-User-Id`, and Battle (`xp`, `transfer-owner`, and reading
-`GET /tamagotchis/{id}` and `GET /users/{userId}/tamagotchis`) and Monster Raid
-(`GET /tamagotchis/{id}`) by their `X-Service-Key` (`SERVICE_KEY_BATTLE`,
-`SERVICE_KEY_MONSTER_RAID`). Access per endpoint is in the table above.
+**In the shared stack** players reach it through the gateway (the gateway's
+`X-Gateway-Key`, the player in `X-User-Id`), and services through the Message
+Broker: Battle (`xp`, `transfer-owner`, and reading `GET /tamagotchis/{id}` and
+`GET /users/{userId}/tamagotchis`) and Monster Raid (`GET /tamagotchis/{id}`) by
+their `X-Service-Key` (`SERVICE_KEY_BATTLE`, `SERVICE_KEY_MONSTER_RAID`) together
+with `X-Broker-Key`. Access per endpoint is in the table above.
 
 Stat updates are checked against the package's stat definitions, which it reads
-from Package Registry through the gateway (`GET /packages/{packageId}`): an
+from Package Registry (`GET /packages/{packageId}`): through the Message Broker
+when `TAMAGOTCHI_BROKER_URL` is set (`.env.example` sets
+`http://message-broker:8090`), through the gateway otherwise
+(`TAMAGOTCHI_PACKAGE_REGISTRY_URL`, `http://gateway:8080` when empty). An
 undefined key or an unregistered package is `400`, and Package Registry being
 down is `502`.
 
-There is no way around the gateway from outside the stack any more (no host
-port); the service's README shows calls with the gateway's headers for a local
-`go run`.
+There is no way around the gateway or the broker from outside the stack any more
+(no host port); the service's README shows calls with the gateway's or the
+broker's headers for a local `go run`.
 
 **Gateway routes:** `/tamagotchis/**`, `/types/**` and
 `/users/{userId}/tamagotchis/**` → Tamagotchi (the gateway matches the last one
 before User Management's `/users/**`). `GET /types/advantages` needs no token.
-No WebSocket endpoints. Its one outgoing call, Package Registry's
-`GET /packages/{packageId}`, goes through the gateway too
-(`TAMAGOTCHI_PACKAGE_REGISTRY_URL`, `http://gateway:8080` when empty).
+No WebSocket endpoints. `xp`, `transfer-owner` and `POST /events` aren't routed by
+the gateway.
 
 **Circuit breaker:** that call has its own breaker.
 `TAMAGOTCHI_CIRCUIT_BREAKER_THRESHOLD` (3) errors within the request timeout × 3.5
 (5 s → 17.5 s) trip it: a stats update then answers `503` with `Retry-After` at once,
 without calling Package Registry, until the cooldown (the window) has passed and one
-trial call succeeds. Timeouts, refused connections and `5xx` count; an answer such as
-`404` doesn't. Every change of state is logged (an `ERROR` naming caller, target and
+trial call succeeds. Timeouts, refused connections and `5xx` count (also the broker's
+`502` / `503` / `504`); an answer such as `404` doesn't. Every change of state is logged (an `ERROR` naming caller, target and
 endpoint when it trips), and `/health` shows the breaker under `load.circuitBreakers`.
 
 ### Notification Service
@@ -2674,7 +2713,7 @@ works without cloning its repo.
 |---|---|---|
 | [`user-management-service`](collections/user-management-service.postman_collection.json) | User Management, through the gateway and the Message Broker | `http://localhost:8080`, `http://localhost:8090` |
 | [`battle-service`](collections/battle-service.postman_collection.json) | Battle, through the gateway | `http://localhost:8080` |
-| [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi, through the gateway | `http://localhost:8080` |
+| [`tamagotchi-service`](collections/tamagotchi-service.postman_collection.json) | Tamagotchi, through the gateway and the Message Broker | `http://localhost:8080`, `http://localhost:8090` |
 | [`notification-service`](collections/notification-service.postman_collection.json) | Notification, through the gateway | `http://localhost:8080` |
 | [`map-service`](collections/map-service.postman_collection.json) | Map, through the gateway | `http://localhost:8080` |
 | [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid, through the gateway | `http://localhost:8080` |
@@ -2689,7 +2728,7 @@ ids into collection variables as it goes. They also run headlessly:
 ```bash
 npx newman run collections/user-management-service.postman_collection.json --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var guildServiceKey=<SERVICE_KEY_GUILD> --env-var mapServiceKey=<SERVICE_KEY_MAP>
 npx newman run collections/battle-service.postman_collection.json
-npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
+npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 npx newman run collections/notification-service.postman_collection.json
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY>
