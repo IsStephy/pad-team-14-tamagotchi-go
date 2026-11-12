@@ -115,7 +115,7 @@ Since Lab 4, calls between services can use gRPC instead of REST, through the Me
 - **Ports:** a service serves gRPC on `5008N`, next to its HTTP port `808N` (User Management `50081`), and registers it with Service Discovery as `metadata.grpcPort`. The broker listens on `50051` and forwards each call to a healthy replica's `grpcPort`, with the same load balancing, circuit breaker and reroutes as HTTP (reads only, or a call whose connection was never made).
 - **Metadata:** the header names, lower-case: `x-broker-key`, `x-service-key`, `x-request-id`, `x-user-id`. The callee checks the broker key and the caller's service key, exactly as over REST, and answers `PERMISSION_DENIED` otherwise.
 - **Errors:** `NOT_FOUND` (404), `INVALID_ARGUMENT` (400), `FAILED_PRECONDITION` (409, e.g. not enough currency), `PERMISSION_DENIED` (401/403), `DEADLINE_EXCEEDED` (504), `UNAVAILABLE` (503/502), `INTERNAL` (500). The last three count for the circuit breaker.
-- **Who serves it now:** User Management (`GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`). Battle calls it over gRPC with `BATTLE_GRPC_DEPENDENCIES=user-management-service`, once it runs on the broker.
+- **Who serves it now:** User Management (`GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`) and Tamagotchi (`GetTamagotchi`, `ListByOwner`, `GetTypeAdvantages`, `AddXp`, `TransferOwner`). Battle calls them over gRPC by listing them in `BATTLE_GRPC_DEPENDENCIES` (`user-management-service,tamagotchi-service`), once it runs on the broker. Notification serves none: no service calls it, and the broker delivers events only by HTTP (`POST /events`).
 
 #### WebSockets
 
@@ -806,6 +806,8 @@ Success Response (200 OK):
 | `battle.ended` | `primaryXp` to `winnerPrimaryTamagotchiId` | `battle-ended:<battleId>:primary` |
 | | `secondaryXp` to `winnerSecondaryTamagotchiId`, when it isn't empty | `battle-ended:<battleId>:secondary` |
 | | `transferredTamagotchiId` to `winnerId`, when one was captured | `battle-ended:<battleId>` |
+
+**gRPC** (`tamagotchigo.tamagotchi.v1.TamagotchiService`, through the broker at `message-broker:50051`): `GetTamagotchi`, `ListByOwner`, `GetTypeAdvantages`, `AddXp` and `TransferOwner` (with `idempotency_key`, the same keys as REST's `idempotencyKey`), with the same rules and callers as the REST endpoints above, on each replica's `GRPC_PORT` (`50083`). `GetTamagotchi`'s `package_stats` carries the numeric stats only (`map<string, double>`). See [gRPC between services](#grpc-between-services).
 
 Each change is its own transaction. The answer is the ack: `200 {messageId, applied, duplicates}` once every change is made (a redelivery answers `200` with `applied: 0`); `400` for an event it can't read; `422` when a change can never be made (e.g. a Tamagotchi that doesn't exist; the others are still made); `503` + `Retry-After` when it may work later.
 
@@ -1599,7 +1601,7 @@ Claim a free one when you wire up your service and add it here.
 |---|---|
 | User Management | `8081` (not published: replicas reached only through the gateway) |
 | Battle | `8082` (the live socket, published by `ws-proxy`; REST only through the gateway) |
-| Tamagotchi | `8083` (not published: replicas reached only through the gateway) |
+| Tamagotchi | `8083`, gRPC `50083` (not published: replicas reached only through the gateway and the broker) |
 | Notification | `8084` (not published: replicas reached only through the gateway) |
 | Map | `8085` (the location stream and direct calls, published by `ws-proxy`; REST through the gateway) |
 | Monster Raid | `8086` (the live raid socket and direct calls, published by `ws-proxy`; REST through the gateway) |
@@ -1631,12 +1633,17 @@ each replica deregisters first, then lets its requests in progress finish.
   change Battle already made itself, is applied once. It answers `2xx` once every
   change is made; `400` (not an event it can read) and `422` (e.g. a Tamagotchi
   that doesn't exist) end in the broker's Dead Letter Channel after its attempts.
+- **gRPC** on `50083`, registered as `metadata.grpcPort`: the same calls between
+  services, with the same keys, limits and errors as REST (see
+  [gRPC between services](#grpc-between-services)). With
+  `TAMAGOTCHI_GRPC_DEPENDENCIES=package-registry-service` it also reads the stat
+  definitions over gRPC, once Package Registry serves gRPC.
 
 ```bash
 docker compose up -d tamagotchi-service
 docker compose ps tamagotchi-service             # one line per replica
 docker compose exec tamagotchi-service wget -qO- localhost:8083/health
-# {"status":"ok","service":"tamagotchi-service","version":"4.1.0",...,
+# {"status":"ok","service":"tamagotchi-service","version":"4.2.0",...,
 #  "load":{...,"events":{"handled":0,"duplicates":0,"refused":0,"failed":0}}}
 
 # The replicas Service Discovery knows (DISCOVERY_KEY is in .env):
@@ -1644,6 +1651,12 @@ curl -s localhost:8089/services/tamagotchi-service -H "X-Discovery-Key: <DISCOVE
 
 # battle.ended lists tamagotchi-service as a subscriber (BROKER_KEY is in .env):
 curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
+
+# A gRPC call through the broker, as Battle (grpcurl, from tamagotchi-service/):
+grpcurl -plaintext -import-path proto -proto tamagotchigo/tamagotchi/v1/tamagotchi.proto \
+  -H "x-broker-key: <BROKER_KEY>" -H "x-service-key: <SERVICE_KEY_BATTLE>" \
+  localhost:50051 tamagotchigo.tamagotchi.v1.TamagotchiService/GetTypeAdvantages
+docker compose logs message-broker | grep "grpc call"     # delivered / replied
 
 # Publish a battle.ended through the broker, as Battle would: 60 XP to the winner's
 # primary Tamagotchi. Publishing it again adds nothing (same battleId, same key).
