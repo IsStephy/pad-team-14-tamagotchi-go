@@ -106,7 +106,7 @@ Every request — from a client or from another service — goes through the **A
 
 Endpoints marked **Service** below are internal: only the listed callers may use them. Since Lab 4, service-to-service calls go through the **Message Broker**, not the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token) and `X-Broker-Key`, and the callee checks both — the broker key proves the call came through the broker, the service key proves *which* service made it (team decisions, #182). The broker key alone opens nothing but `POST /events`. Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others, and a key opens only the endpoints that list its service: another service's key gets `403`.
 
-**The gateway forwards no service-to-service call** (from gateway v4.0.0, Dackohn/gateway#18). The endpoints that only services call answer `404 {"error": "POST /raids is not available through the gateway"}` there, without reaching the service: `POST /users/{userId}/currency/adjust`, `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` and `POST /raids`. A request with only an `X-Service-Key` gets `401` like any request without a token, and the gateway drops any `X-Service-Key` or `X-Broker-Key` a client sends.
+**The gateway forwards no service-to-service call** (gateway v4.2.0, Dackohn/gateway#18). The endpoints that only services call answer `404 {"error": "POST /raids is not available through the gateway"}` there, without reaching the service: `POST /users/{userId}/currency/adjust`, `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` and `POST /raids`. A request with only an `X-Service-Key` gets `401` like any request without a token, and the gateway drops any `X-Service-Key` or `X-Broker-Key` a client sends.
 
 #### gRPC between services
 
@@ -158,8 +158,7 @@ Every error body is `{"error": "..."}`.
 #### Circuit breaker
 
 Every service that calls another one (Battle, Guild, Package Registry,
-Tamagotchi, Map, Monster Raid, and the gateway until v4.0.0) keeps **one
-breaker per target**, so
+Tamagotchi, Map, Monster Raid) keeps **one breaker per target**, so
 one failing service never pauses calls to the others. The rule is the same
 everywhere:
 
@@ -194,8 +193,8 @@ at once. Start the service again, and the first request after the cooldown
 closes the breaker.
 
 **Removing the failing instance — in the Message Broker (Lab 4, #168).**
-Every call and event between services, and from gateway v4.0.0 every client
-request too, goes through the broker, so the broker keeps the breaker **per
+Every call and event between services, and every client request too (gateway
+v4.2.0), goes through the broker, so the broker keeps the breaker **per
 instance**, and one broken replica never takes its healthy siblings down:
 
 - 3 errors (the same definition as above) to the same instance within the
@@ -217,9 +216,9 @@ instance**, and one broken replica never takes its healthy siblings down:
 {"time":"2026-11-10T16:16:02.540Z","level":"ERROR","service":"message-broker","msg":"circuit breaker tripped: instance removed","requestId":"e07b…","caller":"message-broker","target":"user-management-service","instance":"5f4bb89d4b73","url":"http://5f4bb89d4b73:8081","endpoint":"GET /users/u1","errors":3,"windowSeconds":35.0,"threshold":3,"lastError":"status 503"}
 ```
 
-The gateway drops its own breaker and replica removal from v4.0.0
-(Dackohn/gateway#18): until then it still keeps them as in Lab 3. Each
-service's own breakers stay per target service, in front of the broker.
+The gateway has no breaker or replica removal of its own any more (v4.2.0,
+Dackohn/gateway#18). Each service's own breakers stay per target service, in
+front of the broker.
 
 **Try it:** `docker kill` one replica of a 3-replica service (it can't
 deregister itself) and send requests that reach it through the broker: its 3
@@ -2086,7 +2085,7 @@ On the broker Battle makes no call to User Management: the currency comes from
 the gateway (`USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
 `PACKAGE_REGISTRY_SERVICE_URL`, `http://gateway:8080` by default) and Battle
 pays the currency and calls Tamagotchi's `xp` and `transfer-owner` itself,
-which gateway v4.0.0 no longer forwards.
+which the gateway no longer forwards (v4.2.0).
 ### Guild Service
 
 **What it does:** owns guild identity, membership and roles
@@ -2474,7 +2473,8 @@ docker compose ps        # wait until everything is healthy
   Discovery (`GET /prometheus/targets`), on every machine, and every 15 s:
   - scrapes `GET /metrics` on the replicas of the services that serve it
     (job `services`, labelled with the service as `job`), and on the gateway
-    (job `gateway`, listed in the config since it doesn't register);
+    and Service Discovery (jobs `gateway` and `service-discovery`, listed in
+    the config since they don't register);
   - probes the health URL of **every** replica of **every** service through the
     **blackbox exporter** (job `health`: `probe_success`, `probe_duration_seconds`),
     so a service without `/metrics` still shows whether each replica is up. The
@@ -2522,9 +2522,10 @@ Leave `/health` and `/metrics` themselves out of the counts. In Node,
 `prometheus_client`. Then add your service's name to the `keep` list of the
 `services` job in [`monitoring/prometheus/prometheus.yml`](monitoring/prometheus/prometheus.yml).
 Today the Message Broker, User Management, Battle, Map, Monster Raid, Tamagotchi,
-Notification, Guild and Package Registry serve them, and so does the gateway
+Notification, Guild and Package Registry serve them, and so do the gateway
 (its `http_requests_total` also has `target`, the service a request was
-forwarded to). User Management and Battle use no library: a small exporter in
+forwarded to) and Service Discovery (plus `discovery_instances{service}`, the
+live instances it lists per service). User Management and Battle use no library: a small exporter in
 `internal/platform/metrics`, and Battle reports `circuit_breaker_state` for
 each service it calls. Notification also serves
 `notification_events_total{outcome}` (`handled`, `duplicate`, `failed`, `timed_out`,
@@ -2819,7 +2820,7 @@ ids into collection variables as it goes. They also run headlessly:
 npx newman run collections/user-management-service.postman_collection.json --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var guildServiceKey=<SERVICE_KEY_GUILD> --env-var mapServiceKey=<SERVICE_KEY_MAP>
 npx newman run collections/battle-service.postman_collection.json
 npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
-npx newman run collections/notification-service.postman_collection.json
+npx newman run collections/notification-service.postman_collection.json --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY> --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
@@ -2839,8 +2840,10 @@ The **gateway** collection exercises the system the way a client app does:
 players register and log in through the gateway (real User Management tokens),
 the gateway checks every token, and Guild and Package Registry are reached
 only through it. It covers the gateway's own endpoints, its authorization
-(missing, invalid and forged credentials), WebSocket negotiation for guild
-chat, and routing to both services. It needs the gateway, User Management,
+(missing, invalid and forged credentials, and a service key alone, which the
+gateway refuses since services go through the Message Broker), WebSocket
+negotiation for guild chat, routing to both services, and the four
+service-only endpoints answering `404` there. It needs the gateway, User Management,
 Guild and Package Registry running with the same `GATEWAY_KEY`. Package
 Registry's admin-only success paths stay in that service's own collection:
 admins are seeded by user id, and User Management issues new ids on every run.

@@ -73,6 +73,11 @@ scrape_configs:
     static_configs:
       - targets: ["gateway:8080"]
 
+  # Service Discovery's own GET /metrics, listed here for the same reason.
+  - job_name: service-discovery
+    static_configs:
+      - targets: ["service-discovery:8089"]
+
   # The two that don't register with Service Discovery.
   - job_name: health-static
     metrics_path: /probe
