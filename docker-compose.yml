@@ -754,23 +754,15 @@ services:
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
       MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-100}
       MAX_CONCURRENT_PER_SERVICE: ${GATEWAY_MAX_CONCURRENT_PER_SERVICE:-50}
-      # Message Broker (Lab 4, from gateway v4.0.0, Dackohn/gateway#18): every
+      # Message Broker (Lab 4, gateway v4.2.0, Dackohn/gateway#18): every
       # request goes to the service's queue in the broker, which picks the
       # instance, runs the circuit breaker and reroutes. The four Service-only
       # endpoints answer 404, and a service key alone is no credential.
       BROKER_URL: http://message-broker:8090
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
-      # Gateway v3 only (unused from v4.0.0, where the broker does both):
-      # circuit breaker per service, 3 errors within the request timeout x 3.5
-      # (35 s) answer 503 for that service until a trial call succeeds. Empty
-      # window and cooldown follow that rule.
-      CIRCUIT_BREAKER_THRESHOLD: ${GATEWAY_CIRCUIT_BREAKER_THRESHOLD:-3}
-      CIRCUIT_BREAKER_WINDOW_SECONDS: ${GATEWAY_CIRCUIT_BREAKER_WINDOW_SECONDS:-}
-      CIRCUIT_BREAKER_COOLDOWN_SECONDS: ${GATEWAY_CIRCUIT_BREAKER_COOLDOWN_SECONDS:-}
       # Each service's replicas, read from Service Discovery every
-      # GATEWAY_DISCOVERY_REFRESH_SECONDS. Gateway v3 takes them in turn for
-      # every request; from v4.0.0 only /ws/negotiate and /health/services use
-      # them.
+      # GATEWAY_DISCOVERY_REFRESH_SECONDS, for /ws/negotiate and
+      # /health/services: the broker picks the instance for every request.
       SERVICE_DISCOVERY_URL: http://service-discovery:8089
       DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
       DISCOVERY_REFRESH_SECONDS: ${GATEWAY_DISCOVERY_REFRESH_SECONDS:-5}
