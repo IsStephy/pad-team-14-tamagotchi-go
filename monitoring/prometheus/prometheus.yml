@@ -33,7 +33,7 @@ scrape_configs:
           credentials_file: /tmp/discovery_key
     relabel_configs:
       - source_labels: [service]
-        regex: message-broker|map-service|monster-raid-service|tamagotchi-service|notification-service|guild-service|package-registry-service
+        regex: message-broker|user-management-service|battle-service|map-service|monster-raid-service|tamagotchi-service|notification-service|guild-service|package-registry-service
         action: keep
       - source_labels: [service]
         target_label: job
@@ -66,6 +66,12 @@ scrape_configs:
         replacement: blackbox-exporter:9115
       - regex: instance_id|health_url
         action: labeldrop
+
+  # The gateway's GET /metrics: it doesn't register with Service Discovery, so
+  # it is listed here. `job` is `gateway`, like its health probe's `service`.
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8080"]
 
   # The two that don't register with Service Discovery.
   - job_name: health-static
