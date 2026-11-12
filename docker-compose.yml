@@ -239,6 +239,13 @@ services:
       SERVICE_KEY_MONSTER_RAID: ${SERVICE_KEY_MONSTER_RAID:-}
       # Empty = Package Registry through the gateway (http://gateway:8080).
       PACKAGE_REGISTRY_URL: ${TAMAGOTCHI_PACKAGE_REGISTRY_URL:-}
+      # With BROKER_KEY, Battle and Monster Raid can call through the Message Broker
+      # (its key plus their own), and each replica subscribes to battle.ended and
+      # applies it at POST /events (one replica per event). TAMAGOTCHI_BROKER_URL
+      # (http://message-broker:8090) also sends the Package Registry call through the
+      # broker; empty = PACKAGE_REGISTRY_URL above.
+      BROKER_KEY: ${BROKER_KEY:-}
+      BROKER_URL: ${TAMAGOTCHI_BROKER_URL:-}
       LOG_LEVEL: ${TAMAGOTCHI_LOG_LEVEL:-INFO}
       # The circuit breaker on the call to Package Registry; an empty window or cooldown
       # = the request timeout x 3.5 (17.5 s).
