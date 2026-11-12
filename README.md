@@ -115,7 +115,7 @@ Since Lab 4, calls between services can use gRPC instead of REST, through the Me
 - **Ports:** a service serves gRPC on `5008N`, next to its HTTP port `808N` (User Management `50081`), and registers it with Service Discovery as `metadata.grpcPort`. The broker listens on `50051` and forwards each call to a healthy replica's `grpcPort`, with the same load balancing, circuit breaker and reroutes as HTTP (reads only, or a call whose connection was never made).
 - **Metadata:** the header names, lower-case: `x-broker-key`, `x-service-key`, `x-request-id`, `x-user-id`. The callee checks the broker key and the caller's service key, exactly as over REST, and answers `PERMISSION_DENIED` otherwise.
 - **Errors:** `NOT_FOUND` (404), `INVALID_ARGUMENT` (400), `FAILED_PRECONDITION` (409, e.g. not enough currency), `PERMISSION_DENIED` (401/403), `DEADLINE_EXCEEDED` (504), `UNAVAILABLE` (503/502), `INTERNAL` (500). The last three count for the circuit breaker.
-- **Who serves it now:** User Management (`GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`) and Tamagotchi (`GetTamagotchi`, `ListByOwner`, `GetTypeAdvantages`, `AddXp`, `TransferOwner`). Battle calls them over gRPC by listing them in `BATTLE_GRPC_DEPENDENCIES` (`user-management-service,tamagotchi-service`), once it runs on the broker. Notification serves none: no service calls it, and the broker delivers events only by HTTP (`POST /events`).
+- **Who serves it now:** User Management (`GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`) and Tamagotchi (`GetTamagotchi`, `ListByOwner`, `GetTypeAdvantages`, `AddXp`, `TransferOwner`). Battle calls both over gRPC through the broker (`BATTLE_GRPC_DEPENDENCIES=user-management-service,tamagotchi-service`, the default). Notification serves none: no service calls it, and the broker delivers events only by HTTP (`POST /events`).
 
 #### WebSockets
 
@@ -631,7 +631,7 @@ Not client-facing — published on `battle.ended` when a battle ends, consumed b
 |---|---|---|
 | `rewardCurrency` to `winnerId` | User Management, from the event (Battle itself without the broker) | `battle-ended:<battleId>:winner` |
 | `loserCurrencyPenalty` from `loserId` | User Management, from the event (Battle itself without the broker) | `battle-ended:<battleId>:loser` |
-| `primaryXp` to `winnerPrimaryTamagotchiId` | Battle; Tamagotchi from the event once `BATTLE_TAMAGOTCHI_BY_EVENT=true` | `battle-ended:<battleId>:primary` |
+| `primaryXp` to `winnerPrimaryTamagotchiId` | Tamagotchi, from the event (`BATTLE_TAMAGOTCHI_BY_EVENT=true`, the default; Battle itself with `false` or without the broker) | `battle-ended:<battleId>:primary` |
 | `secondaryXp` to `winnerSecondaryTamagotchiId` | as above | `battle-ended:<battleId>:secondary` |
 | `transferredTamagotchiId` to `winnerId` | as above | `battle-ended:<battleId>` |
 
@@ -2062,23 +2062,31 @@ needing it answers `503`, until the cooldown (the window) has passed and one
 trial call succeeds. Timeouts, refused connections and `5xx` count; `4xx`
 doesn't. Tripping is logged as an `ERROR` naming caller, target and endpoint.
 
-**Outgoing calls** carry Battle's own `X-Service-Key` (`SERVICE_KEY_BATTLE`),
-never a player's token. Until `BATTLE_BROKER_URL` is set they go through the
-gateway (`USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
-`PACKAGE_REGISTRY_SERVICE_URL` default to `http://gateway:8080`). With
-`BATTLE_BROKER_URL=http://message-broker:8090` (once Tamagotchi accepts the
-broker's key) every call goes through the broker, User Management over gRPC
-(`BATTLE_GRPC_DEPENDENCIES`), the `battle.*` events go to its topics, and User
-Management pays the currency from `battle.ended`. Battle has to be on the broker
-before gateway v4.0.0, which forwards no service call:
+**Through the Message Broker** (`BATTLE_BROKER_URL`, `http://message-broker:8090`
+by default): every call carries `X-Broker-Key` and Battle's own
+`X-Service-Key` (`SERVICE_KEY_BATTLE`), never a player's token, and goes to the
+broker, which picks the instance and runs the circuit breaker. User Management
+and Tamagotchi are called over gRPC at `message-broker:50051`
+(`BATTLE_GRPC_DEPENDENCIES`), Package Registry over REST. The settlement comes
+from `battle.ended`: User Management pays the currency and Tamagotchi awards
+the XP and moves the captured Tamagotchi (`BATTLE_TAMAGOTCHI_BY_EVENT=true`), so
+Battle makes neither call; it only publishes the event, with
+`battle.request_received` and `battle.tamagotchi_captured`.
 
-| Call | Owner |
-|---|---|
-| `POST /users/{userId}/currency/adjust` | User Management — **Service**: Battle |
-| `GET /types/advantages` | Tamagotchi — Public |
-| `GET /tamagotchis/{id}`, `GET /users/{userId}/tamagotchis` | Tamagotchi — reading combat stats and equipped boosts |
-| `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` | Tamagotchi — **Service**: Battle |
-| `GET /packages/{packageId}` | Package Registry — Public |
+| Call | Owner | Transport | When |
+|---|---|---|---|
+| `GetTypeAdvantages` | Tamagotchi | gRPC | the type chart for damage |
+| `GetTamagotchi` | Tamagotchi | gRPC | each fighter's stats and equipped boosts, on creating a battle |
+| `GET /packages/{packageId}` | Package Registry | REST | the package's stat definitions |
+
+On the broker Battle makes no call to User Management: the currency comes from
+`battle.ended`. It stays in `BATTLE_GRPC_DEPENDENCIES` all the same.
+
+`BATTLE_BROKER_URL` set empty turns the broker off: the calls then go through
+the gateway (`USER_MANAGEMENT_SERVICE_URL`, `TAMAGOTCHI_SERVICE_URL` and
+`PACKAGE_REGISTRY_SERVICE_URL`, `http://gateway:8080` by default) and Battle
+pays the currency and calls Tamagotchi's `xp` and `transfer-owner` itself,
+which gateway v4.0.0 no longer forwards.
 ### Guild Service
 
 **What it does:** owns guild identity, membership and roles
@@ -2826,8 +2834,8 @@ admins are seeded by user id, and User Management issues new ids on every run.
 The **user-management-service** and **battle-service** collections go through
 the gateway like a client app: their players register and log in through User
 Management, and each acts with their own token. Battle's run ends by checking
-that the winner was paid in User Management, which Battle reaches through the
-gateway until it runs on the broker. User Management's two currency
+that User Management paid the winner from the `battle.ended` event Battle
+published on the Message Broker. User Management's two currency
 adjustments are service-only, so they go through the Message Broker with its
 key and Battle's (`brokerKey`, `battleServiceKey`). Its "Through the Message
 Broker" folder shows each service key opening only its own endpoints (Guild
