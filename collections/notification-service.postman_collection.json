@@ -844,7 +844,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
-                  "pm.test('error: invalid service key', function () { pm.expect(pm.response.json().error).to.eql(\"invalid service key\"); });"
+                  "pm.test('the gateway asks for a player token', function () { pm.expect(pm.response.json().error).to.eql('missing bearer token'); });"
                 ]
               }
             }
@@ -867,7 +867,7 @@
                 "{{playerId}}"
               ]
             },
-            "description": "Notification has no service-to-service endpoints, so any X-Service-Key is refused."
+            "description": "A service key is no credential at the gateway (v4.2.0): services go through the Message Broker. Notification has no service-to-service endpoints anyway."
           },
           "response": []
         }
