@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "1b240c66-06bb-443f-9fef-7f795416b7dc",
     "name": "tamagotchi-service",
-    "description": "Tamagotchi creation, stats, primary choice, XP and ownership transfer.\n\nOwner: dan1el50. Port: 8083 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`): players register and log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. Battle (`xp`, `transfer-owner`) and Monster Raid (`GET /tamagotchis/{id}`) call with their `X-Service-Key` and no token. The service accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.\n\nStat updates are checked against the package's stat definitions in Package Registry (through the gateway), so the setup folder registers a real package. Package Registry's admin is seeded by user id (PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID, `admin-1`), which no gateway login can be, so that one folder calls Package Registry directly and plays the gateway.\n\nSet these to the values in your .env (the defaults match .env.example): `{{gatewayKey}}` = GATEWAY_KEY, `{{battleServiceKey}}` = SERVICE_KEY_BATTLE, `{{monsterRaidServiceKey}}` = SERVICE_KEY_MONSTER_RAID. With newman: `--env-var gatewayKey=<key>` and so on.",
+    "description": "Tamagotchi creation, stats, primary choice, XP and ownership transfer.\n\nOwner: dan1el50. Port: 8083 (reached through the gateway on 8080).\n\nEverything goes through the API Gateway (`{{gatewayUrl}}`): players register and log in at User Management through it, and the gateway verifies their token and forwards requests with `X-User-Id` + `X-Gateway-Key` instead. Battle (`xp`, `transfer-owner`) and Monster Raid (`GET /tamagotchis/{id}`) call through the Message Broker (`{{brokerUrl}}`) with the broker's `X-Broker-Key` and their own `X-Service-Key`, and no token; the gateway no longer forwards calls between services. Battle's calls carry an `idempotencyKey`, and the run publishes a `battle.ended` twice to show the XP is awarded once. The service accepts nothing else - the `... without the gateway` request shows the 401. Each run registers new players (`{{runId}}`), so it can be run repeatedly.\n\nStat updates are checked against the package's stat definitions in Package Registry (through the gateway), so the setup folder registers a real package. Package Registry's admin is seeded by user id (PACKAGE_REGISTRY_INITIAL_ADMIN_USER_ID, `admin-1`), which no gateway login can be, so that one folder calls Package Registry directly and plays the gateway.\n\nSet these to the values in your .env (the defaults match .env.example): `{{gatewayKey}}` = GATEWAY_KEY, `{{battleServiceKey}}` = SERVICE_KEY_BATTLE, `{{monsterRaidServiceKey}}` = SERVICE_KEY_MONSTER_RAID. With newman: `--env-var gatewayKey=<key>` and so on.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "38273956"
   },
@@ -21,6 +21,14 @@
       "key": "gatewayKey",
       "value": "change_me",
       "type": "string"
+    },
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "brokerKey",
+      "value": "change_me"
     },
     {
       "key": "battleServiceKey",
@@ -672,16 +680,22 @@
             }
           },
           "response": []
-        },
+        }
+      ]
+    },
+    {
+      "name": "Battle and Monster Raid, through the Message Broker",
+      "item": [
         {
-          "name": "Monster Raid reads the Tamagotchi (service key)",
+          "name": "Monster Raid reads the Tamagotchi (broker key + service key)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });"
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('its owner and level', function () { pm.expect(pm.response.json()).to.include({ ownerId: pm.collectionVariables.get('ownerId'), level: 1 }); });"
                 ]
               }
             }
@@ -690,16 +704,22 @@
             "method": "GET",
             "header": [
               {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
                 "key": "X-Service-Key",
                 "value": "{{monsterRaidServiceKey}}"
               }
             ],
             "url": {
-              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}",
               "host": [
-                "{{gatewayUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
+                "services",
+                "tamagotchi-service",
                 "tamagotchis",
                 "{{tamagotchiId}}"
               ]
@@ -708,7 +728,7 @@
           "response": []
         },
         {
-          "name": "Battle adds XP (service key)",
+          "name": "Battle adds XP with an idempotencyKey",
           "event": [
             {
               "listen": "test",
@@ -729,16 +749,22 @@
                 "value": "application/json"
               },
               {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
                 "key": "X-Service-Key",
                 "value": "{{battleServiceKey}}"
               }
             ],
             "url": {
-              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/xp",
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}/xp",
               "host": [
-                "{{gatewayUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
+                "services",
+                "tamagotchi-service",
                 "tamagotchis",
                 "{{tamagotchiId}}",
                 "xp"
@@ -746,13 +772,113 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"xpAmount\": 150\n}"
+              "raw": "{\n  \"xpAmount\": 150,\n  \"idempotencyKey\": \"battle-ended:pm-{{runId}}:primary\"\n}"
             }
           },
           "response": []
         },
         {
-          "name": "Battle transfers it to the other player (service key)",
+          "name": "The same call again changes nothing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('still level 2 with 50 XP: the key was used', function () { pm.expect(pm.response.json()).to.include({ level: 2, xp: 50 }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}/xp",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "xp"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xpAmount\": 150,\n  \"idempotencyKey\": \"battle-ended:pm-{{runId}}:primary\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The same key on another Tamagotchi (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });",
+                  "pm.test('error: the key was used for another change', function () { pm.expect(pm.response.json().error).to.eql('idempotencyKey was already used for a different change'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{secondaryTamagotchiId}}/xp",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "xp"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xpAmount\": 150,\n  \"idempotencyKey\": \"battle-ended:pm-{{runId}}:primary\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Battle transfers it to the other player",
           "event": [
             {
               "listen": "test",
@@ -773,16 +899,22 @@
                 "value": "application/json"
               },
               {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
                 "key": "X-Service-Key",
                 "value": "{{battleServiceKey}}"
               }
             ],
             "url": {
-              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/transfer-owner",
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}/transfer-owner",
               "host": [
-                "{{gatewayUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
+                "services",
+                "tamagotchi-service",
                 "tamagotchis",
                 "{{tamagotchiId}}",
                 "transfer-owner"
@@ -790,7 +922,202 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"newOwnerId\": \"{{otherId}}\"\n}"
+              "raw": "{\n  \"newOwnerId\": \"{{otherId}}\",\n  \"idempotencyKey\": \"battle-ended:pm-{{runId}}\"\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "battle.ended from the Message Broker",
+      "item": [
+        {
+          "name": "Battle ends a battle: battle.ended with 300 XP for the winner's primary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', function () { pm.response.to.have.status(202); });",
+                  "pm.test('Tamagotchi subscribes to battle.ended', function () { pm.expect(pm.response.json().subscribers).to.include('tamagotchi-service'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"battle-service\",\n  \"payload\": {\n    \"battleId\": \"pm-event-{{runId}}\",\n    \"winnerId\": \"{{otherId}}\",\n    \"loserId\": \"{{ownerId}}\",\n    \"rewardCurrency\": 0,\n    \"loserCurrencyPenalty\": 0,\n    \"rewardXp\": 300,\n    \"primaryXp\": 300,\n    \"secondaryXp\": 0,\n    \"loserXp\": 0,\n    \"winnerPrimaryTamagotchiId\": \"{{tamagotchiId}}\",\n    \"winnerSecondaryTamagotchiId\": \"\",\n    \"transferredTamagotchiId\": \"\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/topics/battle.ended/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "topics",
+                "battle.ended",
+                "messages"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The XP arrived: level 3",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The broker delivers the event within a moment; give it 3 s.",
+                  "setTimeout(function () {}, 3000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('level 3: 50 + 300 XP', function () { pm.expect(pm.response.json().level).to.eql(3); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The same battle.ended again (a redelivery)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', function () { pm.response.to.have.status(202); });",
+                  "pm.test('Tamagotchi subscribes to battle.ended', function () { pm.expect(pm.response.json().subscribers).to.include('tamagotchi-service'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"battle-service\",\n  \"payload\": {\n    \"battleId\": \"pm-event-{{runId}}\",\n    \"winnerId\": \"{{otherId}}\",\n    \"loserId\": \"{{ownerId}}\",\n    \"rewardCurrency\": 0,\n    \"loserCurrencyPenalty\": 0,\n    \"rewardXp\": 300,\n    \"primaryXp\": 300,\n    \"secondaryXp\": 0,\n    \"loserXp\": 0,\n    \"winnerPrimaryTamagotchiId\": \"{{tamagotchiId}}\",\n    \"winnerSecondaryTamagotchiId\": \"\",\n    \"transferredTamagotchiId\": \"\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/topics/battle.ended/messages",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "topics",
+                "battle.ended",
+                "messages"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Still level 3: the second delivery added nothing",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The broker delivers the event within a moment; give it 3 s.",
+                  "setTimeout(function () {}, 3000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('still level 3, not 4', function () { pm.expect(pm.response.json().level).to.eql(3); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
             }
           },
           "response": []
@@ -1289,15 +1616,16 @@
           "response": []
         },
         {
-          "name": "A player calling Battle's XP endpoint (401)",
+          "name": "A player calling Battle's XP endpoint (401, or 404 at a gateway that no longer routes it)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
-                  "pm.test('error: missing service key', function () { pm.expect(pm.response.json().error).to.eql(\"missing service key\"); });"
+                  "// Refused either way: Tamagotchi answers 401 (players may not award XP), and a gateway",
+                  "// that no longer routes calls between services answers 404 before reaching it.",
+                  "pm.test('refused: 401 or 404', function () { pm.expect([401, 404]).to.include(pm.response.code); });"
                 ]
               }
             }
@@ -1333,7 +1661,7 @@
           "response": []
         },
         {
-          "name": "A wrong service key (401)",
+          "name": "A wrong service key through the broker (401)",
           "event": [
             {
               "listen": "test",
@@ -1341,7 +1669,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
-                  "pm.test('error: invalid service key', function () { pm.expect(pm.response.json().error).to.eql(\"invalid service key\"); });"
+                  "pm.test('error: needs a valid service key', function () { pm.expect(pm.response.json().error).to.eql('a call through the message broker needs a valid service key'); });"
                 ]
               }
             }
@@ -1354,16 +1682,22 @@
                 "value": "application/json"
               },
               {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
                 "key": "X-Service-Key",
                 "value": "not-a-real-key"
               }
             ],
             "url": {
-              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}/xp",
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{secondaryTamagotchiId}}/xp",
               "host": [
-                "{{gatewayUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
+                "services",
+                "tamagotchi-service",
                 "tamagotchis",
                 "{{secondaryTamagotchiId}}",
                 "xp"
@@ -1398,16 +1732,22 @@
                 "value": "application/json"
               },
               {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
                 "key": "X-Service-Key",
                 "value": "{{monsterRaidServiceKey}}"
               }
             ],
             "url": {
-              "raw": "{{gatewayUrl}}/tamagotchis/{{secondaryTamagotchiId}}/transfer-owner",
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{secondaryTamagotchiId}}/transfer-owner",
               "host": [
-                "{{gatewayUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
+                "services",
+                "tamagotchi-service",
                 "tamagotchis",
                 "{{secondaryTamagotchiId}}",
                 "transfer-owner"
@@ -1416,6 +1756,93 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"newOwnerId\": \"{{otherId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The broker key alone (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });",
+                  "pm.test('error: needs a valid service key', function () { pm.expect(pm.response.json().error).to.eql('a call through the message broker needs a valid service key'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{secondaryTamagotchiId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "An idempotencyKey longer than 255 characters (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', function () { pm.response.to.have.status(400); });",
+                  "pm.test('error: at most 255 characters', function () { pm.expect(pm.response.json().error).to.eql('idempotencyKey must be at most 255 characters'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{secondaryTamagotchiId}}/xp",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{secondaryTamagotchiId}}",
+                "xp"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xpAmount\": 10,\n  \"idempotencyKey\": \"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\"\n}"
             }
           },
           "response": []
