@@ -2807,7 +2807,7 @@ works without cloning its repo.
 | [`monster-raid-service`](collections/monster-raid-service.postman_collection.json) | Monster Raid, through the gateway | `http://localhost:8080` |
 | [`guild-service`](collections/guild-service.postman_collection.json) | Guild | `http://localhost:8087` |
 | [`package-registry-service`](collections/package-registry-service.postman_collection.json) | Package Registry | `http://localhost:8088` |
-| [`gateway`](collections/gateway.postman_collection.json) | Gateway, with Guild and Package Registry behind it | `http://localhost:8080` |
+| [`gateway`](collections/gateway.postman_collection.json) | Gateway (including `GET /logs`), with Guild and Package Registry behind it | `http://localhost:8080` |
 
 Start the service, then in Postman use *File → Import*, select the `.json` and
 press **Run** — each collection runs top to bottom as one scenario, capturing
@@ -2822,7 +2822,7 @@ npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY>
 npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY>
-npx newman run collections/gateway.postman_collection.json --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
+npx newman run collections/gateway.postman_collection.json --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID> --env-var adminKey=<BROKER_ADMIN_KEY>
 ```
 
 The **map-service** and **monster-raid-service** collections run the whole
