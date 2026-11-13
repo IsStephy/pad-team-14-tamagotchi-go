@@ -1487,8 +1487,7 @@ replica's own address instead; see [Running across machines](#running-across-mac
 | **Teal arrow** | Service Discovery: every replica registers its address, gRPC port and topics, sends heartbeats and deregisters; Service Discovery checks each one's `/health`, sends alerts to Telegram, and lists every instance for the broker and for Prometheus |
 | **Purple arrow** | monitoring: Prometheus scrapes `GET /metrics` on every replica (targets from Service Discovery), the blackbox exporter probes every `/health`, Promtail ships every container's logs to Loki, Grafana shows both, and the Gateway's `GET /logs` downloads them from Loki |
 | **Red dashed** | Lab 5, planned: replication and failover of every data store, the shared cache (3 Valkey nodes on a consistent-hash ring), the ETL into the Data Warehouse, and the saga coordinator in the broker |
-| **Colour** | which tier a service belongs to (below); the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring light purple |
-| **"every service"** | where the arrows that concern all eight services start and end (requests, service calls, events, registration, metrics, the Lab 5 parts), instead of eight copies of each |
+| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring light purple |
 
 **Who calls whom** (the amber arrow), every call through the broker:
 
@@ -1519,7 +1518,7 @@ its styling in `architecture.config.json`. After changing it, regenerate the PNG
 — Docker is all you need:
 
 ```bash
-docker run --rm -v "$PWD/docs/images:/data" minlag/mermaid-cli   -i /data/architecture.mmd -c /data/architecture.config.json   -o /data/architecture.png --size 2000 -s 2 -b white
+docker run --rm -v "$PWD/docs/images:/data" minlag/mermaid-cli   -i /data/architecture.mmd -c /data/architecture.config.json   -o /data/architecture.png -s 3 -b white
 ```
 
 In Git Bash on Windows, put `MSYS_NO_PATHCONV=1 ` in front of `docker run`:

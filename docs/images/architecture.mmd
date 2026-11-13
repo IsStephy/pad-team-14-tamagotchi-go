@@ -1,6 +1,7 @@
-flowchart LR
+flowchart TB
     %% Architecture diagram - the source of architecture.png (render steps in the README).
-    %% The edges are listed in groups; each group's linkStyle line names its edges' indexes.
+    %% Generated edge styles: the edges are listed in groups, and each group's
+    %% linkStyle line names its edges' indexes. Add an edge to its group.
     %%   dark   client requests: Gateway -> Message Broker -> one replica
     %%   amber  service-to-service calls through the broker (gRPC on 50051, or REST)
     %%   blue   WebSockets: negotiated by the Gateway, then through ws-proxy
@@ -8,79 +9,101 @@ flowchart LR
     %%   teal   Service Discovery: registration with topics, health checks, alerts
     %%   purple monitoring: metrics, health probes, logs, the log download
     %%   red dashed  Lab 5, planned (IsStephy/pad-team-14-tamagotchi-go#247)
-    %% ALL ("every service") is where the arrows that concern every service end,
-    %% so the Services group stays the size of its boxes.
 
 
     Client(["Client apps"])
     GW["<b>API Gateway</b><br/>Python · port 8080<br/>tokens · routing · limits<br/>GET /logs · GET /metrics"]
-    WP["<b>ws-proxy</b><br/>nginx · ports 8082, 8085–8088"]
-    SD["<b>Service Discovery</b><br/>Python · port 8089<br/>replicas register: address, gRPC port, topics<br/>health checks · alerts · Prometheus targets"]
+    WP["<b>ws-proxy</b><br/>nginx · ports 8082, 8085–8088<br/>one host port per scaled service"]
+    SD["<b>Service Discovery</b><br/>Python · port 8089<br/>registry · health checks · alerts<br/>Prometheus targets"]
     TGM(["Telegram<br/>alerts topic"])
 
     subgraph Broker["Message Broker"]
-        MB["<b>Message Broker</b><br/>Python · REST 8090 · gRPC 50051<br/>service queues · topic queues<br/>least-loaded pick · breaker · reroute<br/>thread-per-request"]
-        MBDB[("<b>Durable store</b> · SQLite<br/>event copies · dead letters<br/>GET /dead-letters")]
-        SAGA["<b>Saga coordinator</b><br/>Lab 5 · planned"]
+        MB["<b>Message Broker</b><br/>Python · REST 8090 · gRPC 50051<br/>service queues · topic queues<br/>least-loaded pick · circuit breaker · reroute<br/>thread-per-request"]
+        MBDB[("<b>Durable store</b><br/>SQLite · broker-data volume<br/>event copies · Dead Letter Channel<br/>GET /dead-letters")]
+        SAGA["<b>Saga coordinator</b><br/>Lab 5 · planned<br/>steps · compensations · GET /sagas/{id}"]
     end
 
-    subgraph Services["Services · 2–3 replicas each · REST + gRPC · each owns its data store"]
-        ALL{{"every service"}}
-        UM["<b>User Management</b><br/>PostgreSQL"]
-        NT["<b>Notification</b><br/>Redis"]
-        TG["<b>Tamagotchi</b><br/>PostgreSQL"]
-        PR["<b>Package Registry</b><br/>PostgreSQL"]
-        BT["<b>Battle</b><br/>PostgreSQL · Redis"]
-        MP["<b>Map</b><br/>Redis"]
-        MR["<b>Monster Raid</b><br/>PostgreSQL · Redis"]
-        GD["<b>Guild</b><br/>PostgreSQL"]
+    subgraph Services["Services · each runs as 2–3 replicas · REST + gRPC"]
+        UM["User Management"]
+        BT["Battle"]
+        TG["Tamagotchi"]
+        NT["Notification"]
+        MP["Map"]
+        MR["Monster Raid"]
+        GD["Guild"]
+        PR["Package Registry"]
     end
+
+    subgraph Stores["Data stores · one per service, shared by its replicas"]
+        UMdb[("User Mgmt<br/>PostgreSQL")]
+        BTdb[("Battle<br/>PostgreSQL · Redis")]
+        TGdb[("Tamagotchi<br/>PostgreSQL")]
+        NTdb[("Notification<br/>Redis")]
+        MPdb[("Map<br/>Redis")]
+        MRdb[("Monster Raid<br/>PostgreSQL · Redis")]
+        GDdb[("Guild<br/>PostgreSQL")]
+        PRdb[("Package Registry<br/>PostgreSQL")]
+    end
+
+    REPL["<b>Replication + failover</b> · Lab 5 · planned<br/>each PostgreSQL: pgpool + primary + 2 replicas<br/>each Redis: master + 2 replicas + Sentinel"]
+
+    subgraph Cache["Cache · Lab 5 · planned"]
+        C1[("cache-1<br/>Valkey · 6381")]
+        C2[("cache-2<br/>Valkey · 6382")]
+        C3[("cache-3<br/>Valkey · 6383")]
+    end
+
+    ETL["<b>ETL service</b> · Lab 5 · planned<br/>every ETL_INTERVAL_SECONDS<br/>extract · transform · load"]
+    DW[("<b>Data Warehouse</b> · Lab 5 · planned<br/>PostgreSQL 16 · port 5440")]
 
     subgraph Monitoring["Monitoring"]
-        PM["<b>Prometheus</b><br/>port 9090 · scrapes /metrics<br/>targets from Service Discovery"]
-        BB["<b>Blackbox exporter</b><br/>probes every /health"]
-        PT["<b>Promtail</b>"]
+        PM["<b>Prometheus</b><br/>port 9090"]
+        BB["<b>Blackbox exporter</b><br/>health probes"]
+        PT["<b>Promtail</b><br/>every container's logs"]
         LK["<b>Loki</b>"]
-        GF["<b>Grafana</b><br/>port 3000"]
+        GF["<b>Grafana</b><br/>port 3000 · dashboard"]
     end
 
-        REPL["<b>Replication + failover</b> · Lab 5<br/>PostgreSQL: pgpool + primary + 2 replicas<br/>Redis: master + 2 replicas + Sentinel"]
-        CACHE[("<b>Cache</b> · Lab 5 · 3 Valkey nodes<br/>ports 6381–6383 · consistent-hash ring<br/>services' GETs + gateway tokens")]
-        ETL["<b>ETL service</b> · Lab 5<br/>reads every store read-only<br/>extract · transform · load"]
-        DW[("<b>Data Warehouse</b> · Lab 5<br/>PostgreSQL 16 · port 5440")]
 
-
-    Client -->|"REST · Bearer token"| GW
-    GW -->|"request for a service"| MB
-    MB -->|"one replica of the target,<br/>least loaded"| ALL
-    ALL -->|"service calls<br/>gRPC 50051 or REST"| MB
+    Client -->|"REST · Bearer token<br/>GET /ws/negotiate"| GW
+    GW -->|"request for a service<br/>(its service queue)"| MB
+    MB -->|"to one replica of the target service<br/>least loaded, healthy"| Services
+    Services -->|"service-to-service calls<br/>gRPC on 50051, or REST"| MB
     Client ==>|"WebSocket + ticket"| WP
     WP ==> BT
     WP ==> MP
     WP ==> MR
     WP ==> GD
-    ALL -.->|"publish events"| MB
-    MB -.->|"a copy per subscriber"| ALL
-    MB --- MBDB
-    ALL --> SD
-    SD -.-> ALL
-    SD --> TGM
-    MB --> SD
-    PM --> SD
-    PM -.-> ALL
+    Services -.->|"publish events on topics"| MB
+    MB -.->|"a copy to each subscribed service<br/>POST /events, 2xx = ack"| Services
+    MB ---|"every event copy on disk before 202<br/>dead letters after 5 attempts"| MBDB
+    UM --- UMdb
+    BT --- BTdb
+    TG --- TGdb
+    NT --- NTdb
+    MP --- MPdb
+    MR --- MRdb
+    GD --- GDdb
+    PR --- PRdb
+    Services -->|"register (address, gRPC port, topics)<br/>heartbeat · deregister"| SD
+    SD -.->|"GET /health · 10 s"| Services
+    SD -->|"critical load, unreachable"| TGM
+    MB -->|"instances, gRPC ports, topics · 5 s"| SD
+    PM -->|"scrape targets"| SD
+    PM -.->|"GET /metrics · 15 s"| Services
     PM -.-> MB
     PM -.-> GW
     PM --> BB
-    BB -.-> ALL
+    BB -.->|"probe /health"| Services
     PT -->|"container logs"| LK
     GF --> PM
     GF --> LK
-    GW -->|"GET /logs"| LK
-    SAGA -.->|"saga steps"| ALL
-    ALL -.- REPL
-    ALL -.-> CACHE
-    GW -.-> CACHE
-    ALL -.-> ETL
+    GW -->|"GET /logs (admin key)"| LK
+    SAGA -.->|"saga steps, compensations"| Services
+    Stores -.- REPL
+    Services -.->|"commonly read GETs,<br/>user lookups · consistent-hash ring"| Cache
+    GW -.->|"verified tokens"| Cache
+    Stores -.->|"read-only etl_reader"| ETL
     ETL -.-> DW
 
     classDef client fill:#eef1f4,stroke:#5a6470,stroke-width:2px,color:#1f2933
@@ -91,7 +114,7 @@ flowchart LR
     classDef green fill:#dcefe2,stroke:#2e7d4f,stroke-width:2px,color:#0f2d1b
     classDef infra fill:#d9f0ec,stroke:#1f7a6c,stroke-width:2px,color:#0b2e29
     classDef monitor fill:#efe2f4,stroke:#7a3e9d,stroke-width:2px,color:#2b1236
-    classDef hub fill:#ffffff,stroke:#9aa5b1,stroke-width:1px,color:#3c4650
+    classDef db fill:#f4f6f8,stroke:#9aa5b1,color:#3c4650
     classDef lab5 fill:#fff4ec,stroke:#c2410c,stroke-width:2px,stroke-dasharray:6 4,color:#4a1d06
 
     class Client,TGM client
@@ -100,19 +123,21 @@ flowchart LR
     class MR,BT,GD,MP blue
     class TG,PR purple
     class UM,NT green
-    class ALL hub
     class SD,WP infra
     class PM,BB,PT,LK,GF monitor
-    class SAGA,REPL,CACHE,ETL,DW lab5
+    class UMdb,BTdb,TGdb,NTdb,MPdb,MRdb,GDdb,PRdb db
+    class SAGA,REPL,ETL,DW,C1,C2,C3 lab5
     style Services fill:#fafbfc,stroke:#9aa5b1,stroke-dasharray:6 4,color:#3c4650
+    style Stores fill:#fafbfc,stroke:#c5ccd3,stroke-dasharray:3 3,color:#3c4650
     style Broker fill:#fdf6f2,stroke:#d9a68e,stroke-dasharray:6 4,color:#3b170a
     style Monitoring fill:#fbf7fc,stroke:#b08bc2,stroke-dasharray:6 4,color:#2b1236
+    style Cache fill:#fffaf6,stroke:#c2410c,stroke-dasharray:6 4,color:#4a1d06
 
     %% Edge colours (indexes generated from the groups above).
     linkStyle 0,1,2 stroke:#3c4650,stroke-width:2px
     linkStyle 3 stroke:#c27c0e,stroke-width:2px
     linkStyle 4,5,6,7,8 stroke:#2f6db5,stroke-width:3px
     linkStyle 9,10,11 stroke:#8a939c,stroke-width:1.5px
-    linkStyle 12,13,14,15 stroke:#1f7a6c,stroke-width:2px
-    linkStyle 16,17,18,19,20,21,22,23,24,25 stroke:#7a3e9d,stroke-width:2px
-    linkStyle 26,27,28,29,30,31 stroke:#c2410c,stroke-width:2px,stroke-dasharray:6 4
+    linkStyle 20,21,22,23 stroke:#1f7a6c,stroke-width:2px
+    linkStyle 24,25,26,27,28,29,30,31,32,33 stroke:#7a3e9d,stroke-width:2px
+    linkStyle 34,35,36,37,38,39 stroke:#c2410c,stroke-width:2px,stroke-dasharray:6 4

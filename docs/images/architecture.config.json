@@ -7,9 +7,9 @@
     "lineColor": "#3c4650"
   },
   "flowchart": {
-    "nodeSpacing": 28,
-    "rankSpacing": 42,
-    "padding": 12,
+    "nodeSpacing": 45,
+    "rankSpacing": 70,
+    "padding": 18,
     "curve": "basis",
     "wrappingWidth": 320
   }
