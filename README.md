@@ -1531,8 +1531,11 @@ something we can explain line by line.
 **The algorithm** (identical in every language, so a key always maps to the
 same node no matter which service computes it):
 
-1. **Hash:** FNV-1a, 32 bit, over the key's UTF-8 bytes. It is about ten
-   lines of code in any language, which makes it easy to port exactly.
+1. **Hash:** FNV-1a, 32 bit, over the key's UTF-8 bytes, then murmur3's
+   `fmix32` finalizer. Both are a few lines in any language, which makes
+   them easy to port exactly. `fmix32` is needed because FNV-1a alone
+   spreads labels that differ only at the end (`cache-1#0`,
+   `cache-1#1`, ...) badly: one node of three got 59% of the keys.
 2. **Virtual nodes:** each node is placed on the ring **160 times**, at the
    hashes of `"<node>#0"` … `"<node>#159"`. Without them, 3 points on a
    circle split the keys very unevenly.
