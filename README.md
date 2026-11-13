@@ -2074,6 +2074,136 @@ otherwise Git Bash rewrites `/data` into a Windows path and the input is not
 found.
 
 
+## Cache Sharding with Consistent Hashing
+
+Lab 5 (#230). Every service caches its common reads in three shared cache
+nodes, `cache-1`, `cache-2` and `cache-3` (Valkey 8, host ports
+`6381`–`6383`). Each key must live on exactly one node, and every service
+must agree on which one. This section explains how we choose the node. The
+code, its tests and the Go port are in [`hash-ring/`](hash-ring/README.md).
+
+### The problem: `hash mod N`
+
+The obvious way to pick a node is `node = hash(key) mod N`. It spreads keys
+evenly, but it breaks when `N` changes. Going from 3 to 4 nodes, a key stays
+put only if `hash mod 3` equals `hash mod 4`, which happens for about 1 key in
+4. **About 3/4 of the keys move.** Every one of them is suddenly a miss on its
+new node, so adding a node empties most of the cache at once, and the
+databases take the full load. That is the opposite of what adding a node was
+for.
+
+### Consistent hashing
+
+Put the nodes and the keys on the same circle (the "ring"): positions
+`0 … 2^32 − 1`, given by the same hash function. A key belongs to the **first
+node clockwise** from its position.
+
+```
+                 cache-1
+            .  '    ●    '  .
+         '                     '        key A  → next node clockwise: cache-2
+       ●  cache-3         A ×    '
+      .                          ●  cache-2
+       '                        .
+         '      × B          '          key B  → next node clockwise: cache-3
+            '  .        .  '
+```
+
+- **Adding a node** puts it at a new position. It takes over only the keys
+  between its position and the node before it, which is **about 1/(N+1)** of
+  them: 1/4 when going from 3 to 4 nodes. All other keys stay where they are.
+- **Removing a node** moves only **that node's keys**, each to the next node
+  clockwise. Keys on the other nodes are untouched.
+
+### Virtual nodes
+
+With one point per node, three random points split the circle into three arcs
+of random length, so one node can own most of the circle. Measured on our
+ring with 100 000 keys:
+
+| Points per node | `cache-1` | `cache-2` | `cache-3` |
+|---|---|---|---|
+| 1 | 34.0% | **5.0%** | **61.0%** |
+| 10 | 27.4% | 42.9% | 29.8% |
+| 40 | 35.2% | 34.3% | 30.4% |
+| **160** (what we use) | 32.5% | 32.4% | 35.1% |
+
+So each node is placed **160 times**, at `hash("cache-1#0")` …
+`hash("cache-1#159")`. The many small arcs even out. A side benefit: when a
+node is removed, its keys spread over *all* remaining nodes instead of all
+landing on one neighbour.
+
+### Which keys move: measured
+
+`npm run stats` in `hash-ring/` (100 000 keys, cache-4 joining 3 nodes):
+
+| Method | Keys that move | Where they go |
+|---|---|---|
+| `hash mod N` | **75.3%** | everywhere, between all nodes |
+| Consistent-hash ring | **25.5%** (ideal 25%) | only to the new node |
+
+The tests check this on every run: 20–30% move, and every moved key goes to
+the new node.
+
+### Compared with Redis Cluster's 16384 hash slots
+
+Redis Cluster (and Valkey Cluster) shards differently:
+- Every key goes to one of **16384 fixed slots**: `CRC16(key) mod 16384`.
+  The number 16384 never changes, so this `mod` never reshuffles keys.
+- The cluster keeps a **table of which master owns which slots**. Adding a node
+  means *moving whole slots* to it (`CLUSTER ADDSLOTS`, resharding). The keys
+  in those slots migrate with them.
+- A client that asks the wrong node gets a `MOVED <slot> <node>` redirect, so
+  cluster clients keep a copy of the slot table.
+- The cluster itself handles failover between a master and its replicas.
+
+| | Our ring | Redis Cluster slots |
+|---|---|---|
+| Who decides the node | the client, by hashing | the cluster's slot table (the client caches it) |
+| Partitions | 160 points per node on a 2^32 circle | 16384 fixed slots |
+| Adding a node | automatic: about 1/(N+1) of the keys move to it | an operator moves slots to it |
+| Servers | three plain independent Valkey nodes | cluster mode: gossip, redirects, at least 3 masters |
+| Multi-key operations | anything on one node | only for keys in the same slot (`{hash tags}`) |
+
+Both avoid the `hash mod N` problem. Redis Cluster does it with a fixed
+number of slots plus a table, and consistent hashing does it with a ring.
+**Why we chose the ring:** the lab asks for sharding *with consistent
+hashing*; plain Valkey nodes are simpler to run than a cluster; and the
+whole algorithm is about a hundred lines we wrote ourselves and can explain.
+
+### Our algorithm
+
+The same in every service and both languages, so a key maps to the same node
+no matter which service computes it:
+
+1. `hash32(text)` = **FNV-1a 32-bit** over the UTF-8 bytes, then **murmur3's
+   `fmix32`** finalizer.
+2. Each node gets **160 points**, at `hash32("<node>#<i>")`.
+3. Points are sorted by hash; equal hashes by node name.
+4. A key belongs to the first point with hash `>=` `hash32(key)`, wrapping
+   around to the first point (binary search: 9 comparisons for 480 points).
+
+**Why fmix32:** FNV-1a is short and easy to port, but on its own it spreads
+our labels badly. `cache-1#0`, `cache-1#1`, … differ only in their last
+characters, and FNV-1a barely changes the high bits for that. With FNV-1a
+alone, one node got **59%** of the keys. `fmix32` mixes every input bit into
+every output bit, and the split becomes 32 / 32 / 35%.
+
+**A node that is down stays on the ring.** Its keys become cache misses, read
+from the database, and the other two nodes keep serving. Removing it would
+move its keys elsewhere and then move them back when it returns.
+
+### One algorithm, two languages
+
+- [`hash-ring/src/hashRing.ts`](hash-ring/src/hashRing.ts): Guild, Package
+  Registry, Map, Monster Raid.
+- [`hash-ring/go/hashring.go`](hash-ring/go/hashring.go): User Management,
+  Battle, Tamagotchi, Notification.
+- [`hash-ring/test-vectors.json`](hash-ring/test-vectors.json): 213 hashes
+  and 852 lookups, generated by the TypeScript ring. The Go port passes all of
+  them. Copied into a service, a port that passes the vectors picks the same
+  node as every other service.
+
 ## Contributing
 
 Workflow rules for Team 14 — Tamagotchi Go (CPR + all submodules follow the same rules).
