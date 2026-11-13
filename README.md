@@ -104,7 +104,7 @@ Every request — from a client or from another service — goes through the **A
 
 #### Service keys
 
-Endpoints marked **Service** below are internal: only the listed callers may use them. Since Lab 4, service-to-service calls go through the **Message Broker**, not the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token) and `X-Broker-Key`, and the callee checks both — the broker key proves the call came through the broker, the service key proves *which* service made it (team decisions, #182). The broker key alone opens nothing but `POST /events`. Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others, and a key opens only the endpoints that list its service: another service's key gets `403`.
+Endpoints marked **Service** below are internal: only the listed callers may use them. Since Lab 4, service-to-service calls go through the **Message Broker**, not the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token) and `X-Broker-Key`, and the callee checks both — the broker key proves the call came through the broker, the service key proves *which* service made it (team decisions, #182). The broker key alone opens nothing but `POST /events` (and, since Lab 5, `POST /saga-steps` for the broker's saga coordinator). Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others, and a key opens only the endpoints that list its service: another service's key gets `403`.
 
 **The gateway forwards no service-to-service call** (gateway v4.2.0, Dackohn/gateway#18). The endpoints that only services call answer `404 {"error": "POST /raids is not available through the gateway"}` there, without reaching the service: `POST /users/{userId}/currency/adjust`, `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` and `POST /raids`. A request with only an `X-Service-Key` gets `401` like any request without a token, and the gateway drops any `X-Service-Key` or `X-Broker-Key` a client sends.
 
@@ -266,6 +266,7 @@ Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
 | | `POST /tamagotchis/{id}/xp` | **Service** — Battle; not routed by the gateway |
 | | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle; not routed by the gateway |
 | | `POST /events` | **Message Broker** only (`X-Broker-Key`); not routed by the gateway |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Notification | `POST /notifications/register-device` | Player (self) |
 | | `GET /notifications/{userId}` | Player (self) |
 | | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
@@ -809,6 +810,57 @@ Success Response (200 OK):
 **gRPC** (`tamagotchigo.tamagotchi.v1.TamagotchiService`, through the broker at `message-broker:50051`): `GetTamagotchi`, `ListByOwner`, `GetTypeAdvantages`, `AddXp` and `TransferOwner` (with `idempotency_key`, the same keys as REST's `idempotencyKey`), with the same rules and callers as the REST endpoints above, on each replica's `GRPC_PORT` (`50083`). `GetTamagotchi`'s `package_stats` carries the numeric stats only (`map<string, double>`). See [gRPC between services](#grpc-between-services).
 
 Each change is its own transaction. The answer is the ack: `200 {messageId, applied, duplicates}` once every change is made (a redelivery answers `200` with `applied: 0`); `400` for an event it can't read; `422` when a change can never be made (e.g. a Tamagotchi that doesn't exist; the others are still made); `503` + `Retry-After` when it may work later.
+
+`APPLY_BATTLE_ENDED` (`TAMAGOTCHI_APPLY_BATTLE_ENDED` in `.env`, default `true`): set it to `false` in the release where Battle settles through the battle-settlement saga below. Tamagotchi then no longer subscribes to `battle.ended`, and one still delivered is acked without changes. The saga's steps claim the same keys, so an award or a transfer can't be made both ways even while both are on.
+
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) one of Tamagotchi's steps of a long-running saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "saga": "string (enum: battle-settlement, raid-rewards)",
+  "step": "string (enum: add-xp, transfer-owner)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object (per step, below)"
+}
+```
+
+| `saga` / `step` | `payload` | `do` | `compensate` |
+|---|---|---|---|
+| `battle-settlement` / `add-xp` | `{battleId, winnerId, winnerPrimaryTamagotchiId, primaryXp, winnerSecondaryTamagotchiId, secondaryXp}` (the names `battle.ended` uses) | XP to each Tamagotchi named, when its XP isn't 0 (keys `battle-ended:<battleId>:primary` / `:secondary`) | removes exactly that XP; the level goes down if it went up |
+| `battle-settlement` / `transfer-owner` | `{battleId, winnerId, loserId, transferredTamagotchiId}` | the captured Tamagotchi to `winnerId`, as a secondary (key `battle-ended:<battleId>`); no `transferredTamagotchiId`: nothing to do | back to `loserId`; their primary again only if they haven't chosen another since |
+| `raid-rewards` / `add-xp` | `{raidId, rewards: [{userId, xp}]}` (other fields, e.g. `currency`, are ignored) | XP to each player's **primary** Tamagotchi (key `raid-rewards:<raidId>:<userId>`); a player without one is skipped and listed in `result.skipped` | removes each XP given |
+
+Success Response (200 OK), for `do`:
+
+```json
+{
+  "result": {
+    "changed": "array<object> (e.g. {kind: xp, tamagotchiId, ownerId, xpAdded, level, xp} or {kind: transfer, tamagotchiId, previousOwnerId, ownerId})",
+    "alreadyApplied": "array<object> (changes already made under the same key, e.g. by battle.ended)",
+    "skipped": "array<object> ({userId, xp, reason}: raid players without a primary Tamagotchi)"
+  }
+}
+```
+
+and for `compensate`:
+
+```json
+{
+  "result": {
+    "undone": "array<object>",
+    "leftAsIs": "array<object> (a change that can't be undone any more, e.g. the Tamagotchi changed hands again; never a failure)",
+    "stepRan": "bool (false: the compensation came before its step)"
+  }
+}
+```
+
+- **Repeats change nothing:** every step is recorded (`saga_steps`, by `sagaId` + `step`) in the same transaction as its changes, and a repeated `do` or `compensate` answers the first result.
+- **A `compensate` can come before its `do`:** the step is recorded as cancelled, and the late `do` answers `409` and changes nothing.
+- A step that can't make all its changes makes none. A compensation releases the keys its step claimed, so a retried saga (a new `sagaId`) can award again.
+- Errors: `409 {"error"}` the step was already compensated, the captured Tamagotchi doesn't belong to `loserId`, or a key already used for another change; `422 {"error"}` an unknown saga or step, an unreadable payload, a required id missing, negative XP, a Tamagotchi that doesn't exist; `503` + `Retry-After` may work later (the coordinator retries); `401` without the broker key.
 
 #### Notification Service (`tamagotchi-notification`, Go)
 
@@ -1941,9 +1993,13 @@ Tamagotchi's steps are confirmed (Daniel). Battle's and User Management's are
 | 6 | Battle | Battle `settled` | — (last step) |
 
 **No double XP during the switch:** today Tamagotchi applies `battle.ended`
-itself, with Battle's keys. The saga uses `sagaId` keys, so once Battle
-starts the saga, Tamagotchi stops applying the event. Battle and Tamagotchi
-switch in the same release.
+itself, with Battle's keys. Tamagotchi's saga steps claim those same keys
+(`battle-ended:<battleId>:primary` / `:secondary` / `battle-ended:<battleId>`),
+so the event and the saga can't both make a change, whichever arrives first.
+Once Battle starts the saga, set `TAMAGOTCHI_APPLY_BATTLE_ENDED=false` in the
+same release, and Tamagotchi stops applying the event. Tamagotchi's step
+payloads: [Saga Steps](#tamagotchi-service-tamagotchi-notification-go)
+(Tamagotchi Service).
 
 #### Raid rewards: Monster Raid, User Management, Tamagotchi
 
@@ -2187,7 +2243,7 @@ each replica deregisters first, then lets its requests in progress finish.
 
 - **Calls from Battle and Monster Raid** come through the Message Broker, with the
   broker's `X-Broker-Key` and their own `X-Service-Key` (the broker key alone opens
-  nothing but `POST /events`).
+  nothing but `POST /events` and `POST /saga-steps`).
 - **`battle.ended`:** with `BROKER_KEY` set, every replica registers for the topic,
   and the broker hands each event to one replica at `POST /events`. It awards
   `primaryXp` and `secondaryXp` to the winner's Tamagotchis and moves
@@ -2196,6 +2252,11 @@ each replica deregisters first, then lets its requests in progress finish.
   change Battle already made itself, is applied once. It answers `2xx` once every
   change is made; `400` (not an event it can read) and `422` (e.g. a Tamagotchi
   that doesn't exist) end in the broker's Dead Letter Channel after its attempts.
+- **Saga steps** (Lab 5): the broker's saga coordinator runs Tamagotchi's steps of
+  the battle-settlement and raid-rewards sagas at `POST /saga-steps` (payloads in
+  [Saga Steps](#tamagotchi-service-tamagotchi-notification-go)), recorded in the
+  `saga_steps` table. `TAMAGOTCHI_APPLY_BATTLE_ENDED=false` stops applying
+  `battle.ended` once Battle settles through the saga.
 - **gRPC** on `50083`, registered as `metadata.grpcPort`: the same calls between
   services, with the same keys, limits and errors as REST (see
   [gRPC between services](#grpc-between-services)). With
@@ -2206,7 +2267,7 @@ each replica deregisters first, then lets its requests in progress finish.
 docker compose up -d tamagotchi-service
 docker compose ps tamagotchi-service             # one line per replica
 docker compose exec tamagotchi-service wget -qO- localhost:8083/health
-# {"status":"ok","service":"tamagotchi-service","version":"4.2.0",...,
+# {"status":"ok","service":"tamagotchi-service","version":"5.1.0",...,
 #  "load":{...,"events":{"handled":0,"duplicates":0,"refused":0,"failed":0}}}
 
 # The replicas Service Discovery knows (DISCOVERY_KEY is in .env):
@@ -2227,6 +2288,16 @@ curl -X POST http://localhost:8090/topics/battle.ended/messages \
   -H "X-Broker-Key: <BROKER_KEY>" -H "Content-Type: application/json" \
   -d '{"source":"battle-service","payload":{"battleId":"b1","winnerId":"<user id>","loserId":"<user id>","primaryXp":60,"winnerPrimaryTamagotchiId":"<tamagotchi id>"}}'
 docker compose logs tamagotchi-service | grep battle.ended
+
+# A saga step, as the broker's coordinator would call it (here through the broker's
+# queue for Tamagotchi): 50 XP to a Tamagotchi, then its compensation takes it back.
+curl -X POST http://localhost:8090/services/tamagotchi-service/saga-steps \
+  -H "X-Broker-Key: <BROKER_KEY>" -H "Content-Type: application/json" \
+  -d '{"sagaId":"try-1","saga":"battle-settlement","step":"add-xp","action":"do","payload":{"battleId":"try-saga-1","winnerId":"<user id>","winnerPrimaryTamagotchiId":"<tamagotchi id>","primaryXp":50}}'
+curl -X POST http://localhost:8090/services/tamagotchi-service/saga-steps \
+  -H "X-Broker-Key: <BROKER_KEY>" -H "Content-Type: application/json" \
+  -d '{"sagaId":"try-1","saga":"battle-settlement","step":"add-xp","action":"compensate"}'
+docker compose logs tamagotchi-service | grep "saga step"
 ```
 
 **In the shared stack** players reach it through the gateway (the gateway's
@@ -2251,8 +2322,8 @@ broker's headers for a local `go run`.
 **Gateway routes:** `/tamagotchis/**`, `/types/**` and
 `/users/{userId}/tamagotchis/**` → Tamagotchi (the gateway matches the last one
 before User Management's `/users/**`). `GET /types/advantages` needs no token.
-No WebSocket endpoints. `xp`, `transfer-owner` and `POST /events` aren't routed by
-the gateway.
+No WebSocket endpoints. `xp`, `transfer-owner`, `POST /events` and `POST /saga-steps`
+aren't routed by the gateway.
 
 **Circuit breaker:** that call has its own breaker.
 `TAMAGOTCHI_CIRCUIT_BREAKER_THRESHOLD` (3) errors within the request timeout × 3.5
