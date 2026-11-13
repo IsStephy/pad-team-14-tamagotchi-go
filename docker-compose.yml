@@ -247,6 +247,11 @@ services:
       # broker; empty = PACKAGE_REGISTRY_URL above.
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       BROKER_URL: ${TAMAGOTCHI_BROKER_URL:-}
+      # Lab 5 sagas: the broker's coordinator runs Tamagotchi's steps at POST
+      # /saga-steps (broker key only). Set TAMAGOTCHI_APPLY_BATTLE_ENDED=false in the
+      # release where Battle settles through the battle-settlement saga: Tamagotchi
+      # then stops applying battle.ended (the saga makes those changes).
+      APPLY_BATTLE_ENDED: ${TAMAGOTCHI_APPLY_BATTLE_ENDED:-true}
       # gRPC (GetTamagotchi, ListByOwner, GetTypeAdvantages, AddXp, TransferOwner):
       # registered with Service Discovery as metadata.grpcPort, reached through the
       # broker with the same keys as REST. Needs BROKER_KEY.
