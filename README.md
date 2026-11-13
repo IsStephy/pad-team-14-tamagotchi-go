@@ -1452,6 +1452,266 @@ Success Response (200 OK):
 }
 ```
 
+## Lab 5 Decisions
+
+> **Status: proposed, not yet agreed.** These are the shared choices for
+> Lab 5 (#211). They change the communication contract, so the PR that adds
+> them needs **2 approvals**. Nobody changes their service for Lab 5 until it
+> is merged. Every row marked *owner to confirm* is a proposal for another
+> member's service: that member decides, and edits it here.
+
+### Cache settings and key naming
+
+**What:** commonly read `GET`s and authentication data (sessions, tokens,
+user lookups) are cached in **Valkey 8** (`valkey/valkey:8-alpine`).
+
+**Why Valkey:** it is the open-source fork of Redis 7 and speaks the same
+protocol, so the clients we already use (`redis` for Node, `go-redis` for Go)
+work unchanged. Redis would work just as well. What matters is that we all
+use one of them.
+
+**Where:** three shared cache nodes, `cache-1`, `cache-2` and `cache-3`,
+used by every service. Each key goes to one node, picked by the
+[hash ring](#hash-ring). Sharing three nodes, instead of giving every service
+three of its own, keeps the stack at 3 extra containers instead of 24. The key
+prefix keeps the services apart.
+
+**Key naming:** `<service>:<entity>:<id>`, all lowercase, `-` inside words:
+
+| Example key | Holds |
+|---|---|
+| `guild-service:guild:<guildId>` | one guild with its members |
+| `guild-service:user-guilds:<userId>` | the guilds a user belongs to |
+| `package-registry-service:package:<packageId>` | one package |
+| `package-registry-service:packages:v<gen>:<queryHash>` | one page of `GET /packages` (see "Lists" below) |
+| `<service>:um-user:<userId>` | a User Management `GetUser` result, cached by the caller |
+| `gateway:token:<sha256 of the token>` | a token the gateway has already verified |
+
+**Time to live, per key type:**
+
+| Key type | TTL | Why |
+|---|---|---|
+| An entity the service owns | 60–120 s | Every write deletes it anyway; the TTL only bounds a missed delete |
+| A list or search page | 60 s | Lists change with every write to any of their entities |
+| Another service's data (e.g. `um-user`) | 30 s | We never hear when it changes, so the TTL is the only invalidation |
+| A verified token | until the token's `exp`, at most 5 min | Never trust a token after it expires; never keep a revoked one long |
+
+**Rules every service follows:**
+- **Invalidate on every write, after the database commit.** Deleting before
+  the commit lets a read that runs in between put the old row back.
+- **Lists:** a write bumps a generation counter
+  (`<service>:<entity>s:gen`) instead of deleting every list key. Keys with
+  the old generation can no longer be reached, and their TTL removes them. We
+  never need `SCAN` across three nodes.
+- **A cache that is down never fails a request.** Every cache call has a
+  short timeout (about 100 ms). On an error the service reads from its
+  database and logs `cache unavailable`. The cache only makes things faster:
+  it must never be the reason a request fails.
+- **Never cache raw secrets.** Tokens are keyed by their SHA-256, never the
+  token itself.
+- **Metric:** every service adds
+  `cache_requests_total{result="hit|miss", node="cache-1|cache-2|cache-3"}`
+  to `/metrics`. A hit or a miss is also a log line with the key and the node.
+
+**Settings** (in each service's `.env.example`, placeholders only):
+`CACHE_NODES=cache-1:6379,cache-2:6379,cache-3:6379`, `CACHE_PASSWORD`, and
+optional per-type TTLs (`CACHE_TTL_SECONDS`, ...).
+
+### Hash ring
+
+**What:** our own consistent-hash ring, the same algorithm in every service
+(TypeScript and Go), not Redis Cluster.
+
+**Why not Redis Cluster:** it shards by 16384 fixed hash slots,
+`CRC16(key) mod 16384`, assigned to masters. Adding a node moves whole slots,
+and the client must follow `MOVED` redirects. It works, but the grade-7 task
+asks us to shard with consistent hashing, and a ring we wrote ourselves is
+something we can explain line by line.
+
+**The algorithm** (identical in every language, so a key always maps to the
+same node no matter which service computes it):
+
+1. **Hash:** FNV-1a, 32 bit, over the key's UTF-8 bytes. It is about ten
+   lines of code in any language, which makes it easy to port exactly.
+2. **Virtual nodes:** each node is placed on the ring **160 times**, at the
+   hashes of `"<node>#0"` … `"<node>#159"`. Without them, 3 points on a
+   circle split the keys very unevenly.
+3. **Lookup:** a key belongs to the first virtual node whose hash is `>=` the
+   key's hash, wrapping around to the first one. It is a binary search over
+   the sorted points.
+4. **A node that is down stays on the ring.** Its keys become misses, read
+   from the database, until it comes back. Removing it would move its keys
+   away and then back again.
+
+**Shared code:** the TypeScript ring lives in `hash-ring/` in this repo, with
+`test-vectors.json` (keys, node lists and the node each key must map to).
+The Go port in Battle, User Management, Tamagotchi and Notification is
+correct when it reproduces every vector. The research write-up (ring vs
+`hash mod N` vs Redis Cluster slots, and which keys move when a node is added
+or removed) comes with #230.
+
+**Tests the ring must pass:** keys spread evenly over 3 nodes (each node gets
+33% ± 5%), and adding a 4th node moves only about 1/4 of the keys, all of
+them to the new node.
+
+### Replication
+
+**What:** every PostgreSQL database becomes **1 primary + 2 replicas** with
+streaming replication and automatic failover. Services reach it through
+**one address that always points at the primary**.
+
+**Proposed setup:** `postgresql-repmgr` nodes with `pgpool` in front:
+
+| Container | Role |
+|---|---|
+| `<service>-db-0` | starts as the primary |
+| `<service>-db-1`, `<service>-db-2` | replicas: repmgr promotes one when the primary stops |
+| `<service>-db` | pgpool, the address the service connects to |
+
+- **pgpool keeps the old container name**, so every service's `DB_HOST`
+  stays the same and its published port (`543N`) does not change. The
+  repmgr nodes publish no ports.
+- **`load_balance_mode = off`**: all queries go to the primary. Sending reads
+  to replicas would give stale reads right after a write, and it would break
+  `LISTEN/NOTIFY` and advisory locks, which only work on the primary.
+- **Every service must survive a failover:** the pool reconnects instead of
+  crashing, logs it, and a query that failed because the connection dropped is
+  retried within the request's deadline. A long-lived connection (e.g. a
+  `LISTEN`) needs its own reconnect.
+- **Redis stores** (Notification, Map, the Battle and Monster Raid caches):
+  Redis replication + Sentinel, *owners to confirm*.
+
+**The images, decided by vote:** Bitnami withdrew its free images in 2025.
+`bitnami/postgresql-repmgr` no longer resolves, but
+`bitnamilegacy/postgresql-repmgr:16` and `bitnamilegacy/pgpool:4` still pull.
+They are frozen, with no updates, which is acceptable for a lab.
+
+| Option | For | Against |
+|---|---|---|
+| **A. bitnamilegacy repmgr + pgpool** (recommended) | Ready-made images, configured only by environment variables; quickest to get working | Frozen images; pgpool is one more hop |
+| B. Patroni + etcd + HAProxy | The usual production setup; more robust failover | No official image: we would build and maintain our own Postgres+Patroni image, plus run etcd |
+
+### ETL read-only access and `updated_at`
+
+The ETL (Daniel, #214) reads every service's database into the Data
+Warehouse. Each owner gives it a way in:
+
+- **A read-only role `etl_reader`** in each database, created by a migration,
+  with `SELECT` **only on the tables the warehouse needs**. Plumbing tables
+  and private data are left out (e.g. Guild's `chat_messages`,
+  `used_ws_tickets`, `handled_messages`). It never gets `INSERT`, `UPDATE`,
+  `DELETE` or DDL.
+- **Its password is not in the migration**, because migrations are in git.
+  The service sets it at startup from `<SERVICE>_ETL_DB_PASSWORD` in `.env`.
+  `.env.example` holds a placeholder.
+- **An `updated_at timestamptz NOT NULL DEFAULT now()` column** on every table
+  the ETL reads, kept current by a database trigger, not by application code,
+  so no write path can forget it. The ETL loads incrementally: the rows whose
+  `updated_at` is past the last run's watermark.
+- **Deletes, to decide with Daniel:** a watermark never sees a deleted row
+  (e.g. a removed guild member). Proposal: the ETL fully reloads the small
+  tables where rows are deleted (memberships, moderators) and loads the rest
+  incrementally. The alternative is a `deleted_rows` table filled by a
+  trigger.
+- **Each service README** lists the tables and columns the ETL reads, and what
+  they mean.
+- The ETL connects through the same primary address as the service. The role
+  replicates with everything else, so it survives a failover.
+
+### Saga flows and their compensations
+
+**What:** every flow that changes 2 or more databases runs as a
+**long-running saga with the coordinator in the Message Broker** (#236), not
+2 Phase Commit (grade 9 replaces grade 8). The coordinator runs the steps in
+order. When a step fails or times out, it runs the compensations of the
+finished steps **in reverse order**.
+
+**Why sagas and not 2PC:** 2PC holds locks in every database until all of
+them vote, and one slow service stalls everyone. A saga commits each step
+locally and undoes it with a compensation if a later step fails. The data is
+briefly inconsistent, but no service ever blocks another.
+
+**Rules every step follows:**
+- **Idempotent, keyed by `sagaId` + step:** a redelivered step or
+  compensation returns its stored result and changes nothing twice.
+  Delivery is at least once.
+- **A compensation cannot fail for business reasons.** It is retried until it
+  succeeds, so it must always be allowed (e.g. a refund never checks the
+  balance).
+- **The step most likely to fail runs as early as possible** (e.g. charging a
+  player who may not have enough currency), so fewer steps ever need undoing.
+
+**Step messages (proposal, Denis to confirm in #236):** the coordinator calls
+the service over HTTP with `X-Broker-Key`:
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "saga": "string (enum: raid-activation, battle-settlement, raid-rewards)",
+  "step": "string",
+  "action": "string (enum: do, compensate)",
+  "payload": {}
+}
+```
+
+The service answers `200 {"result": {...}}` when it succeeded, and `409` or
+`422` with `{"error": "..."}` for a business failure, which starts the
+compensations. A `5xx` or a timeout is retried, and the saga compensates once
+the step's retries run out. `GET /sagas/{sagaId}` on the broker shows the
+saga's state and each step's state.
+
+#### Raid activation: Package Registry, Monster Raid
+
+`POST /raid-configs/{id}/activate` starts the saga. It answers `200` with the
+result when the saga finishes within a few seconds, otherwise `202 {"sagaId"}`.
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Package Registry | Remember the config's current status, set it to **`activating`** | Restore the remembered status (`draft` stays `draft`, `inactive` stays `inactive`) |
+| 2 | Monster Raid | `CreateRaid`, which returns the `raidId` | Cancel that raid (*owner to confirm*) |
+| 3 | Package Registry | Set the config to `active` and store the `raidId` | — (last step) |
+
+**Contract changes:**
+- `raid_configs.status` gains `activating`.
+- `activate` answers with `sagaId`, or `202`.
+
+Still open (#237): on re-activation, whether step 2 is skipped when the
+config already has a `raidId`, or a fresh raid is created.
+
+#### Battle settlement: Battle, User Management, Tamagotchi (*owners to confirm*)
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Battle | Record the result, battle `settling` | Battle `settlement_failed` |
+| 2 | User Management | Charge `loserCurrencyPenalty` to the loser (can fail: not enough currency) | Refund it (opposite delta, key `battle-ended:<battleId>:loser:undo`) |
+| 3 | User Management | Pay `rewardCurrency` to the winner | Take it back (key `battle-ended:<battleId>:winner:undo`) |
+| 4 | Tamagotchi | `AddXp` to the winner's primary Tamagotchi | Remove that XP (new: needs a negative or undo award) |
+| 5 | Tamagotchi | `TransferOwner` of the captured Tamagotchi, if any | Transfer it back to the previous owner |
+| 6 | Battle | Battle `settled` | — (last step) |
+
+#### Raid rewards: Monster Raid, User Management, Tamagotchi (*owners to confirm*)
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Monster Raid | Raid `completed`, rewards `paying` | Rewards `failed`, kept for a retry |
+| 2 | User Management | Pay each `rewards[].currency` to its `userId` (key `raid:<raidId>:<userId>`) | Take each payment back (key `raid:<raidId>:<userId>:undo`) |
+| 3 | Tamagotchi | XP to each participant's primary Tamagotchi (new: today Tamagotchi doesn't subscribe to `raid.completed`) | Remove that XP |
+| 4 | Monster Raid | Rewards `paid` | — (last step) |
+
+These replace today's fan-out of `battle.ended` and `raid.completed` to User
+Management and Tamagotchi. The events stay for Notification.
+
+### New ports
+
+Added to [Ports](#ports). The Lab 5 rows are proposals until this section is
+agreed.
+
+| Component | Host port |
+|---|---|
+| `data-warehouse` (PostgreSQL 16) | `5440` |
+| `cache-1`, `cache-2`, `cache-3` (Valkey 8) | `6381`, `6382`, `6383` |
+| Database replicas (`<service>-db-0/1/2`) | none: reached inside the stack, and only through `<service>-db` |
+
 ## Architecture Diagram
 
 ![Architecture Diagram](docs/images/architecture.png)
@@ -1612,6 +1872,8 @@ Claim a free one when you wire up your service and add it here.
 | Grafana | `3000` |
 | Prometheus | `9090` |
 | Loki | `3100` (not published: Grafana reads it inside the stack) |
+| Data Warehouse (`data-warehouse`, Lab 5, proposed) | `5440` |
+| Cache nodes (`cache-1`, `cache-2`, `cache-3`, Lab 5, proposed) | `6381`, `6382`, `6383` |
 
 ### Tamagotchi Service
 
