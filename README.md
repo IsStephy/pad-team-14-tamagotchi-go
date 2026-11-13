@@ -1487,7 +1487,7 @@ replica's own address instead; see [Running across machines](#running-across-mac
 | **Teal arrow** | Service Discovery: every replica registers its address, gRPC port and topics, sends heartbeats and deregisters; Service Discovery checks each one's `/health`, sends alerts to Telegram, and lists every instance for the broker and for Prometheus |
 | **Purple arrow** | monitoring: Prometheus scrapes `GET /metrics` on every replica (targets from Service Discovery), the blackbox exporter probes every `/health`, Promtail ships every container's logs to Loki, Grafana shows both, and the Gateway's `GET /logs` downloads them from Loki |
 | **Red dashed** | Lab 5, planned: replication and failover of every data store, the shared cache (3 Valkey nodes on a consistent-hash ring), the ETL into the Data Warehouse, and the saga coordinator in the broker |
-| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring light purple |
+| **Colour** | the Gateway is amber, the Message Broker orange, the services blue (one box, grouped by tier, each with its data store), the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring light purple |
 
 **Who calls whom** (the amber arrow), every call through the broker:
 
@@ -1502,11 +1502,11 @@ replica's own address instead; see [Running across machines](#running-across-mac
 | Package Registry | Monster Raid (`CreateRaid`), User Management (`GetUser`) | gRPC |
 | Tamagotchi | Package Registry | REST |
 
-The three tiers behind the Gateway are the structure worth remembering:
+The services box groups them in three tiers, the structure worth remembering:
 
-1. **Gameplay** (blue) — Battle, Map, Monster Raid and Guild: what players act in, and the four services with WebSockets.
-2. **Game content** (purple) — Tamagotchi and Package Registry: the rules and definitions gameplay reads.
-3. **Platform** (green) — User Management and Notification: identity, currency and notifications, which everything leans on.
+1. **Gameplay** — Battle, Map, Monster Raid and Guild: what players act in, and the four services with WebSockets.
+2. **Game content** — Tamagotchi and Package Registry: the rules and definitions gameplay reads.
+3. **Platform** — User Management and Notification: identity, currency and notifications, which everything leans on.
 
 Each service names its own data store. No service reads another's store
 directly; that is what the arrows are for. Notification never calls anyone —

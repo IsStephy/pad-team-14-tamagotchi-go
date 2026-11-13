@@ -23,31 +23,12 @@ flowchart TB
         SAGA["<b>Saga coordinator</b><br/>Lab 5 · planned<br/>steps · compensations · GET /sagas/{id}"]
     end
 
-    subgraph Services["Services · each runs as 2–3 replicas · REST + gRPC"]
-        UM["User Management"]
-        BT["Battle"]
-        TG["Tamagotchi"]
-        NT["Notification"]
-        MP["Map"]
-        MR["Monster Raid"]
-        GD["Guild"]
-        PR["Package Registry"]
-    end
-
-    subgraph Stores["Data stores · one per service, shared by its replicas"]
-        UMdb[("User Mgmt<br/>PostgreSQL")]
-        BTdb[("Battle<br/>PostgreSQL · Redis")]
-        TGdb[("Tamagotchi<br/>PostgreSQL")]
-        NTdb[("Notification<br/>Redis")]
-        MPdb[("Map<br/>Redis")]
-        MRdb[("Monster Raid<br/>PostgreSQL · Redis")]
-        GDdb[("Guild<br/>PostgreSQL")]
-        PRdb[("Package Registry<br/>PostgreSQL")]
-    end
+    SV["<b>Services</b> · each runs as 2–3 replicas · REST + gRPC · each owns its data store<br/><br/><b>Gameplay</b> · Battle (PostgreSQL, Redis) · Map (Redis)<br/>Monster Raid (PostgreSQL, Redis) · Guild (PostgreSQL)<br/><b>Game content</b> · Tamagotchi (PostgreSQL) · Package Registry (PostgreSQL)<br/><b>Platform</b> · User Management (PostgreSQL) · Notification (Redis)"]
 
     REPL["<b>Replication + failover</b> · Lab 5 · planned<br/>each PostgreSQL: pgpool + primary + 2 replicas<br/>each Redis: master + 2 replicas + Sentinel"]
 
     subgraph Cache["Cache · Lab 5 · planned"]
+        direction LR
         C1[("cache-1<br/>Valkey · 6381")]
         C2[("cache-2<br/>Valkey · 6382")]
         C3[("cache-3<br/>Valkey · 6383")]
@@ -57,6 +38,7 @@ flowchart TB
     DW[("<b>Data Warehouse</b> · Lab 5 · planned<br/>PostgreSQL 16 · port 5440")]
 
     subgraph Monitoring["Monitoring"]
+        direction LR
         PM["<b>Prometheus</b><br/>port 9090"]
         BB["<b>Blackbox exporter</b><br/>health probes"]
         PT["<b>Promtail</b><br/>every container's logs"]
@@ -67,43 +49,32 @@ flowchart TB
 
     Client -->|"REST · Bearer token<br/>GET /ws/negotiate"| GW
     GW -->|"request for a service<br/>(its service queue)"| MB
-    MB -->|"to one replica of the target service<br/>least loaded, healthy"| Services
-    Services -->|"service-to-service calls<br/>gRPC on 50051, or REST"| MB
+    MB -->|"to one replica of the target service<br/>least loaded, healthy"| SV
+    SV -->|"service-to-service calls<br/>gRPC on 50051, or REST"| MB
     Client ==>|"WebSocket + ticket"| WP
-    WP ==> BT
-    WP ==> MP
-    WP ==> MR
-    WP ==> GD
-    Services -.->|"publish events on topics"| MB
-    MB -.->|"a copy to each subscribed service<br/>POST /events, 2xx = ack"| Services
+    WP ==>|"to one replica of Battle, Map,<br/>Monster Raid or Guild"| SV
+    SV -.->|"publish events on topics"| MB
+    MB -.->|"a copy to each subscribed service<br/>POST /events, 2xx = ack"| SV
     MB ---|"every event copy on disk before 202<br/>dead letters after 5 attempts"| MBDB
-    UM --- UMdb
-    BT --- BTdb
-    TG --- TGdb
-    NT --- NTdb
-    MP --- MPdb
-    MR --- MRdb
-    GD --- GDdb
-    PR --- PRdb
-    Services -->|"register (address, gRPC port, topics)<br/>heartbeat · deregister"| SD
-    SD -.->|"GET /health · 10 s"| Services
+    SV -->|"register (address, gRPC port, topics)<br/>heartbeat · deregister"| SD
+    SD -.->|"GET /health · 10 s"| SV
     SD -->|"critical load, unreachable"| TGM
     MB -->|"instances, gRPC ports, topics · 5 s"| SD
     PM -->|"scrape targets"| SD
-    PM -.->|"GET /metrics · 15 s"| Services
+    PM -.->|"GET /metrics · 15 s"| SV
     PM -.-> MB
     PM -.-> GW
     PM --> BB
-    BB -.->|"probe /health"| Services
+    BB -.->|"probe /health"| SV
     PT -->|"container logs"| LK
     GF --> PM
     GF --> LK
     GW -->|"GET /logs (admin key)"| LK
-    SAGA -.->|"saga steps, compensations"| Services
-    Stores -.- REPL
-    Services -.->|"commonly read GETs,<br/>user lookups · consistent-hash ring"| Cache
+    SAGA -.->|"saga steps, compensations"| SV
+    SV -.- REPL
+    SV -.->|"commonly read GETs,<br/>user lookups · consistent-hash ring"| Cache
     GW -.->|"verified tokens"| Cache
-    Stores -.->|"read-only etl_reader"| ETL
+    SV -.->|"read-only etl_reader"| ETL
     ETL -.-> DW
 
     classDef client fill:#eef1f4,stroke:#5a6470,stroke-width:2px,color:#1f2933
@@ -114,21 +85,16 @@ flowchart TB
     classDef green fill:#dcefe2,stroke:#2e7d4f,stroke-width:2px,color:#0f2d1b
     classDef infra fill:#d9f0ec,stroke:#1f7a6c,stroke-width:2px,color:#0b2e29
     classDef monitor fill:#efe2f4,stroke:#7a3e9d,stroke-width:2px,color:#2b1236
-    classDef db fill:#f4f6f8,stroke:#9aa5b1,color:#3c4650
+    classDef services fill:#f3f7fb,stroke:#2f6db5,stroke-width:2px,color:#10243e
     classDef lab5 fill:#fff4ec,stroke:#c2410c,stroke-width:2px,stroke-dasharray:6 4,color:#4a1d06
 
     class Client,TGM client
     class GW gateway
     class MB,MBDB broker
-    class MR,BT,GD,MP blue
-    class TG,PR purple
-    class UM,NT green
+    class SV services
     class SD,WP infra
     class PM,BB,PT,LK,GF monitor
-    class UMdb,BTdb,TGdb,NTdb,MPdb,MRdb,GDdb,PRdb db
     class SAGA,REPL,ETL,DW,C1,C2,C3 lab5
-    style Services fill:#fafbfc,stroke:#9aa5b1,stroke-dasharray:6 4,color:#3c4650
-    style Stores fill:#fafbfc,stroke:#c5ccd3,stroke-dasharray:3 3,color:#3c4650
     style Broker fill:#fdf6f2,stroke:#d9a68e,stroke-dasharray:6 4,color:#3b170a
     style Monitoring fill:#fbf7fc,stroke:#b08bc2,stroke-dasharray:6 4,color:#2b1236
     style Cache fill:#fffaf6,stroke:#c2410c,stroke-dasharray:6 4,color:#4a1d06
@@ -136,8 +102,8 @@ flowchart TB
     %% Edge colours (indexes generated from the groups above).
     linkStyle 0,1,2 stroke:#3c4650,stroke-width:2px
     linkStyle 3 stroke:#c27c0e,stroke-width:2px
-    linkStyle 4,5,6,7,8 stroke:#2f6db5,stroke-width:3px
-    linkStyle 9,10,11 stroke:#8a939c,stroke-width:1.5px
-    linkStyle 20,21,22,23 stroke:#1f7a6c,stroke-width:2px
-    linkStyle 24,25,26,27,28,29,30,31,32,33 stroke:#7a3e9d,stroke-width:2px
-    linkStyle 34,35,36,37,38,39 stroke:#c2410c,stroke-width:2px,stroke-dasharray:6 4
+    linkStyle 4,5 stroke:#2f6db5,stroke-width:3px
+    linkStyle 6,7,8 stroke:#8a939c,stroke-width:1.5px
+    linkStyle 9,10,11,12 stroke:#1f7a6c,stroke-width:2px
+    linkStyle 13,14,15,16,17,18,19,20,21,22 stroke:#7a3e9d,stroke-width:2px
+    linkStyle 23,24,25,26,27,28 stroke:#c2410c,stroke-width:2px,stroke-dasharray:6 4
