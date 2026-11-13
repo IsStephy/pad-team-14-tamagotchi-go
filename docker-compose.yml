@@ -624,6 +624,58 @@ services:
   # through it. It verifies user tokens against User Management's keys, strips
   # Authorization and forwards the verified user as X-User-Id + X-Gateway-Key.
   # Service URLs default to http://<service-name>:<port>, matching this file.
+  # ------------------------------------------------ Valkey / shared cache nodes
+  # Lab 5 (#230): three cache nodes shared by every service. Each service
+  # shards its keys over them with the shared consistent-hash ring
+  # (hash-ring/), so a key always lives on the same node. Keys are prefixed
+  # with the service name (<service>:<entity>:<id>), which keeps the services
+  # apart. A cache only holds copies of database data, so there is no volume
+  # and no persistence (--save "", --appendonly no): a restarted node starts
+  # empty and refills from the databases. maxmemory + allkeys-lru make a full
+  # node evict its least recently used keys instead of refusing writes.
+
+  cache-1:
+    image: valkey/valkey:8-alpine
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec valkey-server --requirepass \"$$CACHE_PASSWORD\" --save '' --appendonly no --maxmemory ${CACHE_MAXMEMORY:-64mb} --maxmemory-policy allkeys-lru"]
+    ports:
+      - "${CACHE_1_PUBLISHED_PORT:-6381}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$CACHE_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  cache-2:
+    image: valkey/valkey:8-alpine
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec valkey-server --requirepass \"$$CACHE_PASSWORD\" --save '' --appendonly no --maxmemory ${CACHE_MAXMEMORY:-64mb} --maxmemory-policy allkeys-lru"]
+    ports:
+      - "${CACHE_2_PUBLISHED_PORT:-6382}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$CACHE_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  cache-3:
+    image: valkey/valkey:8-alpine
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec valkey-server --requirepass \"$$CACHE_PASSWORD\" --save '' --appendonly no --maxmemory ${CACHE_MAXMEMORY:-64mb} --maxmemory-policy allkeys-lru"]
+    ports:
+      - "${CACHE_3_PUBLISHED_PORT:-6383}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$CACHE_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   # ---------------------------------------------------- Python / service discovery
   # Where every running instance of every service is (Lab 3). Instances register
   # on start-up and send heartbeats; the registry is in memory, so it needs no
