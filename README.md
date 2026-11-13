@@ -1456,38 +1456,51 @@ Success Response (200 OK):
 
 ![Architecture Diagram](docs/images/architecture.png)
 
-Every service, the database it owns, and how requests reach them. The
+Every service, the data store it owns, and how requests reach them. The
 **API Gateway** is the single entry point for clients. Behind it, the
 **Message Broker** carries every request to a service, every
 service-to-service call and every event: requests go on the target
 service's queue and one replica answers; events go on a topic and every
-subscribed service gets a copy.
+subscribed service gets a copy. Components drawn **dashed in red** are
+**Lab 5, planned** (the shared choices are proposed in PR #247):
+they are not in `docker-compose.yml` yet.
 
-**Load balancing (Lab 3).** Each service runs as several replicas, and each
-replica registers with Service Discovery. The gateway refreshes every
-service's live instances from Service Discovery every 5 s
-(`GATEWAY_DISCOVERY_REFRESH_SECONDS`) and sends each REST request to the next
-instance of its service, **round-robin**, one counter per service. A replica
-that starts gets traffic after the next refresh, one that stops no longer gets
-any, and a service with no live instance left answers `503`. A replica that
-keeps failing is removed and deregistered (see **Removing the failing
-instance** under the circuit breaker). A service that doesn't register yet
-keeps its fixed `http://<service>:<port>`. The gateway's
-request log names the replica that answered (`instanceId`). WebSockets are not
-balanced by the gateway: `/ws/negotiate` returns the service's public address,
-and `ws-proxy` hands each socket to one replica (across machines, it can
-return an extra replica's own address instead; see
-[Running across machines](#running-across-machines)).
+**Load balancing.** Each service runs as several replicas, and each replica
+registers with Service Discovery: its address, its gRPC port and the topics it
+wants. The broker reads every service's live instances from Service Discovery
+every 5 s and sends each request, gRPC call and event copy to the **least
+loaded healthy replica** (fewest messages in flight, taking turns among
+equals). A replica that fails is skipped for another one when repeating is
+safe, and one that keeps failing is taken out by the broker's circuit breaker
+and deregistered. Since gateway v4.2.0 the gateway does no balancing of its
+own: it hands every request to the broker. WebSockets are not balanced by the
+broker: `/ws/negotiate` returns the service's public address, and `ws-proxy`
+hands each socket to one replica (across machines, it can return an extra
+replica's own address instead; see [Running across machines](#running-across-machines)).
 
 | | |
 |---|---|
-| **Dark arrow** | REST: client → Gateway → Message Broker, which puts the request on the owning service's queue for one replica |
-| **Amber arrow** | service-to-service call, through the Message Broker, carrying the caller's `X-Service-Key`; the label lists the services it calls |
-| **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
-| **Dotted arrow** | an event published on a topic in the Message Broker, which hands one copy to every subscribed service |
-| **Teal arrow** | Service Discovery: every replica registers its own address and the topics it wants, sends heartbeats and deregisters; Service Discovery checks each one's `/health` and sends alerts to Telegram; the broker reads the instances and topics from it |
-| **Purple arrow** | monitoring: Prometheus scrapes `GET /metrics` on every replica, Promtail ships every container's logs to Loki, and Grafana shows both (see [Monitoring](#monitoring)) |
-| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring (Prometheus, Promtail, Loki, Grafana) light purple |
+| **Dark arrow** | a client request: client → Gateway → Message Broker, which puts it on the owning service's queue for one replica |
+| **Amber arrow** | a service-to-service call, through the Message Broker: gRPC on port 50051, or REST at `/services/{service}/…`, carrying the caller's `X-Service-Key` (who calls whom: table below) |
+| **Thick blue arrow** | a WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
+| **Dotted grey arrow** | an event: published on a topic, stored on disk by the broker, and delivered as one copy to every subscribed service (topics and subscribers: [Topics](#topics)); copies that are never acknowledged end in the Dead Letter Channel |
+| **Teal arrow** | Service Discovery: every replica registers its address, gRPC port and topics, sends heartbeats and deregisters; Service Discovery checks each one's `/health`, sends alerts to Telegram, and lists every instance for the broker and for Prometheus |
+| **Purple arrow** | monitoring: Prometheus scrapes `GET /metrics` on every replica (targets from Service Discovery), the blackbox exporter probes every `/health`, Promtail ships every container's logs to Loki, Grafana shows both, and the Gateway's `GET /logs` downloads them from Loki |
+| **Red dashed** | Lab 5, planned: replication and failover of every data store, the shared cache (3 Valkey nodes on a consistent-hash ring), the ETL into the Data Warehouse, and the saga coordinator in the broker |
+| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring light purple |
+
+**Who calls whom** (the amber arrow), every call through the broker:
+
+| Caller | Calls | Over |
+|---|---|---|
+| Battle | User Management, Tamagotchi | gRPC |
+| Battle | Package Registry | REST |
+| Monster Raid | Guild (`GetGuild`), User Management (`AdjustCurrency`) | gRPC |
+| Monster Raid | Tamagotchi (`GET /tamagotchis/{id}`) | REST |
+| Map | User Management (`GetRelationship`) | gRPC |
+| Guild | User Management (`GetUser`, `GetRelationship`) | gRPC |
+| Package Registry | Monster Raid (`CreateRaid`), User Management (`GetUser`) | gRPC |
+| Tamagotchi | Package Registry | REST |
 
 The three tiers behind the Gateway are the structure worth remembering:
 
@@ -1495,7 +1508,7 @@ The three tiers behind the Gateway are the structure worth remembering:
 2. **Game content** (purple) — Tamagotchi and Package Registry: the rules and definitions gameplay reads.
 3. **Platform** (green) — User Management and Notification: identity, currency and notifications, which everything leans on.
 
-Each service names its own database. No service reads another's store
+Each service names its own data store. No service reads another's store
 directly; that is what the arrows are for. Notification never calls anyone —
 it consumes events and decides what reaches the player.
 
