@@ -1452,6 +1452,554 @@ Success Response (200 OK):
 }
 ```
 
+## Lab 5 Decisions
+
+> **Status: in review (#211, PR #247).** These are the shared choices for
+> Lab 5. They change the communication contract, so the PR needs
+> **2 approvals**, and nobody changes their service for Lab 5 until it is
+> merged.
+>
+> **Votes so far:** replication **A** (bitnamilegacy repmgr + pgpool),
+> **Valkey 8**, **our own hash ring**: Denis, Daniel and Stefan. Pavel to vote.
+> Rows still marked *owner to confirm* wait for that owner.
+
+### Cache settings and key naming
+
+**What:** commonly read `GET`s and authentication data (sessions, tokens,
+user lookups) are cached in **Valkey 8** (`valkey/valkey:8-alpine`).
+
+**Why Valkey:** it is the open-source fork of Redis 7 and speaks the same
+protocol, so the clients we already use (`redis` for Node, `go-redis` for Go,
+`redis-py` for Python) work unchanged.
+
+**Where:** three shared cache nodes, `cache-1`, `cache-2` and `cache-3`,
+used by every service. Each key goes to one node, picked by the
+[hash ring](#hash-ring). Sharing three nodes, instead of giving every service
+three of its own, keeps the stack at 3 extra containers instead of 24. The key
+prefix keeps the services apart.
+
+**Key naming:** `<service>:<entity>:<id>`, all lowercase, `-` inside words:
+
+| Example key | Holds |
+|---|---|
+| `guild-service:guild:<guildId>` | one guild with its members |
+| `guild-service:user-guilds:<userId>` | the guilds a user belongs to |
+| `package-registry-service:package:<packageId>` | one package |
+| `package-registry-service:packages:v<gen>:<queryHash>` | one page of `GET /packages` (see "Lists" below) |
+| `<service>:um-user:<userId>` | a User Management `GetUser` result, cached by the caller |
+| `gateway:token:<sha256 of the token>` | a token the gateway has already verified |
+
+**Time to live, per key type:**
+
+| Key type | TTL | Why |
+|---|---|---|
+| An entity the service owns | 60–120 s | Every write deletes it anyway; the TTL only bounds a missed delete |
+| A list or search page | 60 s | Lists change with every write to any of their entities |
+| Another service's data (e.g. `um-user`) | 30 s | We never hear when it changes, so the TTL is the only invalidation |
+| A verified token | until the token's `exp`, at most 5 min | Never trust a token after it expires; never keep a revoked one long |
+
+**Rules every service follows:**
+- **Invalidate on every write, after the database commit.** Deleting before
+  the commit lets a read that runs in between put the old row back.
+- **Lists:** a write bumps a generation counter
+  (`<service>:<entity>s:gen`) instead of deleting every list key. Keys with
+  the old generation can no longer be reached, and their TTL removes them. We
+  never need `SCAN` across three nodes.
+- **A cache that is down never fails a request.** Every cache call has a
+  short timeout (about 100 ms). On an error the service reads from its
+  database and logs `cache unavailable`. The cache only makes things faster:
+  it must never be the reason a request fails.
+- **Never cache raw secrets.** Tokens are keyed by their SHA-256, never the
+  token itself.
+- **Logout:** a token revoked by logout can still pass the gateway for up to
+  5 minutes, while it is cached. We accept that. The alternative, User
+  Management publishing a `user.logged_out` event that the gateway listens to,
+  is new work in two services for a 5-minute window.
+- **Metric:** every service adds
+  `cache_requests_total{result="hit|miss", node="cache-1|cache-2|cache-3"}`
+  to `/metrics`. A hit or a miss is also a log line with the key and the node.
+
+**What each service caches:**
+
+| Service | Cached |
+|---|---|
+| Guild | `GET /guilds/{guildId}`, `GET /users/{userId}/guilds`, User Management `GetUser` / `GetRelationship` |
+| Package Registry | `GET /packages`, `GET /packages/{packageId}`, User Management `GetUser` |
+| Tamagotchi | its `GET`s, and Package Registry's `GET /packages/{packageId}` |
+| Notification | nothing: its data already lives in Redis, so a cache in front of it would add a hop and gain nothing |
+| Gateway | verified tokens (#228, #234) |
+| User Management, Battle, Map, Monster Raid | *owners to add* |
+
+**Settings** (in each service's `.env.example`, placeholders only):
+`CACHE_NODES=cache-1:6379,cache-2:6379,cache-3:6379`, `CACHE_PASSWORD`, and
+optional per-type TTLs (`CACHE_TTL_SECONDS`, ...).
+
+### Hash ring
+
+**What:** our own consistent-hash ring, the same algorithm in every service,
+not Redis Cluster.
+
+**Why not Redis Cluster:** it shards by 16384 fixed hash slots,
+`CRC16(key) mod 16384`, assigned to masters. Adding a node moves whole slots,
+and the client must follow `MOVED` redirects. It works, but the grade-7 task
+asks us to shard with consistent hashing, and a ring we wrote ourselves is
+something we can explain line by line.
+
+**The algorithm** (identical in every language, so a key always maps to the
+same node no matter which service computes it):
+
+1. **Hash:** FNV-1a, 32 bit, over the key's UTF-8 bytes, then murmur3's
+   `fmix32` finalizer. Both are a few lines in any language, which makes
+   them easy to port exactly. `fmix32` is needed because FNV-1a alone
+   spreads labels that differ only at the end (`cache-1#0`,
+   `cache-1#1`, ...) badly: one node of three got 59% of the keys.
+2. **Virtual nodes:** each node is placed on the ring **160 times**, at the
+   hashes of `"<node>#0"` … `"<node>#159"`. Without them, 3 points on a
+   circle split the keys very unevenly.
+3. **Lookup:** a key belongs to the first virtual node whose hash is `>=` the
+   key's hash, wrapping around to the first one. It is a binary search over
+   the sorted points.
+4. **A node that is down stays on the ring.** Its keys become misses, read
+   from the database, until it comes back. Removing it would move its keys
+   away and then back again.
+
+**Shared code, in `hash-ring/`:** one file per language, which every service
+in that language copies. All three are held to the same `test-vectors.json`
+(keys, node lists and the node each key must map to), so a copy that passes
+picks the same node as every other service:
+
+| Language | File | Services | Written by |
+|---|---|---|---|
+| TypeScript | `hash-ring/src/hashRing.ts` | Guild, Package Registry, Map, Monster Raid | Stefan (#230) |
+| Go | `hash-ring/go/hashring.go` | User Management, Battle, Tamagotchi, Notification | Stefan (#230): one file every Go service copies |
+| Python | `hash-ring/python/` | Gateway (its token cache, #234) | Denis |
+
+The research write-up (ring vs `hash mod N` vs Redis Cluster slots, and which
+keys move when a node is added or removed) comes with #230.
+
+**Tests the ring must pass:** keys spread evenly over 3 nodes (each node gets
+33% ± 5%), and adding a 4th node moves only about 1/4 of the keys, all of
+them to the new node.
+
+### Replication
+
+**What:** every PostgreSQL database becomes **1 primary + 2 replicas** with
+streaming replication and automatic failover. Services reach it through
+**one address that always points at the primary**.
+
+**Setup (option A, voted):** `postgresql-repmgr` nodes with `pgpool` in front:
+
+| Container | Role |
+|---|---|
+| `<service>-db-0` | starts as the primary |
+| `<service>-db-1`, `<service>-db-2` | replicas: repmgr promotes one when the primary stops |
+| `<service>-db` | pgpool, the address the service connects to |
+
+- **pgpool keeps the old container name**, so every service's `DB_HOST`
+  stays the same and its published port (`543N`) does not change. The
+  repmgr nodes publish no ports.
+- **`load_balance_mode = off`**: all queries go to the primary. Sending reads
+  to replicas would give stale reads right after a write, and it would break
+  `LISTEN/NOTIFY` and advisory locks, which only work on the primary.
+- **Every service must survive a failover:** the pool reconnects instead of
+  crashing, logs it, and a query that failed because the connection dropped is
+  retried within the request's deadline. A long-lived connection (e.g. a
+  `LISTEN`) needs its own reconnect.
+
+**Why A and not B:** Bitnami withdrew its free images in 2025, but
+`bitnamilegacy/postgresql-repmgr:16` and `bitnamilegacy/pgpool:4` still pull.
+They are ready-made and configured only by environment variables. They are
+frozen, which is fine for a lab, so the versions are pinned (see
+[Image tags](#image-tags)). Option B, Patroni + etcd + HAProxy, is the usual
+production setup, but it would mean building and maintaining our own
+Postgres + Patroni image, plus running etcd.
+
+**Redis stores:** the same idea for every Redis.
+- **Master + 2 replicas**, and the service's client connects in
+  **Sentinel mode**, so it always finds the current master.
+- **3 Sentinels shared by every Redis in the stack** (`redis-sentinel-1..3`),
+  each watching all the masters. That is 3 extra containers in total, not 3
+  per Redis.
+- **Map** (its Redis holds player locations: its data, not a cache),
+  **Monster Raid's cache** and **Notification** (its only store) are
+  replicated this way. **Battle's cache:** *Pavel to confirm*.
+- **No service connects to a fixed Redis node of another service**, because
+  after a failover that node can be a read-only replica. Guild drops its
+  `NOTIFICATION_EVENTS_REDIS_URL` Pub/Sub fallback: every event already goes
+  through the broker.
+
+### Data Warehouse
+
+*Owner: Daniel (#214).*
+
+**What:** a separate PostgreSQL 16 database, `data-warehouse` (host port
+`5440`, its own volume and health check). The ETL service owns it: it creates
+the schema with numbered migrations at start-up, under a lock, like every
+other service. Nobody else writes to it.
+
+**Shape:** a small star schema. Dimensions hold the current state of each
+thing; facts hold what happened. Each row also has `source_updated_at` (from
+the source) and `loaded_at` (when the ETL wrote it).
+
+| Table | Kind | From | Columns |
+|---|---|---|---|
+| `dim_user` | dimension | User Management `users` + `balances` | `user_id`, `username`, `package_id`, `level`, `xp`, `local_currency`, `global_currency`, `created_at` |
+| `dim_tamagotchi` | dimension | Tamagotchi `tamagotchis` | `tamagotchi_id`, `owner_id`, `type`, `package_id`, `name`, `level`, `xp`, `is_primary`, `created_at` |
+| `dim_package` | dimension | Package Registry `packages` | `package_id`, `name`, `version`, `status`, `created_at` |
+| `dim_raid_config` | dimension | Package Registry `raid_configs` | `raid_config_id`, `guild_id`, `monster_name`, `max_hp`, `duration`, `status`, `raid_id`, `created_at` |
+| `dim_guild` | dimension | Guild `guilds` | `guild_id`, `name`, `created_at` |
+| `dim_date` | dimension | generated by the migration | `date`, `year`, `month`, `week`, `weekday` |
+| `fact_battle` | fact, one row per battle | Battle `battles` | `battle_id`, `player1_id`, `player2_id`, `status`, `winner_id`, `loser_id`, `reward_currency`, `reward_xp`, `transferred_tamagotchi_id`, `turns`, `started_at`, `finished_at` |
+| `fact_raid` | fact, one row per raid | Monster Raid `raids` | `raid_id`, `config_id`, `guild_id`, `monster_name`, `max_hp`, `status`, `reward_currency`, `reward_xp`, `created_at`, `expires_at` |
+| `fact_raid_participation` | fact, one row per player per raid | Monster Raid `raid_participants` | `raid_id`, `user_id`, `tamagotchi_id`, `damage_dealt`, `joined_at` |
+| `fact_currency_change` | fact, one row per ledger entry | User Management `currency_ledger` | `entry_id`, `user_id`, `local_delta`, `global_delta`, `reason`, `created_at` |
+| `guild_membership` | snapshot | Guild `guild_members` | `guild_id`, `user_id`, `role`, `joined_at` |
+| `package_moderator` | snapshot | Package Registry `package_moderators` | `package_id`, `user_id`, `granted_at` |
+| `package_registration` | snapshot | Package Registry `package_users` | `package_id`, `user_id`, `registered_at` |
+| `relationship` | snapshot | User Management `relationships` | `user_id`, `target_id`, `status`, `created_at` |
+
+**Left out on purpose:**
+- **Credentials and secrets:** `password_hash`, `signing_keys`.
+- **Personal data that analytics doesn't need:** `email`.
+- **Chat text:** `chat_messages`.
+- **Plumbing:** `schema_migrations`, `pgmigrations`, `used_ws_tickets`,
+  `idempotency_keys`, `admins`.
+- **Battle's per-turn `log` and player snapshots** stay in Battle; the
+  warehouse keeps the outcome.
+- **Map and Notification:** Map holds live locations that expire after 2
+  minutes, and Notification keeps notifications for 30 days as a delivery
+  queue. Every event that creates a notification (battles, raids, guild
+  invitations) already reaches the warehouse from the service it came from.
+
+**Transform rules:**
+- **Ids:** every id is stored as `text`, trimmed and lowercased, so the same
+  id matches across sources. Not `uuid`: the sources disagree on types (User
+  Management's ids are `uuid`, most others keep them as `text`), and some real
+  ids aren't UUIDs at all (package ids like `p1` in `users.package_id` and
+  `tamagotchis.package_id`, and some moderator ids), so a `uuid` column would
+  reject them.
+- **Timestamps:** `timestamptz`, in UTC.
+- **Currency:** whole units as `bigint`. Raid `rewards` uses both `coins` and
+  `currency` today; both become `reward_currency` (*Denis to confirm which key
+  is current*).
+- **Battle outcome:** `winner_id`, `loser_id`, `reward_currency`, `reward_xp`
+  and `transferred_tamagotchi_id` come from `battles.result`, following the
+  `BattleEnded` payload in this README (*Pavel to confirm the JSON keys of
+  `result`*). `finished_at` is `updated_at` once the status is `finished`.
+
+**Example queries:**
+
+```sql
+-- Top 10 players by battles won
+SELECT u.username, count(*) AS wins
+FROM fact_battle b JOIN dim_user u ON u.user_id = b.winner_id
+WHERE b.status = 'finished'
+GROUP BY u.username ORDER BY wins DESC LIMIT 10;
+
+-- Raids per guild, and how many were beaten
+SELECT g.name, count(*) AS raids, count(*) FILTER (WHERE r.status = 'completed') AS won
+FROM fact_raid r JOIN dim_guild g ON g.guild_id = r.guild_id
+GROUP BY g.name ORDER BY raids DESC;
+
+-- Currency created and spent per day, by reason
+SELECT date_trunc('day', created_at) AS day, reason, sum(local_delta) AS local, sum(global_delta) AS global
+FROM fact_currency_change GROUP BY 1, 2 ORDER BY 1, 2;
+
+-- Tamagotchis per package, with their average level
+SELECT p.name, count(*) AS tamagotchis, round(avg(t.level), 1) AS avg_level
+FROM dim_tamagotchi t JOIN dim_package p ON p.package_id = t.package_id
+GROUP BY p.name ORDER BY tamagotchis DESC;
+```
+
+### ETL
+
+*Owner: Daniel (#214).*
+
+**What:** a separate service, `etl-service`, in **Python**. One container,
+**one replica**, so a run happens exactly once. It talks only to databases:
+nothing calls it in the request path.
+
+**Why a service:**
+- **Not a job inside another service:** it would run once per replica, and
+  that service would hold read access to every database, which breaks our
+  ownership rule.
+- **Not a loose script:** nothing would run it on a schedule, and it would
+  have no health check, metrics or image.
+
+**Why Python:** the job is mostly SQL (`psycopg`), and the team already has
+Python Dockerfiles, CI and logging (the broker, the gateway, Service
+Discovery).
+
+**How it runs:**
+- **When:** every `ETL_INTERVAL_SECONDS` (default `300`), and on demand with
+  `POST /runs`. One run at a time: `POST /runs` during a run answers `409`
+  with the running run's id, a scheduled tick during a run is skipped, and a
+  PostgreSQL advisory lock in the warehouse stops a second container from
+  running in parallel.
+- **Extract:** from each source, through its `etl_reader` role and the same
+  `<service>-db` address the service uses (pgpool after replication, so it
+  follows the primary). It reads the rows changed since the last run:
+  `updated_at > watermark - ETL_OVERLAP_SECONDS` (default `60`). The overlap
+  catches rows committed late with an older `updated_at`; reading them twice
+  is harmless.
+- **Transform:** the rules above.
+- **Load:** `INSERT ... ON CONFLICT DO UPDATE` on each table's key, so a
+  re-run writes the same rows again and never duplicates them. Each source
+  table's watermark is stored in the warehouse (`etl_watermarks`) in the same
+  transaction as its rows, so a restart continues where it stopped.
+- **A source that is down** (for example during a failover) is logged and
+  counted, its watermark stays, and the run carries on with the other sources.
+
+**Endpoints:**
+
+| Endpoint | Key | What |
+|---|---|---|
+| `GET /health` | none | Docker's health check, the blackbox probe |
+| `GET /metrics` | none | Prometheus: rows read and written per table, run duration, failed runs |
+| `POST /runs` | admin key (`X-Admin-Key`, the team's `ADMIN_KEY`) | starts a run: `202 {runId}`, or `409 {runId}` while one is running |
+| `GET /runs/latest` | admin key | the last run: start, end, status, rows per table, errors |
+
+**Logs and monitoring:**
+- **Logs:** one JSON log line per run in the team format (`ETL run finished`,
+  rows read and written per table, duration, errors).
+- **Service Discovery:** it registers there, with no topics, because
+  Prometheus takes its targets only from Service Discovery. That is how its
+  `/metrics` gets scraped, its `/health` probed, and a Telegram alert sent if
+  it goes down.
+
+**Settings** (placeholders in `.env.example`): `ETL_INTERVAL_SECONDS`,
+`ETL_OVERLAP_SECONDS`, `DATA_WAREHOUSE_DB_USER` / `_PASSWORD` / `_NAME`, one
+`<SERVICE>_ETL_DB_PASSWORD` per source. **Port:** `8091`.
+
+**Image:** `etl-service` on Docker Hub, `v5.x.x` + `latest`, through a release
+workflow like everyone's.
+
+### ETL read-only access and `updated_at`
+
+Each owner gives the ETL a way into their databases:
+
+- **A read-only role `etl_reader`** in each database, created by a migration,
+  with `SELECT` **only on the tables the warehouse needs** (listed under
+  [Data Warehouse](#data-warehouse)). It never gets `INSERT`, `UPDATE`,
+  `DELETE` or DDL.
+- **Its password is not in the migration**, because migrations are in git.
+  The service sets it at startup from `<SERVICE>_ETL_DB_PASSWORD` in `.env`.
+  `.env.example` holds a placeholder.
+- **An `updated_at timestamptz NOT NULL DEFAULT now()` column** on every table
+  loaded incrementally, kept current by a database trigger rather than
+  application code, so no write path can forget it.
+- **Each service README** lists the tables and columns the ETL reads, and what
+  they mean.
+- The ETL connects through the same primary address as the service. The role
+  replicates with everything else, so it survives a failover.
+
+### Deleted rows
+
+A watermark never sees a deleted row. The rule:
+- **Tables where rows are deleted are reloaded in full** on every run, in one
+  warehouse transaction (delete that table's rows, insert everything):
+  `guild_members`, `package_moderators`, `package_users`, `relationships`.
+  They're small, and a reader sees either the old or the new copy, never half.
+- **Everything else loads incrementally** by `updated_at`.
+- **`currency_ledger` is append-only:** it loads by its `id`, so it needs no
+  `updated_at`.
+- **No `deleted_rows` table:** it would mean a trigger and a table in every
+  database for four small tables.
+
+**What each owner adds** (`updated_at` kept by a trigger, per the section
+above), on the tables loaded incrementally:
+
+| Owner | Tables that need `updated_at` | Has it already |
+|---|---|---|
+| Pavel | `balances` | `users`, `battles` |
+| Daniel | — | `tamagotchis` (set by GORM today; Daniel adds the trigger) |
+| Denis | `raids`, `raid_participants` (`damage_dealt` changes) | — |
+| Stefan | `guilds`, `packages`, `raid_configs` | — |
+
+*Owners to confirm:* that rows are never deleted from the tables marked
+incremental (for example a rejected battle request in `battles`). If one is,
+that table moves to the full-reload list.
+
+### Saga flows and their compensations
+
+**What:** every flow that changes 2 or more databases runs as a
+**long-running saga with the coordinator in the Message Broker** (#236), not
+2 Phase Commit (grade 9 replaces grade 8). The coordinator runs the steps in
+order. When a step fails or times out, it runs the compensations of the
+finished steps **in reverse order**.
+
+**Why sagas and not 2PC:** 2PC holds locks in every database until all of
+them vote, and one slow service stalls everyone. A saga commits each step
+locally and undoes it with a compensation if a later step fails. The data is
+briefly inconsistent, but no service ever blocks another.
+
+**Rules every step follows:**
+- **Idempotent, keyed by `sagaId` + step:** a redelivered step or
+  compensation returns its stored result and changes nothing twice.
+  Delivery is at least once.
+- **A compensation can arrive before its step.** This happens when the step
+  timed out at the coordinator, the coordinator compensated, and then the
+  late step arrived. The service then records the step as cancelled, so the
+  late step changes nothing.
+- **A compensation cannot fail for business reasons.** It is retried until it
+  succeeds, so it must always be allowed (e.g. a refund never checks the
+  balance).
+- **The step most likely to fail runs as early as possible** (e.g. charging a
+  player who may not have enough currency), so fewer steps ever need undoing.
+
+**The coordinator's API** (Denis, #236).
+
+*Running a step:* each service gets **one** endpoint, **`POST /saga-steps`**,
+which accepts **the broker key only** (`X-Broker-Key`), like `POST /events`.
+The saga's definition already fixes which service runs which step, so
+forwarding a caller's service key adds nothing. The body:
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "saga": "string (enum: raid-activation, battle-settlement, raid-rewards)",
+  "step": "string",
+  "action": "string (enum: do, compensate)",
+  "payload": {}
+}
+```
+
+The service answers:
+- `200 {"result": {...}}` when the step succeeded;
+- `409` or `422` with `{"error": "..."}` for a business failure, which starts
+  the compensations;
+- a `5xx` or no answer in time: retried, as below.
+
+*Starting a saga:* the service that starts it calls **`POST /sagas {saga,
+payload}`** on the broker, with the broker key:
+- by default, the broker answers `202 {sagaId}`;
+- with `?wait=5s`, it answers with the final result if the saga finishes in
+  time, and `202 {sagaId}` otherwise.
+
+*Timeouts and retries:*
+- **Each step:** a **5 s** timeout, and **3 retries** (after 1, 2 and 4 s) on a
+  `5xx` or a timeout. After that, the saga compensates.
+- **Compensations:** retried until they succeed, backing off up to 30 s.
+- **Saga state** is stored in the broker's SQLite on `broker-data`, so a
+  broker restart continues a saga where it stopped.
+
+*Following a saga:* **`GET /sagas/{sagaId}`**, with the broker key (so the
+starting service can follow its own saga) or the admin key:
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "saga": "string (enum: raid-activation, battle-settlement, raid-rewards)",
+  "state": "string (enum: running, completed, compensating, compensated, failed)",
+  "startedAt": "string (ISO 8601)",
+  "finishedAt": "string (ISO 8601) | null",
+  "steps": [
+    { "step": "string", "service": "string", "state": "string", "attempts": 1, "error": "string | null" }
+  ]
+}
+```
+
+`GET /sagas?state=&limit=` lists sagas, with the same keys.
+
+#### Raid activation: Package Registry, Monster Raid
+
+`POST /raid-configs/{id}/activate` starts the saga with
+`POST /sagas?wait=5s`. It answers `200` with the result when the saga
+finishes in time, otherwise `202 {"sagaId"}`.
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Package Registry | Remember the config's current status, set it to **`activating`** | Restore the remembered status (`draft` stays `draft`, `inactive` stays `inactive`) |
+| 2 | Monster Raid | `create-raid`, which returns the `raidId` | Set that raid to **`cancelled`**: it can't be joined and isn't listed among the active raids |
+| 3 | Package Registry | Set the config to `active` and store the `raidId` | — (last step) |
+
+**Re-activation** (#237): if the config's last raid is **still active**,
+step 2 is skipped and that raid is returned. If it has **finished or
+expired**, a fresh raid is created. So there are no accidental duplicate
+raids, and a config can still be used again.
+
+The gRPC `CreateRaid` stays as it is for callers outside sagas, so no proto
+change is needed.
+
+**Contract changes:**
+- `raid_configs.status` gains `activating`.
+- `activate` answers with `sagaId`, or `202`.
+- Monster Raid's raid status gains `cancelled`.
+
+#### Battle settlement: Battle, User Management, Tamagotchi
+
+Tamagotchi's steps are confirmed (Daniel). Battle's and User Management's are
+*Pavel to confirm*, together with updating #238 to these 6 steps.
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Battle | Record the result, battle `settling` | Battle `settlement_failed` |
+| 2 | User Management | Charge `loserCurrencyPenalty` to the loser (can fail: not enough currency) | Refund it (opposite delta, key `battle-ended:<battleId>:loser:undo`) |
+| 3 | User Management | Pay `rewardCurrency` to the winner | Take it back (key `battle-ended:<battleId>:winner:undo`) |
+| 4 | Tamagotchi | `add-xp` to the winner's primary Tamagotchi | Remove exactly that XP: this can lower the level, which is the correct undo |
+| 5 | Tamagotchi | `transfer-owner` of the captured Tamagotchi, if any | Transfer it back to the previous owner |
+| 6 | Battle | Battle `settled` | — (last step) |
+
+**No double XP during the switch:** today Tamagotchi applies `battle.ended`
+itself, with Battle's keys. The saga uses `sagaId` keys, so once Battle
+starts the saga, Tamagotchi stops applying the event. Battle and Tamagotchi
+switch in the same release.
+
+#### Raid rewards: Monster Raid, User Management, Tamagotchi
+
+Monster Raid's and Tamagotchi's steps are confirmed (Denis, Daniel). User
+Management's is *Pavel to confirm*.
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Monster Raid | Raid `completed`, rewards `paying` | Rewards `failed` |
+| 2 | User Management | Pay each `rewards[].currency` to its `userId` (key `raid:<raidId>:<userId>`) | Take each payment back (key `raid:<raidId>:<userId>:undo`) |
+| 3 | Tamagotchi | XP to each participant's primary Tamagotchi. A participant without one is skipped and logged, rather than failing the saga and taking everyone's currency back. | Remove that XP |
+| 4 | Monster Raid | Rewards `paid` | — (last step) |
+
+- **Who starts it:** Monster Raid, when a raid completes. Rewards go
+  `paying` → `paid`.
+- **When a step fails:** the compensations run and the rewards end `failed`.
+  Monster Raid's existing expiry job retries a failed saga up to **3 times**,
+  then leaves it `failed` and visible.
+- **What it replaces:** Monster Raid's direct `AdjustCurrency` payment and
+  User Management's subscription to `raid.completed`. `raid.completed` stays
+  for Notification.
+- **While Denis is in there:** Monster Raid adds **`userIds`** to
+  `raid.started` and `raid.failed`. Notification rejects those events today
+  for lacking it, and they end up in the Dead Letter Channel.
+
+These sagas replace today's fan-out of `battle.ended` and `raid.completed` to
+User Management and Tamagotchi. The events stay for Notification.
+
+### Image tags
+
+- Every image we publish in Lab 5 is tagged **`v5.x.x` and `latest`**. Each
+  release workflow sets **`LAB: 5`** (in some of our workflows the variable is
+  called `MAJOR`).
+- **Minor** for a `feat`, **patch** otherwise, as since Lab 2.
+- **Third-party images are pinned** to the versions we agreed, so nobody pulls
+  something else:
+  - `bitnamilegacy/postgresql-repmgr:16` and `bitnamilegacy/pgpool:4`;
+  - `valkey/valkey:8-alpine` (cache nodes);
+  - `postgres:16-alpine` (warehouse);
+  - `redis:7-alpine` (the Redis replicas and the Sentinels).
+- **Docker Hub, at the end:** every image has `latest` = the version the
+  compose file runs, a description and a link to its repository.
+
+### New ports
+
+Added to [Ports](#ports). The Lab 5 rows are proposals until this section is
+agreed.
+
+| Component | Host port |
+|---|---|
+| `data-warehouse` (PostgreSQL 16) | `5440` |
+| `etl-service` | `8091` |
+| `cache-1`, `cache-2`, `cache-3` (Valkey 8) | `6381`, `6382`, `6383` |
+| Database replicas (`<service>-db-0/1/2`) | none: reached inside the stack, and only through `<service>-db` |
+| Redis replicas and `redis-sentinel-1..3` | none: reached inside the stack |
+
 ## Architecture Diagram
 
 ![Architecture Diagram](docs/images/architecture.png)
@@ -1625,6 +2173,9 @@ Claim a free one when you wire up your service and add it here.
 | Grafana | `3000` |
 | Prometheus | `9090` |
 | Loki | `3100` (not published: Grafana reads it inside the stack) |
+| Data Warehouse (`data-warehouse`, Lab 5, proposed) | `5440` |
+| Cache nodes (`cache-1`, `cache-2`, `cache-3`, Lab 5, proposed) | `6381`, `6382`, `6383` |
+| ETL (`etl-service`, Lab 5, proposed) | `8091` |
 
 ### Tamagotchi Service
 
