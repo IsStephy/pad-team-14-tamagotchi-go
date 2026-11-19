@@ -539,6 +539,9 @@ services:
       # GuildInvitation events for Notification while BROKER_URL is empty: its
       # Redis Pub/Sub channel notification-events.
       NOTIFICATION_EVENTS_REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
+      # Lab 5 (#215): password of the read-only role etl_reader, which the
+      # service sets at start-up. Empty = the ETL cannot log in.
+      ETL_DB_PASSWORD: ${GUILD_ETL_DB_PASSWORD:-}
     # Replicas publish no ports: chat sockets and the Postman
     # collection reach them through ws-proxy (one host port for all replicas).
     deploy:
@@ -613,6 +616,9 @@ services:
       # is this BROKER_URL; a grpc:// URL goes to the broker's gRPC port.
       BROKER_URL: http://message-broker:8090
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # Lab 5 (#215): password of the read-only role etl_reader, which the
+      # service sets at start-up. Empty = the ETL cannot log in.
+      ETL_DB_PASSWORD: ${PACKAGE_REGISTRY_ETL_DB_PASSWORD:-}
     # Replicas publish no ports: the gateway finds them in Service
     # Discovery; direct HTTP calls (the Postman collection) go through ws-proxy.
     deploy:
