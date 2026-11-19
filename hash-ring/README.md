@@ -7,13 +7,14 @@ explains what consistent hashing is and why the ring is built this way.
 
 Every service must pick the **same node for the same key**. Otherwise one
 service writes a key to `cache-2` while another looks for it on `cache-3`.
-So there is one algorithm, two reference implementations, and one file of
-expected answers both are checked against:
+So there is one algorithm, one file per language, and one file of expected
+answers every one of them is checked against:
 
 | File | What |
 |---|---|
 | [`src/hashRing.ts`](src/hashRing.ts) | TypeScript ring: Guild, Package Registry, Map, Monster Raid |
 | [`go/hashring.go`](go/hashring.go) | Go ring: User Management, Battle, Tamagotchi, Notification |
+| `python/` | Python ring: the Gateway's token cache (#234). Written by Denis, held to the same vectors |
 | [`test-vectors.json`](test-vectors.json) | 213 hashes and 852 lookups both must reproduce |
 
 ## The algorithm

@@ -1989,8 +1989,7 @@ User Management and Tamagotchi. The events stay for Notification.
 
 ### New ports
 
-Added to [Ports](#ports). The Lab 5 rows are proposals until this section is
-agreed.
+Added to [Ports](#ports).
 
 | Component | Host port |
 |---|---|
@@ -2303,9 +2302,9 @@ Claim a free one when you wire up your service and add it here.
 | Grafana | `3000` |
 | Prometheus | `9090` |
 | Loki | `3100` (not published: Grafana reads it inside the stack) |
-| Data Warehouse (`data-warehouse`, Lab 5, proposed) | `5440` |
-| Cache nodes (`cache-1`, `cache-2`, `cache-3`, Lab 5, proposed) | `6381`, `6382`, `6383` |
-| ETL (`etl-service`, Lab 5, proposed) | `8091` |
+| Data Warehouse (`data-warehouse`, Lab 5) | `5440` |
+| Cache nodes (`cache-1`, `cache-2`, `cache-3`, Lab 5) | `6381`, `6382`, `6383` |
+| ETL (`etl-service`, Lab 5) | `8091` |
 
 ### Tamagotchi Service
 
