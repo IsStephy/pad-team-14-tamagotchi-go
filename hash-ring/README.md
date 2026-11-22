@@ -14,7 +14,7 @@ answers every one of them is checked against:
 |---|---|
 | [`src/hashRing.ts`](src/hashRing.ts) | TypeScript ring: Guild, Package Registry, Map, Monster Raid |
 | [`go/hashring.go`](go/hashring.go) | Go ring: User Management, Battle, Tamagotchi, Notification |
-| `python/` | Python ring: the Gateway's token cache (#234). Written by Denis, held to the same vectors |
+| [`python/hashring.py`](python/hashring.py) | Python ring: the Gateway's token cache (#234), Message Broker, ETL. Standard library only |
 | [`test-vectors.json`](test-vectors.json) | 213 hashes and 852 lookups both must reproduce |
 
 ## The algorithm
@@ -40,8 +40,8 @@ hash32(text):    fmix32(fnv1a32(utf8(text)))
 
 ## Using it in a service
 
-Copy the file into the service: `hashRing.ts` into `src/`, or `hashring.go`
-into a package of its own. It is one small file with no dependencies, so a
+Copy the file into the service: `hashRing.ts` into `src/`, `hashring.go`
+into a package of its own, or `hashring.py` next to the service's modules. It is one small file with no dependencies, so a
 copy is simpler than publishing a package. Then:
 
 ```ts
@@ -56,6 +56,13 @@ ring, _ := hashring.New([]string{"cache-1", "cache-2", "cache-3"}, hashring.Virt
 node, _ := ring.NodeFor("guild-service:guild:3f2a9c1b")
 ```
 
+```python
+from hashring import HashRing
+
+ring = HashRing(["cache-1", "cache-2", "cache-3"])
+ring.node_for("guild-service:guild:3f2a9c1b")  # -> "cache-3"
+```
+
 Rules for every service:
 - **Node names are the host names from `CACHE_NODES`** (`cache-1`, not
   `cache-1:6379`), and every service lists the same nodes.
@@ -65,7 +72,8 @@ Rules for every service:
   keys to other nodes and then back again.
 
 **To check your copy:** run the vector test against it. In Go, put
-`hashring_test.go` next to your copy and point it at `test-vectors.json`. A
+`hashring_test.go` next to your copy and point it at `test-vectors.json`; in
+Python, the same with `test_hashring.py` (its `VECTORS` path). A
 copy that passes picks the same node as everyone else for every key.
 
 ## Commands
@@ -79,6 +87,9 @@ npm run vectors   # rewrites test-vectors.json - only when the algorithm changes
 
 # The Go port, without installing Go:
 docker run --rm -v "$PWD:/w" -w /w/go golang:1.22-alpine go test -v ./...
+
+# The Python port (3.9+, no packages to install):
+cd python && python -m unittest -v
 ```
 
 The tests check that:
