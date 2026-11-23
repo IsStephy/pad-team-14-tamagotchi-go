@@ -385,6 +385,339 @@
         "description": "Subscriber-based queue for a service Service Discovery lists no replica of."
       },
       "response": []
+    },
+    {
+      "name": "Sagas (the coordinator)",
+      "item": [
+        {
+          "name": "Start a raid-activation saga and wait for it",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 finished, or 202 still running', () => pm.expect(pm.response.code).to.be.oneOf([200, 202]));",
+                  "const saga = pm.response.json();",
+                  "pm.collectionVariables.set('sagaId', saga.sagaId);",
+                  "pm.test('the saga and its three steps, in order', () => {",
+                  "    pm.expect(saga.saga).to.eql('raid-activation');",
+                  "    pm.expect(saga.steps.map(s => s.step)).to.eql(['mark-activating', 'create-raid', 'activate']);",
+                  "});",
+                  "if (pm.response.code === 200) pm.test('it has finished', () => pm.expect(saga.state).to.be.oneOf(['completed', 'compensated', 'failed']));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/sagas?wait=5s",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "wait",
+                  "value": "5s"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"saga\": \"raid-activation\",\n  \"payload\": {\n    \"configId\": \"cfg-postman-{{$timestamp}}\",\n    \"guildId\": \"guild-postman\",\n    \"monsterName\": \"Saga Slime\",\n    \"maxHp\": 4,\n    \"duration\": 600,\n    \"rewards\": {\n      \"currency\": 5,\n      \"xp\": 2\n    }\n  }\n}"
+            },
+            "description": "The broker runs each step as POST /saga-steps on its service: Package Registry mark-activating, Monster Raid create-raid, Package Registry activate. A step that is refused (409/422) undoes the finished ones in reverse: state compensated. ?wait=5s answers once the saga has finished, or 202 if it is still running."
+          },
+          "response": []
+        },
+        {
+          "name": "Follow the saga",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const saga = pm.response.json();",
+                  "pm.test('the same saga, with every step and its state', () => {",
+                  "    pm.expect(saga.sagaId).to.eql(pm.collectionVariables.get('sagaId'));",
+                  "    pm.expect(saga.state).to.be.oneOf(['completed', 'compensated', 'failed'].concat(['running', 'compensating']));",
+                  "    saga.steps.forEach(s => pm.expect(s).to.have.property('state'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/sagas/{{sagaId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "{{sagaId}}"
+              ]
+            },
+            "description": "Each step shows its state, attempts, result and error. The state is kept in the broker's store, so a saga continues after a restart."
+          },
+          "response": []
+        },
+        {
+          "name": "Follow the saga with the admin key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('the same saga', () => pm.expect(pm.response.json().sagaId).to.eql(pm.collectionVariables.get('sagaId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/sagas/{{sagaId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "{{sagaId}}"
+              ]
+            },
+            "description": "Set adminKey to ADMIN_KEY from .env."
+          },
+          "response": []
+        },
+        {
+          "name": "List the finished sagas",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const sagas = pm.response.json();",
+                  "pm.test('at most 10, all completed', () => {",
+                  "    pm.expect(sagas).to.be.an('array');",
+                  "    pm.expect(sagas.length).to.be.at.most(10);",
+                  "    sagas.forEach(s => pm.expect(s.state).to.eql('completed'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/sagas?state=completed&limit=10",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "completed"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "An unknown state (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/sagas?state=nope",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "nope"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "An unknown saga (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/sagas/no-such-saga",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "no-such-saga"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Starting a saga needs the broker key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/sagas",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"saga\": \"raid-activation\",\n  \"payload\": {\n    \"configId\": \"cfg-postman-{{$timestamp}}\",\n    \"guildId\": \"guild-postman\",\n    \"monsterName\": \"Saga Slime\",\n    \"maxHp\": 4,\n    \"duration\": 600,\n    \"rewards\": {\n      \"currency\": 5,\n      \"xp\": 2\n    }\n  }\n}"
+            },
+            "description": "Only services start sagas: the admin key may read them, not start them."
+          },
+          "response": []
+        },
+        {
+          "name": "The sagas in the metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('sagas and saga steps are counted', () => {",
+                  "    pm.expect(pm.response.text()).to.include('broker_sagas_total');",
+                  "    pm.expect(pm.response.text()).to.include('broker_saga_steps_total');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/metrics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
@@ -399,6 +732,14 @@
     {
       "key": "guildReplicas",
       "value": "[]"
+    },
+    {
+      "key": "adminKey",
+      "value": "change_me"
+    },
+    {
+      "key": "sagaId",
+      "value": ""
     }
   ]
 }
