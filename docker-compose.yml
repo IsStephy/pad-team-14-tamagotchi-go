@@ -777,6 +777,9 @@ services:
       # into database reads, so there is no depends_on on the cache nodes.
       CACHE_NODES: ${GUILD_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
       CACHE_PASSWORD: ${CACHE_PASSWORD:-}
+      # Lab 5 (#215): password of the read-only role etl_reader, which the
+      # service sets at start-up. Empty = the ETL cannot log in.
+      ETL_DB_PASSWORD: ${GUILD_ETL_DB_PASSWORD:-}
     # Replicas publish no ports: chat sockets and the Postman
     # collection reach them through ws-proxy (one host port for all replicas).
     deploy:
@@ -857,6 +860,9 @@ services:
       # into database reads, so there is no depends_on on the cache nodes.
       CACHE_NODES: ${PACKAGE_REGISTRY_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
       CACHE_PASSWORD: ${CACHE_PASSWORD:-}
+      # Lab 5 (#215): password of the read-only role etl_reader, which the
+      # service sets at start-up. Empty = the ETL cannot log in.
+      ETL_DB_PASSWORD: ${PACKAGE_REGISTRY_ETL_DB_PASSWORD:-}
     # Replicas publish no ports: the gateway finds them in Service
     # Discovery; direct HTTP calls (the Postman collection) go through ws-proxy.
     deploy:
