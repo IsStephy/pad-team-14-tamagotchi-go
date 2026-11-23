@@ -943,7 +943,7 @@ Published when two unrelated users cross the proximity threshold, finalized at *
 
 **Create Raid (internal)**
 
-`POST` `/raids` — Description: Creates a live raid instance from a Package Registry raid configuration. Called when an admin activates a raid config (`POST /raid-configs/{id}/activate` in Package Registry Service) — previously that endpoint returned a `raidId` with nowhere for it to actually land; this is the entrypoint that closes that gap. Not client-facing. Publishes `RaidStarted {raidId, guildId}` on success (consumed by Notification Service) — previously nothing ever emitted this event despite Notification Service listing it as consumed. Payload:
+`POST` `/raids` — Description: Creates a live raid instance from a Package Registry raid configuration. Called when an admin activates a raid config (`POST /raid-configs/{id}/activate` in Package Registry Service) — previously that endpoint returned a `raidId` with nowhere for it to actually land; this is the entrypoint that closes that gap. Not client-facing. Publishes `RaidStarted {raidId, guildId, userIds}` on success, `userIds` being the guild's members (empty when Guild can't say) (consumed by Notification Service) — previously nothing ever emitted this event despite Notification Service listing it as consumed. Payload:
 
 ```json
 {
@@ -1045,7 +1045,8 @@ After `completed` or `failed` the socket is closed (`1000`).
 
 **Raid Completed / Raid Failed (events)**
 
-Published on kill or on timeout.
+Published on kill or on timeout. `RaidFailed` names the raid's participants in
+`userIds`, so Notification can tell each of them.
 
 ```json
 {
@@ -1062,7 +1063,8 @@ Published on kill or on timeout.
 
 ```json
 {
-  "raidId": "string"
+  "raidId": "string",
+  "userIds": ["string"]
 }
 ```
 
@@ -2932,7 +2934,7 @@ subscribes by listing the topics in its Service Discovery registration
 | Topic | Publisher | Subscribers | Payload defined in |
 |---|---|---|---|
 | `map.proximity_detected` | Map | Notification | Proximity Detected, in [Map Service](#map-service-map-raid-typescript) |
-| `raid.started` | Monster Raid | Notification | `{raidId, guildId}`, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) (`POST /raids`) |
+| `raid.started` | Monster Raid | Notification | `{raidId, guildId, userIds}`, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) (`POST /raids`) |
 | `raid.completed` | Monster Raid | Notification, User Management | Raid Completed, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) |
 | `raid.failed` | Monster Raid | Notification | Raid Failed, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) |
 | `battle.ended` | Battle | Notification, Tamagotchi, User Management | [Battle Service](#battle-service-user-battle-go) |
