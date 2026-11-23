@@ -988,6 +988,115 @@
       ]
     },
     {
+      "name": "Token cache",
+      "item": [
+        {
+          "name": "A request with a token: verified, then cached",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": "The gateway verifies the token and keeps it (by its SHA-256) on the cache node the shared hash ring picks, until its exp, at most 5 minutes."
+          },
+          "response": []
+        },
+        {
+          "name": "The same token again: found in the cache",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guilds/{{guildId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guilds",
+                "{{guildId}}"
+              ]
+            },
+            "description": "Any gateway replica finds it there and skips the signature check."
+          },
+          "response": []
+        },
+        {
+          "name": "Gateway metrics: token cache hits and misses",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const text = pm.response.text();",
+                  "const on = text.includes('cache_requests_total');",
+                  "(on ? pm.test : pm.test.skip)('a hit was counted (needs CACHE_NODES)', () => {",
+                  "    pm.expect(text).to.match(/cache_requests_total\\{result=\"hit\",node=\"cache-\\d\"\\} [1-9]/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/metrics",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "With CACHE_NODES unset the gateway has no token cache and the counter is absent."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Service-only endpoints (404 at the gateway)",
       "description": "The endpoints only services call are not routed by the gateway since Lab 4 (gateway v4.2.0): services reach them through the Message Broker.",
       "item": [
