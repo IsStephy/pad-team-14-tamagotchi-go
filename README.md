@@ -1630,6 +1630,42 @@ Postgres + Patroni image, plus running etcd.
   `NOTIFICATION_EVENTS_REDIS_URL` Pub/Sub fallback: every event already goes
   through the broker.
 
+**Running now: Map and Monster Raid.**
+
+| Store | Containers | Services connect to |
+|---|---|---|
+| Monster Raid's Postgres | `monster-raid-service-db-0..2` (repmgr), `monster-raid-service-db` (pgpool) | `monster-raid-service-db:5432`, as before |
+| Monster Raid's Redis | `monster-raid-service-cache`, `-1`, `-2` | the master `monster-raid-service-cache`, through the Sentinels |
+| Map's Redis | `map-service-db`, `-1`, `-2` | the master `map-service-db`, through the Sentinels |
+| shared | `redis-sentinel-1..3` | `REDIS_SENTINELS=redis-sentinel-1:26379,...` |
+
+Two things that bite anyone adding a store:
+- **Sentinel watches the nodes by IP**, on the `redis-replication` network
+  (`172.29.14.0/24`; the blocks in use are listed at the top of
+  `docker-compose.yml`). Watched by name, a stopped container's name stops
+  resolving, Sentinel stalls on it (`+tilt`) and never fails over.
+- **With `bitnamilegacy/postgresql-repmgr` the app user is not a superuser.** A
+  migration that creates a role (`etl_reader`) fails unless an init script,
+  run as `postgres` (`POSTGRESQL_INITSCRIPTS_USERNAME`), gives it `CREATEROLE`.
+  Init scripts run only when a node's volume is empty.
+
+Measured with a request every 250 ms: stopping Monster Raid's Postgres primary
+gave about 13 s of errors (`503` + `Retry-After`) before a replica was
+promoted; stopping a Redis master about 10 s. A stopped primary or master that
+starts again rejoins as a replica.
+
+To see it:
+
+```bash
+# Postgres: who is primary
+docker compose exec -u 1001 monster-raid-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh   repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+docker compose stop monster-raid-service-db-0     # then run cluster show again: db-1 or db-2 is primary
+# Redis: the master the Sentinels hand out
+docker compose exec redis-sentinel-1 redis-cli -p 26379 sentinel get-master-addr-by-name monster-raid-service-cache
+docker compose stop monster-raid-service-cache    # ~10 s later the address is a replica's
+docker compose logs monster-raid-service | grep -E "redis master found|database (connection lost|reachable again)"
+```
+
 ### Data Warehouse
 
 *Owner: Daniel (#214).*

@@ -21,6 +21,102 @@
 
 name: tamagotchi-go
 
+# ---------------------------------------------------- replication (shared parts)
+# Postgres: <service>-db-0..2 run repmgr (db-0 starts as primary; another node
+# is promoted when the primary stops); <service>-db is pgpool in front of them,
+# so the address a service connects to never changes. All queries go to the
+# primary. Redis: a master and 2 replicas per store, watched by the 3 shared
+# Sentinels. Sentinel watches the nodes by IP on the redis-replication network:
+# a stopped container's name stops resolving, and Sentinel stalls on that
+# instead of failing over. Addresses there:
+#   .11-.13   monster-raid-service-cache, -1, -2
+#   .21-.23   map-service-db, -1, -2
+#   .201-.203 redis-sentinel-1..3
+#   another store: the next free block of ten, and a monitor block below.
+x-monster-raid-db: &monster-raid-db
+  image: bitnamilegacy/postgresql-repmgr:16
+  environment: &monster-raid-db-env
+    POSTGRESQL_POSTGRES_PASSWORD: ${MONSTER_RAID_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    # The init script below runs as postgres: here the app user isn't a
+    # superuser, and its migrations create the etl_reader role.
+    POSTGRESQL_INITSCRIPTS_USERNAME: postgres
+    POSTGRESQL_INITSCRIPTS_PASSWORD: ${MONSTER_RAID_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_USERNAME: ${MONSTER_RAID_DB_USER:?set it in .env — copy .env.example}
+    POSTGRESQL_PASSWORD: ${MONSTER_RAID_DB_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_DATABASE: ${MONSTER_RAID_DB_NAME:-monster_raid_db}
+    REPMGR_PASSWORD: ${MONSTER_RAID_REPMGR_PASSWORD:?set it in .env — copy .env.example}
+    REPMGR_PRIMARY_HOST: monster-raid-service-db-0
+    REPMGR_PARTNER_NODES: monster-raid-service-db-0,monster-raid-service-db-1,monster-raid-service-db-2
+    # A replica is promoted ~10 s after the primary stops (the defaults take ~45 s).
+    REPMGR_RECONNECT_ATTEMPTS: "2"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+  configs:
+    - source: monster-raid-db-init
+      target: /docker-entrypoint-initdb.d/10-app-user.sql
+  healthcheck:
+    test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRESQL_PASSWORD\" pg_isready -h 127.0.0.1 -U \"$$POSTGRESQL_USERNAME\" -d \"$$POSTGRESQL_DATABASE\""]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+
+x-redis-node: &redis-node
+  image: redis:7-alpine
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+  restart: unless-stopped
+
+x-redis-sentinel: &redis-sentinel
+  image: redis:7-alpine
+  environment:
+    MAP_REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    MONSTER_RAID_REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+  # Sentinel rewrites its config as it learns, so it is written fresh at start.
+  # One block per watched master; 2 of the 3 Sentinels must agree to fail over.
+  command:
+    - sh
+    - -c
+    - |
+      printf '%s\n' \
+        'port 26379' \
+        'sentinel monitor map-service-db 172.29.14.21 6379 2' \
+        "sentinel auth-pass map-service-db $$MAP_REDIS_PASSWORD" \
+        'sentinel down-after-milliseconds map-service-db 5000' \
+        'sentinel failover-timeout map-service-db 30000' \
+        'sentinel monitor monster-raid-service-cache 172.29.14.11 6379 2' \
+        "sentinel auth-pass monster-raid-service-cache $$MONSTER_RAID_REDIS_PASSWORD" \
+        'sentinel down-after-milliseconds monster-raid-service-cache 5000' \
+        'sentinel failover-timeout monster-raid-service-cache 30000' \
+        > /tmp/sentinel.conf
+      exec redis-sentinel /tmp/sentinel.conf
+  depends_on:
+    map-service-db:
+      condition: service_healthy
+    monster-raid-service-cache:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+  restart: unless-stopped
+
+networks:
+  default: {}
+  redis-replication:
+    ipam:
+      config:
+        - subnet: 172.29.14.0/24
+
+configs:
+  monster-raid-db-init:
+    content: |
+      ALTER ROLE "${MONSTER_RAID_DB_USER}" CREATEROLE;
+
 services:
 
   # --------------------------------------------------------------- Go / user
@@ -329,20 +425,46 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------- TypeScript / map
-  # Redis (geospatial) with append-only persistence.
+  # Redis (geospatial) with append-only persistence: Map's database. A master
+  # and 2 replicas; Map finds the current master through the Sentinels.
   map-service-db:
-    image: redis:7-alpine
+    <<: *redis-node
     environment:
       REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\""]
     volumes:
       - map-service-db-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.21}
+
+  map-service-db-1:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.21 6379"]
+    volumes:
+      - map-service-db-1-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.22}
+    depends_on:
+      map-service-db:
+        condition: service_healthy
+
+  map-service-db-2:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.21 6379"]
+    volumes:
+      - map-service-db-2-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.23}
+    depends_on:
+      map-service-db:
+        condition: service_healthy
 
   map-service:
     image: dackohn/map-service:latest
@@ -354,6 +476,11 @@ services:
     environment:
       PORT: 8085
       REDIS_URL: redis://:${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}@map-service-db:6379
+      # The current master, through the Sentinels (REDIS_URL only matters for
+      # an image without Sentinel support).
+      REDIS_SENTINELS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_MASTER: map-service-db
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
       # Every request must carry this key (X-Gateway-Key); stream tickets are
       # signed with it too. The service no longer verifies user tokens.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
@@ -381,41 +508,133 @@ services:
     # Replicas publish no ports: clients reach the location stream through ws-proxy.
     deploy:
       replicas: ${MAP_REPLICAS:-2}
+    networks: [default, redis-replication]
     restart: unless-stopped
 
   # --------------------------------------------------- TypeScript / monster raid
-  # PostgreSQL for raid records; the service runs its migrations on start-up.
-
-  monster-raid-service-db:
-    image: postgres:16-alpine
+  # PostgreSQL for raid records: a primary and 2 replicas (repmgr) behind
+  # pgpool. The service runs its migrations on start-up, through pgpool.
+  monster-raid-service-db-0:
+    <<: *monster-raid-db
     environment:
-      POSTGRES_DB: ${MONSTER_RAID_DB_NAME:-monster_raid_db}
-      POSTGRES_USER: ${MONSTER_RAID_DB_USER:?set it in .env — copy .env.example}
-      POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD:?set it in .env — copy .env.example}
+      <<: *monster-raid-db-env
+      REPMGR_NODE_NAME: monster-raid-service-db-0
+      REPMGR_NODE_NETWORK_NAME: monster-raid-service-db-0
     volumes:
-      - monster-raid-service-db-data:/var/lib/postgresql/data
+      - monster-raid-service-db-0-data:/bitnami/postgresql
+
+  monster-raid-service-db-1:
+    <<: *monster-raid-db
+    environment:
+      <<: *monster-raid-db-env
+      REPMGR_NODE_NAME: monster-raid-service-db-1
+      REPMGR_NODE_NETWORK_NAME: monster-raid-service-db-1
+    volumes:
+      - monster-raid-service-db-1-data:/bitnami/postgresql
+
+  monster-raid-service-db-2:
+    <<: *monster-raid-db
+    environment:
+      <<: *monster-raid-db-env
+      REPMGR_NODE_NAME: monster-raid-service-db-2
+      REPMGR_NODE_NETWORK_NAME: monster-raid-service-db-2
+    volumes:
+      - monster-raid-service-db-2-data:/bitnami/postgresql
+
+  # pgpool keeps the old address, so DATABASE_URL doesn't change. Every query
+  # goes to the current primary (no load balancing: replicas lag behind, and
+  # advisory locks only work on the primary).
+  monster-raid-service-db:
+    image: bitnamilegacy/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:monster-raid-service-db-0:5432,1:monster-raid-service-db-1:5432,2:monster-raid-service-db-2:5432
+      PGPOOL_BACKEND_APPLICATION_NAMES: monster-raid-service-db-0,monster-raid-service-db-1,monster-raid-service-db-2
+      PGPOOL_SR_CHECK_USER: ${MONSTER_RAID_DB_USER:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PASSWORD: ${MONSTER_RAID_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PERIOD: "2"
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${MONSTER_RAID_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: ${MONSTER_RAID_PGPOOL_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      # Who logs in through pgpool: the service, and the ETL's read-only role.
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${MONSTER_RAID_DB_USER},etl_reader
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${MONSTER_RAID_DB_PASSWORD},${MONSTER_RAID_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_AUTO_FAILBACK: "yes"
+      PGPOOL_HEALTH_CHECK_PERIOD: "2"
+      PGPOOL_HEALTH_CHECK_TIMEOUT: "2"
+      PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
+      PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
+      PGPOOL_CONNECT_TIMEOUT: "2000"
+    depends_on:
+      monster-raid-service-db-0:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 30
     restart: unless-stopped
 
-  # Redis for live monster HP and idempotency keys.
-
+  # Redis for live monster HP and idempotency keys: a master and 2 replicas;
+  # Monster Raid finds the current master through the Sentinels.
   monster-raid-service-cache:
-    image: redis:7-alpine
+    <<: *redis-node
     environment:
       REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\""]
     volumes:
       - monster-raid-service-cache-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.11}
+
+  monster-raid-service-cache-1:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.11 6379"]
+    volumes:
+      - monster-raid-service-cache-1-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.12}
+    depends_on:
+      monster-raid-service-cache:
+        condition: service_healthy
+
+  monster-raid-service-cache-2:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.11 6379"]
+    volumes:
+      - monster-raid-service-cache-2-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.13}
+    depends_on:
+      monster-raid-service-cache:
+        condition: service_healthy
+
+  # The 3 Sentinels every replicated Redis in the stack shares.
+  redis-sentinel-1:
+    <<: *redis-sentinel
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.201}
+
+  redis-sentinel-2:
+    <<: *redis-sentinel
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.202}
+
+  redis-sentinel-3:
+    <<: *redis-sentinel
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.203}
 
   monster-raid-service:
     image: dackohn/monster-raid-service:latest
@@ -430,6 +649,13 @@ services:
       PORT: 8086
       DATABASE_URL: postgresql://${MONSTER_RAID_DB_USER}:${MONSTER_RAID_DB_PASSWORD}@monster-raid-service-db:5432/${MONSTER_RAID_DB_NAME:-monster_raid_db}
       REDIS_URL: redis://:${MONSTER_RAID_REDIS_PASSWORD}@monster-raid-service-cache:6379
+      # The current master, through the Sentinels (REDIS_URL only matters for
+      # an image without Sentinel support).
+      REDIS_SENTINELS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_MASTER: monster-raid-service-cache
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+      # The password of the read-only role the ETL logs in with (through pgpool).
+      ETL_DB_PASSWORD: ${MONSTER_RAID_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
       # Every request must carry this key (X-Gateway-Key); live-raid tickets
       # are signed with it too. The service no longer verifies user tokens.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
@@ -469,6 +695,7 @@ services:
     # Replicas publish no ports: clients reach the live raid socket through ws-proxy.
     deploy:
       replicas: ${MONSTER_RAID_REPLICAS:-2}
+    networks: [default, redis-replication]
     restart: unless-stopped
 
   # --------------------------------------------------------- TypeScript / guild
@@ -885,8 +1112,14 @@ volumes:
   tamagotchi-service-db-data:
   notification-service-db-data:
   map-service-db-data:
-  monster-raid-service-db-data:
+  map-service-db-1-data:
+  map-service-db-2-data:
+  monster-raid-service-db-0-data:
+  monster-raid-service-db-1-data:
+  monster-raid-service-db-2-data:
   monster-raid-service-cache-data:
+  monster-raid-service-cache-1-data:
+  monster-raid-service-cache-2-data:
   guild-service-db-data:
   package-registry-service-db-data:
   prometheus-data:
