@@ -31,6 +31,7 @@ name: tamagotchi-go
 # instead of failing over. Addresses there:
 #   .11-.13   monster-raid-service-cache, -1, -2
 #   .21-.23   map-service-db, -1, -2
+#   .31-.33   notification-service-db, -1, -2
 #   .201-.203 redis-sentinel-1..3
 #   another store: the next free block of ten, and a monitor block below.
 x-monster-raid-db: &monster-raid-db
@@ -61,6 +62,34 @@ x-monster-raid-db: &monster-raid-db
     retries: 30
   restart: unless-stopped
 
+x-tamagotchi-db: &tamagotchi-db
+  image: bitnamilegacy/postgresql-repmgr:16
+  environment: &tamagotchi-db-env
+    POSTGRESQL_POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    # The init script below runs as postgres: here the app user isn't a
+    # superuser, and Tamagotchi creates the etl_reader role at start-up.
+    POSTGRESQL_INITSCRIPTS_USERNAME: postgres
+    POSTGRESQL_INITSCRIPTS_PASSWORD: ${TAMAGOTCHI_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_USERNAME: ${TAMAGOTCHI_DB_USER:?set it in .env — copy .env.example}
+    POSTGRESQL_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_DATABASE: ${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
+    REPMGR_PASSWORD: ${TAMAGOTCHI_REPMGR_PASSWORD:?set it in .env — copy .env.example}
+    REPMGR_PRIMARY_HOST: tamagotchi-service-db-0
+    REPMGR_PARTNER_NODES: tamagotchi-service-db-0,tamagotchi-service-db-1,tamagotchi-service-db-2
+    # A replica is promoted ~10 s after the primary stops (the defaults take ~45 s).
+    REPMGR_RECONNECT_ATTEMPTS: "2"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+  configs:
+    - source: tamagotchi-db-init
+      target: /docker-entrypoint-initdb.d/10-app-user.sql
+  healthcheck:
+    test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRESQL_PASSWORD\" pg_isready -h 127.0.0.1 -U \"$$POSTGRESQL_USERNAME\" -d \"$$POSTGRESQL_DATABASE\""]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+
 x-redis-node: &redis-node
   image: redis:7-alpine
   healthcheck:
@@ -75,6 +104,7 @@ x-redis-sentinel: &redis-sentinel
   environment:
     MAP_REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
     MONSTER_RAID_REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    NOTIFICATION_REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
   # Sentinel rewrites its config as it learns, so it is written fresh at start.
   # One block per watched master; 2 of the 3 Sentinels must agree to fail over.
   command:
@@ -91,12 +121,18 @@ x-redis-sentinel: &redis-sentinel
         "sentinel auth-pass monster-raid-service-cache $$MONSTER_RAID_REDIS_PASSWORD" \
         'sentinel down-after-milliseconds monster-raid-service-cache 5000' \
         'sentinel failover-timeout monster-raid-service-cache 30000' \
+        'sentinel monitor notification-service-db 172.29.14.31 6379 2' \
+        "sentinel auth-pass notification-service-db $$NOTIFICATION_REDIS_PASSWORD" \
+        'sentinel down-after-milliseconds notification-service-db 5000' \
+        'sentinel failover-timeout notification-service-db 30000' \
         > /tmp/sentinel.conf
       exec redis-sentinel /tmp/sentinel.conf
   depends_on:
     map-service-db:
       condition: service_healthy
     monster-raid-service-cache:
+      condition: service_healthy
+    notification-service-db:
       condition: service_healthy
   healthcheck:
     test: ["CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG"]
@@ -116,6 +152,9 @@ configs:
   monster-raid-db-init:
     content: |
       ALTER ROLE "${MONSTER_RAID_DB_USER}" CREATEROLE;
+  tamagotchi-db-init:
+    content: |
+      ALTER ROLE "${TAMAGOTCHI_DB_USER}" CREATEROLE;
 
 services:
 
@@ -299,21 +338,68 @@ services:
 
 
   # ------------------------------------------------------- Go / tamagotchi
-  # PostgreSQL for Tamagotchis; the service creates its schema on start-up.
-
-  tamagotchi-service-db:
-    image: postgres:16-alpine
+  # PostgreSQL for Tamagotchis: a primary and 2 replicas (repmgr) behind pgpool.
+  # The service creates its schema on start-up, through pgpool.
+  tamagotchi-service-db-0:
+    <<: *tamagotchi-db
     environment:
-      POSTGRES_DB: ${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
-      POSTGRES_USER: ${TAMAGOTCHI_DB_USER:?set it in .env — copy .env.example}
-      POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD:?set it in .env — copy .env.example}
+      <<: *tamagotchi-db-env
+      REPMGR_NODE_NAME: tamagotchi-service-db-0
+      REPMGR_NODE_NETWORK_NAME: tamagotchi-service-db-0
     volumes:
-      - tamagotchi-service-db-data:/var/lib/postgresql/data
+      - tamagotchi-service-db-0-data:/bitnami/postgresql
+
+  tamagotchi-service-db-1:
+    <<: *tamagotchi-db
+    environment:
+      <<: *tamagotchi-db-env
+      REPMGR_NODE_NAME: tamagotchi-service-db-1
+      REPMGR_NODE_NETWORK_NAME: tamagotchi-service-db-1
+    volumes:
+      - tamagotchi-service-db-1-data:/bitnami/postgresql
+
+  tamagotchi-service-db-2:
+    <<: *tamagotchi-db
+    environment:
+      <<: *tamagotchi-db-env
+      REPMGR_NODE_NAME: tamagotchi-service-db-2
+      REPMGR_NODE_NETWORK_NAME: tamagotchi-service-db-2
+    volumes:
+      - tamagotchi-service-db-2-data:/bitnami/postgresql
+
+  # pgpool keeps the old address, so DATABASE_URL doesn't change. Every query
+  # goes to the current primary (no load balancing: replicas lag behind, and
+  # the schema migration's advisory lock only works on the primary).
+  tamagotchi-service-db:
+    image: bitnamilegacy/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:tamagotchi-service-db-0:5432,1:tamagotchi-service-db-1:5432,2:tamagotchi-service-db-2:5432
+      PGPOOL_BACKEND_APPLICATION_NAMES: tamagotchi-service-db-0,tamagotchi-service-db-1,tamagotchi-service-db-2
+      PGPOOL_SR_CHECK_USER: ${TAMAGOTCHI_DB_USER:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PERIOD: "2"
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: ${TAMAGOTCHI_PGPOOL_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      # Who logs in through pgpool: the service, and the ETL's read-only role.
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${TAMAGOTCHI_DB_USER},etl_reader
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${TAMAGOTCHI_DB_PASSWORD},${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_AUTO_FAILBACK: "yes"
+      PGPOOL_HEALTH_CHECK_PERIOD: "2"
+      PGPOOL_HEALTH_CHECK_TIMEOUT: "2"
+      PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
+      PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
+      PGPOOL_CONNECT_TIMEOUT: "2000"
+    depends_on:
+      tamagotchi-service-db-0:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 30
     restart: unless-stopped
 
   tamagotchi-service:
@@ -327,6 +413,8 @@ services:
       PORT: 8083
       APP_ENV: production
       DATABASE_URL: postgres://${TAMAGOTCHI_DB_USER}:${TAMAGOTCHI_DB_PASSWORD}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}?sslmode=disable
+      # The password of the read-only role the ETL logs in with (through pgpool).
+      ETL_DB_PASSWORD: ${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
       REQUEST_TIMEOUT_MS: ${TAMAGOTCHI_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${TAMAGOTCHI_MAX_CONCURRENT_REQUESTS:-10}
       # Reached through the gateway: X-User-Id is trusted only with this key.
@@ -378,26 +466,54 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------- Go / notification
-  # Redis with append-only persistence; notifications expire after 30 days.
-
+  # Redis with append-only persistence; notifications expire after 30 days. A
+  # master and 2 replicas; Notification finds the current master through the
+  # Sentinels.
   notification-service-db:
-    image: redis:7-alpine
+    <<: *redis-node
     environment:
       REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\""]
     volumes:
       - notification-service-db-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.31}
+
+  notification-service-db-1:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.31 6379"]
+    volumes:
+      - notification-service-db-1-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.32}
+    depends_on:
+      notification-service-db:
+        condition: service_healthy
+
+  notification-service-db-2:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.31 6379"]
+    volumes:
+      - notification-service-db-2-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.33}
+    depends_on:
+      notification-service-db:
+        condition: service_healthy
 
   notification-service:
     image: dan1el50/notification-service:latest
     depends_on:
       notification-service-db:
+        condition: service_healthy
+      redis-sentinel-1:
         condition: service_healthy
       service-discovery:
         condition: service_healthy
@@ -405,6 +521,11 @@ services:
       PORT: 8084
       APP_ENV: production
       REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
+      # The current master, through the Sentinels (REDIS_URL then only gives the
+      # database number; an image without Sentinel support uses it as before).
+      REDIS_SENTINELS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_MASTER: notification-service-db
+      REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
       REQUEST_TIMEOUT_MS: ${NOTIFICATION_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${NOTIFICATION_MAX_CONCURRENT_REQUESTS:-10}
       MAX_CONCURRENT_EVENTS: ${NOTIFICATION_MAX_CONCURRENT_EVENTS:-10}
@@ -427,6 +548,8 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    # The Sentinels hand out the master's address on redis-replication.
+    networks: [default, redis-replication]
     restart: unless-stopped
 
   # ---------------------------------------------------------- TypeScript / map
@@ -1114,8 +1237,12 @@ volumes:
   user-management-service-db-data:
   battle-service-db-data:
   battle-service-cache-data:
-  tamagotchi-service-db-data:
+  tamagotchi-service-db-0-data:
+  tamagotchi-service-db-1-data:
+  tamagotchi-service-db-2-data:
   notification-service-db-data:
+  notification-service-db-1-data:
+  notification-service-db-2-data:
   map-service-db-data:
   map-service-db-1-data:
   map-service-db-2-data:
