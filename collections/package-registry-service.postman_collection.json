@@ -606,6 +606,173 @@
       "response": []
     },
     {
+      "name": "Cache (Lab 5)",
+      "description": "Lab 5 (#225, #231): GET /packages and GET /packages/{packageId} are read through the shared cache nodes (cache-1..3, sharded with the consistent-hash ring). Every response says where it came from in the X-Cache header: miss (read from the database, now cached), hit (served from the cache), or off (the cache is switched off). Registering a package deletes the cached list; updating stat definitions deletes that package.",
+      "item": [
+        {
+          "name": "Get Package again (X-Cache: hit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: hit - Get Package cached it', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'); });",
+                  "pm.test('still the stored stat definitions', function () { pm.expect(pm.response.json().statDefinitions.hunger.bonusMultiplier).to.eql(1.2); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}"
+              ]
+            },
+            "description": "The same request as Get Package: answered from the cache node that owns package-registry-service:package:{packageId}."
+          },
+          "response": []
+        },
+        {
+          "name": "List Packages again (X-Cache: hit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: hit - List Packages cached it', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'); });",
+                  "pm.test('lists the registered package', function () {",
+                  "    pm.expect(pm.response.json().map(p => p.packageId)).to.include(pm.collectionVariables.get('packageId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
+            "description": "List Packages ran right after Register Package; nothing registered a package since (a stat-definition update doesn't change the list), so this is a hit."
+          },
+          "response": []
+        },
+        {
+          "name": "Change a stat definition (deletes the cached package)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('hunger bonus is now 1.5', function () { pm.expect(pm.response.json().statDefinitions.hunger.bonusMultiplier).to.eql(1.5); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{moderatorId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}/stat-definitions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}",
+                "stat-definitions"
+              ]
+            },
+            "description": "A write: after its commit it deletes package-registry-service:package:{packageId}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statDefinitions\": {\n    \"hunger\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 80,\n      \"bonusMultiplier\": 1.5\n    },\n    \"happiness\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 60,\n      \"bonusMultiplier\": 1.1\n    }\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Package after the change (X-Cache: miss)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: miss - the update deleted the cached package', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'); });",
+                  "pm.test('the new value, not the cached 1.2', function () { pm.expect(pm.response.json().statDefinitions.hunger.bonusMultiplier).to.eql(1.5); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}"
+              ]
+            },
+            "description": "The update deleted the cached package, so this read goes to the database and shows the new bonus instead of a stale one."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Add Package Moderator",
       "event": [
         {

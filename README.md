@@ -1232,7 +1232,7 @@ Success Response (200 OK):
 
 **List My Guilds**
 
-`GET` `/users/{userId}/guilds` — Description: Lists the guilds a player belongs to. Previously a player needed to already know their `guildId` to call anything guild-related — this covers the common "show me my guild" case on load.
+`GET` `/users/{userId}/guilds` — Description: Lists the guilds a player belongs to. Previously a player needed to already know their `guildId` to call anything guild-related — this covers the common "show me my guild" case on load. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1248,7 +1248,7 @@ Success Response (200 OK):
 
 **Get Guild**
 
-`GET` `/guilds/{guildId}` — Description: Retrieves a guild's details and members. Called by players, and by Monster Raid Service with its own `X-Service-Key` (through the gateway) to check that a raid joiner is a member of the raid's guild — it no longer has the player's token to forward.
+`GET` `/guilds/{guildId}` — Description: Retrieves a guild's details and members. Called by players, and by Monster Raid Service with its own `X-Service-Key` (through the gateway) to check that a raid joiner is a member of the raid's guild — it no longer has the player's token to forward. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1317,7 +1317,7 @@ Success Response (200 OK):
 
 **List Packages**
 
-`GET` `/packages` — Description: Lists all registered packages. Previously there was no discovery endpoint — a caller needed to already know a `packageId`.
+`GET` `/packages` — Description: Lists all registered packages. Previously there was no discovery endpoint — a caller needed to already know a `packageId`. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1356,7 +1356,7 @@ Success Response (201 Created):
 
 **Get Package**
 
-`GET` `/packages/{packageId}` — Description: Retrieves a package's details.
+`GET` `/packages/{packageId}` — Description: Retrieves a package's details. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
