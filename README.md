@@ -1695,7 +1695,7 @@ Postgres + Patroni image, plus running etcd.
 | Notification's Redis | `notification-service-db`, `-1`, `-2` (`172.29.14.31-.33`) | the master `notification-service-db`, through the Sentinels |
 | shared | `redis-sentinel-1..3` | `REDIS_SENTINELS=redis-sentinel-1:26379,...` |
 
-Two things that bite anyone adding a store:
+Three things that bite anyone adding a store:
 - **Sentinel watches the nodes by IP**, on the `redis-replication` network
   (`172.29.14.0/24`; the blocks in use are listed at the top of
   `docker-compose.yml`). Watched by name, a stopped container's name stops
@@ -1704,6 +1704,27 @@ Two things that bite anyone adding a store:
   migration that creates a role (`etl_reader`) fails unless an init script,
   run as `postgres` (`POSTGRESQL_INITSCRIPTS_USERNAME`), gives it `CREATEROLE`.
   Init scripts run only when a node's volume is empty.
+- **Restarting a repmgr node needs two fixes** (found while testing #220;
+  Guild's and Package Registry's nodes have both, through a small
+  `entrypoint` wrapper in `docker-compose.yml`). *Monster Raid's and
+  Tamagotchi's nodes have neither yet: Denis, Daniel, worth copying.*
+  - **A stale PID file.** repmgrd runs as PID 1 and keeps `/tmp/repmgrd.pid`,
+    which survives a container restart. After an unclean stop (e.g. Docker
+    restarting), the new entrypoint is PID 1 again, repmgrd thinks it is
+    already running, and the node restarts forever. Remove only that file
+    before the image's entrypoint. (Wiping all of `/tmp` is worse: the image
+    keeps state there, and an old primary then came back as a second
+    primary.)
+  - **A split brain right after a failover.** A node that was primary before
+    (`/bitnami/postgresql/lock/master.lock`) asks the others who is primary
+    now. Restarted within seconds of a failover, their metadata can still
+    name it too, the image can't decide, and starts it as a **second primary
+    with old data**. Waiting 30 s first lets the new primary mark it
+    inactive, and it rejoins as a replica.
+
+  Tested on a 3-node cluster: an old primary restarted right after a
+  failover, killing all 3 nodes after a failover, and a second failover the
+  other way. One primary every time, no row lost, no restart loop.
 
 Measured with a request every 250 ms: stopping Monster Raid's Postgres primary
 gave about 13 s of errors (`503` + `Retry-After`) before a replica was
