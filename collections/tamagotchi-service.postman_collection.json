@@ -684,6 +684,284 @@
       ]
     },
     {
+      "name": "Cache (Lab 5)",
+      "description": "Lab 5 (#227, #233): GET /tamagotchis/{id} and GET /users/{userId}/tamagotchis are read through the shared cache nodes (cache-1..3, sharded with the consistent-hash ring). Every response says where it came from in the X-Cache header: miss (read from the database, now cached), hit (served from the cache), off (cache switched off). Every write deletes the cached copies it changed, after its commit, so the next read is a miss with the new data.\n\nNeeds the stack's cache on (TAMAGOTCHI_CACHE_NODES). The last request puts the stats back, so the folders after this one see the same data as without it.",
+      "item": [
+        {
+          "name": "Update stats (deletes the cached Tamagotchi and the owner's list)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('stats stored', function () { pm.expect(pm.response.json().packageStats).to.include({ hunger: 70 }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 70\n  }\n}"
+            },
+            "description": "A write: the cached copies of this Tamagotchi and of its owner's list are deleted after the commit."
+          },
+          "response": []
+        },
+        {
+          "name": "Get the Tamagotchi after the write (X-Cache: miss)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: miss', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'); });",
+                  "pm.test('the new stats', function () { pm.expect(pm.response.json().packageStats.hunger).to.eql(70); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get it again (X-Cache: hit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: hit', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'); });",
+                  "pm.test('the same stats, from the cache', function () { pm.expect(pm.response.json().packageStats.hunger).to.eql(70); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List my Tamagotchis after the write (X-Cache: miss)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: miss', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'); });",
+                  "pm.test('both of them', function () { pm.expect(pm.response.json()).to.have.lengthOf(2); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "tamagotchis"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List them again (X-Cache: hit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: hit', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'); });",
+                  "pm.test('both of them', function () { pm.expect(pm.response.json()).to.have.lengthOf(2); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "tamagotchis"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Put the stats back (deletes the cached copies again)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('stats stored', function () { pm.expect(pm.response.json().packageStats).to.include({ hunger: 80 }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 80\n  }\n}"
+            },
+            "description": "Back to the stats set above, for the folders after this one."
+          },
+          "response": []
+        },
+        {
+          "name": "Get the Tamagotchi after the second write (X-Cache: miss)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: miss', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'); });",
+                  "pm.test('the stats as they are now, not the cached ones', function () { pm.expect(pm.response.json().packageStats.hunger).to.eql(80); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Battle and Monster Raid, through the Message Broker",
       "item": [
         {
