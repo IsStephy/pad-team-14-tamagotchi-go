@@ -1682,11 +1682,13 @@ Postgres + Patroni image, plus running etcd.
   `NOTIFICATION_EVENTS_REDIS_URL` Pub/Sub fallback: every event already goes
   through the broker.
 
-**Running now: Map, Monster Raid, Tamagotchi and Notification.**
+**Running now: Map, Monster Raid, Tamagotchi, Notification, Guild and Package Registry.**
 
 | Store | Containers | Services connect to |
 |---|---|---|
 | Monster Raid's Postgres | `monster-raid-service-db-0..2` (repmgr), `monster-raid-service-db` (pgpool) | `monster-raid-service-db:5432`, as before |
+| Guild's Postgres | `guild-service-db-0..2` (repmgr), `guild-service-db` (pgpool) | `guild-service-db:5432`, as before (host port `5437` in the machines override) |
+| Package Registry's Postgres | `package-registry-service-db-0..2` (repmgr), `package-registry-service-db` (pgpool) | `package-registry-service-db:5432`, as before (host port `5438`) |
 | Monster Raid's Redis | `monster-raid-service-cache`, `-1`, `-2` | the master `monster-raid-service-cache`, through the Sentinels |
 | Map's Redis | `map-service-db`, `-1`, `-2` | the master `map-service-db`, through the Sentinels |
 | Tamagotchi's Postgres | `tamagotchi-service-db-0..2` (repmgr), `tamagotchi-service-db` (pgpool) | `tamagotchi-service-db:5432`, as before |
@@ -1719,6 +1721,16 @@ pass afterwards.
 (`tamagotchi-service-db-{0,1,2}-data`); the old `tamagotchi-service-db-data` is no
 longer used. Notification's master keeps its volume and data. Copy the four new
 `TAMAGOTCHI_*_PASSWORD` settings from `.env.example`.
+
+Guild and Package Registry (#220) retry what is safe to retry instead of
+failing: a read, or getting a connection, is tried again until 1 s before the
+request's deadline; a write that was already sent is not repeated (it may
+have been saved) and answers `503` + `Retry-After: 2`. Measured with a read
+and a write to each service every 250 ms while **both** primaries were
+stopped at once: 230 rounds, Guild 0 errors, Package Registry 1 `503` (the
+write in flight, which was indeed not saved). Guild chat's `LISTEN`
+connection reconnected by itself about 10 s later. Details: each service's
+README, "Database failover (Lab 5)".
 
 To see it:
 
@@ -3397,7 +3409,7 @@ Conventions, so entries do not collide — please follow them:
 |---|---|---|
 | Service entry | the repo name | `guild-service` |
 | Database entry | `<service>-db` | `guild-service-db` |
-| Volume | `<service>-db-data` | `guild-service-db-data` |
+| Volume | `<service>-db-data` (replicated: `<service>-db-0..2-data`) | `battle-service-db-data` |
 | Env prefix | `<SERVICE>_` | `GUILD_DB_PASSWORD` |
 | Image | your published image, pinned to a version tag | `you/guild-service:v1.0.0` |
 
@@ -3531,7 +3543,6 @@ DB_USER=guild_user
 DB_PASSWORD=<the main machine's GUILD_DB_PASSWORD>
 GATEWAY_KEY=<the main machine's>
 USER_MANAGEMENT_URL=http://192.168.1.10:8080
-NOTIFICATION_EVENTS_REDIS_URL=redis://:<NOTIFICATION_REDIS_PASSWORD>@192.168.1.10:6374/0
 ```
 
 Map (an excerpt: the rest is in Map's README):
