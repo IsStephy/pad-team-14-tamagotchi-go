@@ -1718,10 +1718,13 @@ Postgres + Patroni image, plus running etcd.
   `NOTIFICATION_EVENTS_REDIS_URL` Pub/Sub fallback: every event already goes
   through the broker.
 
-**Running now: Map, Monster Raid, Tamagotchi, Notification, Guild and Package Registry.**
+**Running now: User Management, Battle, Map, Monster Raid, Tamagotchi, Notification, Guild and Package Registry.**
 
 | Store | Containers | Services connect to |
 |---|---|---|
+| User Management's Postgres | `user-management-service-db-0..2` (repmgr), `user-management-service-db` (pgpool) | `user-management-service-db:5432`, as before |
+| Battle's Postgres | `battle-service-db-0..2` (repmgr), `battle-service-db` (pgpool) | `battle-service-db:5432`, as before |
+| Battle's Redis | `battle-service-cache`, `-1`, `-2` (`172.29.14.41-.43`) | the master `battle-service-cache`, through the Sentinels |
 | Monster Raid's Postgres | `monster-raid-service-db-0..2` (repmgr), `monster-raid-service-db` (pgpool) | `monster-raid-service-db:5432`, as before |
 | Guild's Postgres | `guild-service-db-0..2` (repmgr), `guild-service-db` (pgpool) | `guild-service-db:5432`, as before (host port `5437` in the machines override) |
 | Package Registry's Postgres | `package-registry-service-db-0..2` (repmgr), `package-registry-service-db` (pgpool) | `package-registry-service-db:5432`, as before (host port `5438`) |
@@ -1774,10 +1777,23 @@ promoted primary and the other replica; stopping Notification's Redis master
 cost 1 request of 248 while the Sentinels moved the master. Both collections
 pass afterwards.
 
-**Heads-up:** Tamagotchi's Postgres starts empty, on new volumes
-(`tamagotchi-service-db-{0,1,2}-data`); the old `tamagotchi-service-db-data` is no
-longer used. Notification's master keeps its volume and data. Copy the four new
-`TAMAGOTCHI_*_PASSWORD` settings from `.env.example`.
+User Management and Battle (with the Lab 5 release, which answers `503` +
+`Retry-After: 2` while their database fails over): with a write and a read every 250 ms against User
+Management, stopping its Postgres primary gave **1** failed request of 201
+(`503` + `Retry-After: 2`, the one keyless write in flight, which is deliberately
+not repeated) and **no failed read**: reads and idempotency-keyed adjustments
+are repeated for up to 4 s, so a failover costs no `500`. With the previous
+release the same test gave six `500`s. All 200 acknowledged writes were on the
+promoted primary and the other replica. Battle served 210 list-and-get pairs
+through the same failover with no failed request. Stopping Battle's Redis master:
+the Sentinels promoted a replica after 8 s and Battle, which follows the master
+through them, was listening for live updates again 3 s later.
+
+**Heads-up:** Tamagotchi's, User Management's and Battle's Postgres start empty,
+on new volumes (`<service>-db-{0,1,2}-data`); the old `<service>-db-data` is no
+longer used, so a local user or battle starts over. Notification's master and
+Battle's Redis keep their volumes and data. Copy the new `TAMAGOTCHI_*`,
+`USER_MANAGEMENT_*` and `BATTLE_*` password settings from `.env.example`.
 
 Guild and Package Registry (#220) retry what is safe to retry instead of
 failing: a read, or getting a connection, is tried again until 1 s before the
@@ -3360,7 +3376,14 @@ and how to add a source.
 - **Sources:** each one through its read-only role `etl_reader` and the address
   the service itself uses (pgpool after replication, so the ETL follows the
   primary). Wired today: **Tamagotchi** (`TAMAGOTCHI_ETL_DB_URL`), **Guild**
-  (`GUILD_ETL_DB_URL`) and **Package Registry** (`PACKAGE_REGISTRY_ETL_DB_URL`). A source
+  (`GUILD_ETL_DB_URL`) and **Package Registry** (`PACKAGE_REGISTRY_ETL_DB_URL`).
+  **User Management** (`USER_MANAGEMENT_ETL_DB_URL`: `dim_user` with the
+  balance, `fact_currency_change`, `relationship`) and **Battle**
+  (`BATTLE_ETL_DB_URL`: `fact_battle`) have their URLs here already; the ETL
+  reads them once its sources (Dackohn/etl-service#6) are released, and the
+  services create `etl_reader` from their `v5` images. Neither role can read a
+  password hash, an email or a battle's turn log: it is granted named columns
+  only. A source
   that is down is skipped (the run ends `partial`, or `failed` when no source
   loaded), and the next run catches up.
 
