@@ -299,6 +299,7 @@ Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
 | | `POST /raid-configs/{id}/activate` | Player + role: admin |
 | | `POST /raid-configs/{id}/deactivate` | Player + role: admin |
 | | `POST /raid-configs/{id}/cancel` | Player + role: admin |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Every service | `GET /health`, `/docs` | Public |
 
 ### Endpoints
@@ -1469,16 +1470,28 @@ Success Response (201 Created):
 
 **Activate Raid Config**
 
-`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration. This service authors and schedules the config, but does **not** own live raid execution — activating calls Monster Raid Service's `POST /raids` (see that service's section) to actually spin up the live raid and get back a `raidId`; this endpoint's response mirrors that result rather than fabricating its own. Previously this returned a `raidId` with no defined recipient, i.e. nothing ever actually created a live raid from it — that's now closed by Monster Raid Service's side. Monster Raid Service publishes `RaidStarted` once created, consumed by Notification Service.
+`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration. This service authors and schedules the config, but does **not** own live raid execution: Monster Raid Service creates the live raid and owns its `raidId`. **Since Lab 5 (#237) activation is the `raid-activation` saga** ([Raid activation](#raid-activation-package-registry-monster-raid)): Package Registry marks the config `activating` → Monster Raid `create-raid` → Package Registry marks it `active` with the `raidId`; a failed step undoes the finished ones and the config gets back the status it had. The saga is started with `POST /sagas?wait=5s` on the broker. Re-activating a config whose raid is still active returns that raid. Without a broker (a service's standalone stack) it calls Monster Raid's `POST /raids` directly.
 
-Success Response (200 OK):
+Success Response (200 OK), the saga finished within 5 s:
 
 ```json
 {
   "raidId": "string",
-  "status": "string (enum: active)"
+  "status": "string (enum: active)",
+  "sagaId": "string (uuid)"
 }
 ```
+
+Accepted (202), the saga is still running (follow it with the broker's `GET /sagas/{sagaId}`):
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "status": "string (enum: activating)"
+}
+```
+
+`409` when the config is already active, is being activated or was cancelled, or one of Package Registry's steps refused; `502` when Monster Raid's step failed and the saga was undone. Both carry `{error, sagaId, status}`, `status` being the config's status now.
 
 **Deactivate Raid Config**
 
@@ -1505,6 +1518,29 @@ Success Response (200 OK):
   "status": "string (enum: cancelled)"
 }
 ```
+
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) one of Package Registry's steps of the `raid-activation` saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string",
+  "saga": "string (enum: raid-activation)",
+  "step": "string (enum: mark-activating, activate)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object (the saga's payload, plus results by step name)"
+}
+```
+
+| `step` | `payload` | `do` | `compensate` |
+|---|---|---|---|
+| `mark-activating` | `{raidConfigId}` | remembers the config's status, sets `activating`; `409` if it is active, activating or cancelled | restores the remembered status, unless a person changed it meanwhile |
+| `activate` | `{raidConfigId, results: {"create-raid": {raidId}}}` | `active` with that `raidId`; `409` if the config isn't `activating` any more (e.g. cancelled meanwhile) | back to `activating` with the previous `raidId` |
+
+The saga's payload, which Monster Raid's `create-raid` reads too: `{raidConfigId, configId, guildId, monsterName, maxHp, duration, rewards, previousRaidId}` (the `CreateRaid` fields, plus the config's last raid for re-activation).
+
+Success Response (200 OK): `{"result": {...}}`: what the step did, e.g. `{raidConfigId, status: "activating", previousStatus: "draft"}`. Idempotent per `sagaId` + step: delivered again, it returns its first answer with `alreadyApplied: true`. A compensation that arrives before its step answers `200` and records the step as cancelled; the late step then answers `{skipped: true}`. `422` for a step Package Registry doesn't run.
 
 ## Lab 5 Decisions
 
@@ -3672,7 +3708,7 @@ npx newman run collections/notification-service.postman_collection.json --env-va
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY> --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
-npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY>
+npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/gateway.postman_collection.json --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID> --env-var adminKey=<BROKER_ADMIN_KEY>
 ```
 
