@@ -31,3 +31,6 @@
 [submodule "message-broker"]
 	path = message-broker
 	url = https://github.com/Dackohn/message-broker.git
+[submodule "etl-service"]
+	path = etl-service
+	url = https://github.com/Dackohn/etl-service

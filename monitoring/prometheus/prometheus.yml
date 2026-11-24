@@ -33,7 +33,7 @@ scrape_configs:
           credentials_file: /tmp/discovery_key
     relabel_configs:
       - source_labels: [service]
-        regex: message-broker|user-management-service|battle-service|map-service|monster-raid-service|tamagotchi-service|notification-service|guild-service|package-registry-service
+        regex: message-broker|user-management-service|battle-service|map-service|monster-raid-service|tamagotchi-service|notification-service|guild-service|package-registry-service|etl-service
         action: keep
       - source_labels: [service]
         target_label: job

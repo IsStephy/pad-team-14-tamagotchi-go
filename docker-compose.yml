@@ -33,7 +33,8 @@ name: tamagotchi-go
 #   .21-.23   map-service-db, -1, -2
 #   .31-.33   notification-service-db, -1, -2
 #   .201-.203 redis-sentinel-1..3
-#   another store: the next free block of ten, and a monitor block below.
+#   another store: the next free block of ten below .64, and a monitor block below.
+#   .64-.127 is for containers without a fixed address (the services).
 x-monster-raid-db: &monster-raid-db
   image: bitnamilegacy/postgresql-repmgr:16
   environment: &monster-raid-db-env
@@ -61,6 +62,26 @@ x-monster-raid-db: &monster-raid-db
     timeout: 5s
     retries: 30
   restart: unless-stopped
+  # Two fixes before the image's own entrypoint (the same as Guild's and
+  # Package Registry's nodes):
+  # - repmgrd keeps its PID file in /tmp, which survives a container restart:
+  #   after an unclean stop it took the stale file for a live repmgrd and the
+  #   node restarted forever. Only that file is removed.
+  # - A node that was the primary before it stopped waits 30 s, so the new
+  #   primary's repmgrd has marked it inactive and it rejoins as a replica
+  #   instead of starting as a second primary with old data.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
 
 x-tamagotchi-db: &tamagotchi-db
   image: bitnamilegacy/postgresql-repmgr:16
@@ -252,6 +273,10 @@ networks:
     ipam:
       config:
         - subnet: 172.29.14.0/24
+          # Containers without a fixed address (the services on this network)
+          # get one from .64-.127 only, so they can never take a store's or a
+          # Sentinel's fixed address (.11-.59, .201-.203) before it starts.
+          ip_range: 172.29.14.64/26
 
 configs:
   monster-raid-db-init:
@@ -710,9 +735,25 @@ services:
     depends_on:
       map-service-db:
         condition: service_healthy
+      # Its replicas: nothing else starts them.
+      map-service-db-1:
+        condition: service_healthy
+      map-service-db-2:
+        condition: service_healthy
+      # It finds its Redis master through the Sentinels (REDIS_SENTINELS).
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
+        condition: service_healthy
       service-discovery:
         condition: service_healthy
     environment:
+      # Its cache on the shared cache nodes (cache-1..3), each key on the node the
+      # consistent-hash ring picks. MAP_CACHE_NODES set empty in .env turns it off.
+      CACHE_NODES: ${MAP_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
       PORT: 8085
       REDIS_URL: redis://:${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}@map-service-db:6379
       # The current master, through the Sentinels (REDIS_URL only matters for
@@ -805,13 +846,22 @@ services:
       PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
       PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
       PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up monster-raid-service` never
+    # starts them, and pgpool started before them marks them down.
     depends_on:
       monster-raid-service-db-0:
         condition: service_healthy
+      monster-raid-service-db-1:
+        condition: service_healthy
+      monster-raid-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
       test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 15s
       retries: 30
     restart: unless-stopped
 
@@ -882,9 +932,25 @@ services:
         condition: service_healthy
       monster-raid-service-cache:
         condition: service_healthy
+      # Its replicas: nothing else starts them.
+      monster-raid-service-cache-1:
+        condition: service_healthy
+      monster-raid-service-cache-2:
+        condition: service_healthy
+      # It finds its Redis master through the Sentinels (REDIS_SENTINELS).
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
+        condition: service_healthy
       service-discovery:
         condition: service_healthy
     environment:
+      # Its cache on the shared cache nodes (cache-1..3), each key on the node the
+      # consistent-hash ring picks. MONSTER_RAID_CACHE_NODES set empty in .env turns it off.
+      CACHE_NODES: ${MONSTER_RAID_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
       PORT: 8086
       DATABASE_URL: postgresql://${MONSTER_RAID_DB_USER}:${MONSTER_RAID_DB_PASSWORD}@monster-raid-service-db:5432/${MONSTER_RAID_DB_NAME:-monster_raid_db}
       REDIS_URL: redis://:${MONSTER_RAID_REDIS_PASSWORD}@monster-raid-service-cache:6379
@@ -1201,6 +1267,69 @@ services:
       replicas: ${PACKAGE_REGISTRY_REPLICAS:-3}
     restart: unless-stopped
 
+  # ------------------------------------------------ Python / data warehouse + ETL
+  # Lab 5 (#214): the ETL copies every service's data into the Data Warehouse,
+  # one star schema for analysis (see "Data Warehouse" and "ETL" in the README).
+  # The ETL owns the warehouse: it creates the schema at start-up. Nobody else
+  # writes to it.
+  data-warehouse:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DATA_WAREHOUSE_DB_NAME:-warehouse}
+      POSTGRES_USER: ${DATA_WAREHOUSE_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${DATA_WAREHOUSE_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - data-warehouse-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Published for analysis queries (psql, a BI tool) from this machine only.
+    ports:
+      - "127.0.0.1:${DATA_WAREHOUSE_PORT:-5440}:5432"
+    restart: unless-stopped
+
+  etl-service:
+    # :latest = the newest version released to main (moved by the repo's release
+    # workflow). Run `docker compose pull` to get a new release.
+    image: dackohn/etl-service:latest
+    # No depends_on on the sources: a source that is down is skipped (the run
+    # ends "partial", or "failed" when no source loaded) and the next run
+    # catches up.
+    depends_on:
+      data-warehouse:
+        condition: service_healthy
+      service-discovery:
+        condition: service_healthy
+    environment:
+      PORT: 8091
+      WAREHOUSE_URL: postgresql://${DATA_WAREHOUSE_DB_USER}:${DATA_WAREHOUSE_DB_PASSWORD}@data-warehouse:5432/${DATA_WAREHOUSE_DB_NAME:-warehouse}
+      # One URL per source, through its read-only role etl_reader and the
+      # address the service itself uses (pgpool after replication, so the ETL
+      # follows the primary). A source without a URL is skipped.
+      TAMAGOTCHI_ETL_DB_URL: postgresql://etl_reader:${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
+      ETL_INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-300}
+      ETL_OVERLAP_SECONDS: ${ETL_OVERLAP_SECONDS:-60}
+      # POST /runs and GET /runs/latest need the team's admin key (X-Admin-Key).
+      # Empty = both endpoints answer 503.
+      ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
+      # It registers with no topics: Prometheus finds its /metrics and /health
+      # there. Nothing calls it in the request path.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      LOG_LEVEL: ${ETL_LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    # One replica only, so a run happens exactly once.
+    ports:
+      - "${ETL_PORT:-8091}:8091"
+    restart: unless-stopped
+
   # ------------------------------------------------------------ Python / gateway
   # The single entry point: clients, and services calling each other, go
   # through it. It verifies user tokens against User Management's keys, strips
@@ -1383,6 +1512,10 @@ services:
       package-registry-service:
         condition: service_started
     environment:
+      # Its cache on the shared cache nodes (cache-1..3), each key on the node the
+      # consistent-hash ring picks. GATEWAY_CACHE_NODES set empty in .env turns it off.
+      CACHE_NODES: ${GATEWAY_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       AUTH_MODE: ${GATEWAY_AUTH_MODE:-gateway}
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
@@ -1537,6 +1670,7 @@ volumes:
   package-registry-service-db-0-data:
   package-registry-service-db-1-data:
   package-registry-service-db-2-data:
+  data-warehouse-data:
   prometheus-data:
   broker-data:
   loki-data:
