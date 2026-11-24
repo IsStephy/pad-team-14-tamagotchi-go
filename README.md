@@ -252,11 +252,13 @@ Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
 | | `POST /users/{userId}/enemies/{targetId}` | Player (self) |
 | | `GET /users/{userId}/relationship/{targetId}` | Player (self), or **Service** — Map, Battle, Guild |
 | | `POST /events` | **Message Broker** only (`X-Broker-Key`); not routed by the gateway |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Battle | `POST /battles/challenge` | Player (self — the challenger) |
 | | `POST /battles/{battleId}/accept` | Player (self — the challenged player) |
 | | `GET /battles/{battleId}` | Player |
 | | `POST /battles/{battleId}/action` | Player (self — a participant) |
 | | `WS /battles/{battleId}/live` | Player — gateway ticket |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Tamagotchi | `GET /types/advantages` | Public |
 | | `POST /tamagotchis` | Player (self — the owner) |
 | | `GET /tamagotchis/{id}` | Player, or **Service** — Monster Raid (ownership and attack power on raid joins), Battle (combat stats and equipped boosts) |
@@ -502,7 +504,39 @@ Success Response (200 OK):
 | `battle.ended` | pays `rewardCurrency` to `winnerId`, charges `loserCurrencyPenalty` to `loserId` (global currency) | `battle-ended:<battleId>:winner`, `battle-ended:<battleId>:loser` |
 | `raid.completed` | pays each `rewards[].currency` to its `userId` (global currency) | `raid:<raidId>:<userId>`, the key Monster Raid pays with directly |
 
-The keys are the ones Battle and Monster Raid use when they pay directly, so a payment made both ways counts once.
+The keys are the ones Battle and Monster Raid use when they pay directly, so a payment made both ways counts once. With the sagas on, the event a saga pays is no longer consumed (`SETTLEMENT_BY_SAGA=true` for `battle.ended`, `RAID_REWARDS_BY_SAGA=true` for `raid.completed`; both off by default), so nothing is paid twice.
+
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) one of User Management's money steps of a long-running saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string",
+  "saga": "string (enum: battle-settlement, raid-rewards)",
+  "step": "string (enum: charge-loser, pay-winner, pay-raid-rewards)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object (per step, below)"
+}
+```
+
+| `saga` / `step` | `payload` | `do` | `compensate` |
+|---|---|---|---|
+| `battle-settlement` / `charge-loser` | `{battleId, winnerId, loserId, rewardCurrency, loserCurrencyPenalty}` (the names `battle.ended` uses) | `-loserCurrencyPenalty` from `loserId` (global currency); a loser who can't cover it, or no longer exists, is **not charged** (`charged: 0`) and the saga goes on | gives back what was charged |
+| `battle-settlement` / `pay-winner` | as above | `+rewardCurrency` to `winnerId`; a winner who no longer exists: `409` | takes back what the winner **still holds**, never below zero; the rest is logged as a shortfall |
+| `raid-rewards` / `pay-raid-rewards` | `{raidId, rewards: [{userId, currency}]}` (other fields ignored) | each `+currency`; a player listed twice is paid the sum, a player who no longer exists is skipped | takes each reward back, as above |
+
+Success Response (200 OK):
+
+```json
+{
+  "result": "object (charge-loser: {userId, charged, skipped?}; pay-winner: {userId, paid}; pay-raid-rewards: {paid: [{userId, paid}], total, skipped?}; compensate: what was given or taken back)"
+}
+```
+
+- **Repeats change nothing:** every step is recorded (`saga_steps`, by `sagaId` + `step`) in the same transaction as its balance change, and a repeated `do` or `compensate` answers the first result.
+- **A `compensate` can come before its `do`:** the step is recorded as cancelled, and the late `do` answers `409` and changes nothing.
+- `409`: the step can't be done (the saga undoes the ones before it); `422`: a call this service can't make sense of; `503` + `Retry-After`: the database is failing over (the coordinator tries again).
 
 **gRPC** (`tamagotchigo.user.v1.UserManagement`, through the broker at `message-broker:50051`): `GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`, with the same rules and callers as the REST endpoints above, on each replica's `GRPC_PORT` (`50081`). See [gRPC between services](#grpc-between-services).
 
@@ -564,9 +598,12 @@ Success Response (200 OK):
   "state": "string",
   "currentTurn": "int",
   "healthP1": "int",
-  "healthP2": "int"
+  "healthP2": "int",
+  "settlement": "string (enum: settling, settled, settlement_failed; absent until the battle is finished)"
 }
 ```
+
+`settlement` is where a finished battle's money, XP and transfer stand: `settled` once they are applied, `settling` while the settlement saga runs, `settlement_failed` when a step failed and the saga undid the others (the outcome stands, its consequences were cancelled).
 
 > **Type advantage & package bonuses:** damage calculation resolves type advantage via Tamagotchi Service's `GET /types/advantages` (canonical source, see the Tamagotchi Service section — Battle Service must not hardcode its own copy of the advantage cycle) and package-specific stat bonuses via Package Registry's stat definitions. If a Tamagotchi has a stat with no matching definition in Package Registry (e.g. an incompletely-configured package), that stat contributes **zero bonus** rather than failing the battle.
 
@@ -649,6 +686,36 @@ Not client-facing — published on `battle.ended` when a battle ends, consumed b
 ```
 
 Each event's `messageId` is a UUIDv5 of the topic and its key (`battle-ended:<battleId>`, `battle-request:<battleId>`), so a republish is dropped as a duplicate.
+
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) Battle's steps of the `battle-settlement` saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). With `SETTLEMENT_BY_SAGA=true` (off by default), a battle that ends stores its outcome with `settlement: settling` and starts the saga `battle:<battleId>`; `battle.ended` is then published only once the saga has completed. See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string (battle:<battleId>)",
+  "saga": "string (enum: battle-settlement)",
+  "step": "string (enum: record-result, mark-settled)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object ({battleId, winnerId, loserId, rewardCurrency, loserCurrencyPenalty, rewardXp, loserXp, winnerPrimaryTamagotchiId, primaryXp, winnerSecondaryTamagotchiId, secondaryXp, transferredTamagotchiId}, plus results)"
+}
+```
+
+| `step` | `do` | `compensate` |
+|---|---|---|
+| `record-result` | checks the battle is finished and its settlement wasn't cancelled (`409` otherwise) | `settlement` → `settlement_failed` |
+| `mark-settled` | `settling` → `settled`, then publishes `battle.ended` (and `battle.tamagotchi_captured`) | `settlement` → `settlement_failed` |
+
+Success Response (200 OK):
+
+```json
+{
+  "result": "object ({battleId, settlement}; record-result also winnerId, loserId)"
+}
+```
+
+- **Repeats change nothing:** the battle's `settlement` is the step's memory; a repeated `do` answers the same and publishes the same `messageId`.
+- **A late `do` after a compensation** answers `409` and changes nothing, so a step the coordinator gave up on can't settle a battle whose consequences were undone. A `compensate` for a battle that doesn't exist does nothing.
 
 #### Tamagotchi Service (`tamagotchi-notification`, Go)
 
@@ -2119,36 +2186,43 @@ change is needed.
 
 #### Battle settlement: Battle, User Management, Tamagotchi
 
-Tamagotchi's steps are confirmed (Daniel). Battle's and User Management's are
-*Pavel to confirm*, together with updating #238 to these 6 steps.
+All steps are confirmed and implemented: Tamagotchi's (Daniel), Battle's and
+User Management's (Pavel, #238; payloads under each service's **Saga Steps**).
+The order below is the broker's `SAGAS` table today; running Tamagotchi's steps
+first (agreed on #247) is a change to that table only.
 
 | # | Service | Step | Compensation |
 |---|---|---|---|
-| 1 | Battle | Record the result, battle `settling` | Battle `settlement_failed` |
-| 2 | User Management | Charge `loserCurrencyPenalty` to the loser (can fail: not enough currency) | Refund it (opposite delta, key `battle-ended:<battleId>:loser:undo`) |
-| 3 | User Management | Pay `rewardCurrency` to the winner | Take it back (key `battle-ended:<battleId>:winner:undo`) |
+| 1 | Battle | `record-result`: the result is stored, battle `settling` | Battle `settlement_failed` |
+| 2 | User Management | `charge-loser`: `loserCurrencyPenalty` from the loser (key `saga:<sagaId>:charge-loser:<userId>`). A loser who can't cover it is **not charged** (`charged: 0`) and the saga goes on, as before the broker | Give back what was charged (key `...:undo`) |
+| 3 | User Management | `pay-winner`: `rewardCurrency` to the winner (key `saga:<sagaId>:pay-winner:<userId>`) | Take back what the winner still holds, never below zero; the rest is logged as a shortfall |
 | 4 | Tamagotchi | `add-xp` to the winner's primary Tamagotchi | Remove exactly that XP: this can lower the level, which is the correct undo |
 | 5 | Tamagotchi | `transfer-owner` of the captured Tamagotchi, if any | Transfer it back to the previous owner |
-| 6 | Battle | Battle `settled` | — (last step) |
+| 6 | Battle | `mark-settled`: battle `settled`, then `battle.ended` is published | Battle `settlement_failed` (it may have run) |
 
 **No double XP during the switch:** today Tamagotchi applies `battle.ended`
 itself, with Battle's keys. Tamagotchi's saga steps claim those same keys
 (`battle-ended:<battleId>:primary` / `:secondary` / `battle-ended:<battleId>`),
 so the event and the saga can't both make a change, whichever arrives first.
 Once Battle starts the saga, set `TAMAGOTCHI_APPLY_BATTLE_ENDED=false` in the
-same release, and Tamagotchi stops applying the event. Tamagotchi's step
+same release, and Tamagotchi stops applying the event. **The switch-over is
+one change in this repository's compose file:** `SETTLEMENT_BY_SAGA=true` for
+User Management and Battle (both off by default since their `v5.0.0`) and
+`TAMAGOTCHI_APPLY_BATTLE_ENDED=false`; setting them back undoes it. Tamagotchi's step
 payloads: [Saga Steps](#tamagotchi-service-tamagotchi-notification-go)
 (Tamagotchi Service).
 
 #### Raid rewards: Monster Raid, User Management, Tamagotchi
 
-Monster Raid's and Tamagotchi's steps are confirmed (Denis, Daniel). User
-Management's is *Pavel to confirm*.
+Monster Raid's and Tamagotchi's steps are confirmed (Denis, Daniel); User
+Management's `pay-raid-rewards` is implemented (Pavel, #238). User Management
+keeps paying from `raid.completed` until `RAID_REWARDS_BY_SAGA=true`, which goes
+on together with Monster Raid starting this saga.
 
 | # | Service | Step | Compensation |
 |---|---|---|---|
 | 1 | Monster Raid | Raid `completed`, rewards `paying` | Rewards `failed` |
-| 2 | User Management | Pay each `rewards[].currency` to its `userId` (key `raid:<raidId>:<userId>`) | Take each payment back (key `raid:<raidId>:<userId>:undo`) |
+| 2 | User Management | `pay-raid-rewards`: each `rewards[].currency` to its `userId` (a player listed twice is paid the sum; a player who no longer exists is skipped) | Take each payment back, never below zero |
 | 3 | Tamagotchi | XP to each participant's primary Tamagotchi. A participant without one is skipped and logged, rather than failing the saga and taking everyone's currency back. | Remove that XP |
 | 4 | Monster Raid | Rewards `paid` | — (last step) |
 

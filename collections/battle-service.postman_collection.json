@@ -74,6 +74,10 @@
     {
       "key": "liveUrl",
       "value": ""
+    },
+    {
+      "key": "cacheState",
+      "value": ""
     }
   ],
   "item": [
@@ -630,6 +634,56 @@
               "});",
               "pm.test(\"is the battle we created\", function () {",
               "    pm.expect(pm.response.json().battleId).to.eql(pm.collectionVariables.get(\"battleId\"));",
+              "});",
+              "const cache = pm.response.headers.get(\"X-Cache\");",
+              "pm.test(\"the first read comes from the database (X-Cache miss, or off without a cache)\", function () {",
+              "    pm.expect([\"miss\", \"off\"]).to.include(cache);",
+              "});",
+              "pm.collectionVariables.set(\"cacheState\", cache === \"off\" ? \"off\" : \"on\");"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get battle again (read from the cache)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}"
+          ]
+        },
+        "description": "Lab 5: GET /battles/{battleId} is read through the shared cache: the second read is a hit."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const cache = pm.response.headers.get(\"X-Cache\");",
+              "const want = pm.collectionVariables.get(\"cacheState\") === \"off\" ? \"off\" : \"hit\";",
+              "pm.test(\"the second read comes from the cache (X-Cache \" + want + \")\", function () {",
+              "    pm.expect(cache).to.eql(want);",
+              "});",
+              "pm.test(\"the same battle\", function () {",
+              "    pm.expect(pm.response.json().battleId).to.eql(pm.collectionVariables.get(\"battleId\"));",
               "});"
             ]
           }
@@ -734,6 +788,57 @@
               "    pm.expect(body).to.be.an(\"array\").that.is.not.empty;",
               "    const ids = body.map(function (b) { return b.battleId; });",
               "    pm.expect(ids).to.include(pm.collectionVariables.get(\"battleId\"));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List battles for a player again (read from the cache)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles?userId={{player1Id}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles"
+          ],
+          "query": [
+            {
+              "key": "userId",
+              "value": "{{player1Id}}"
+            }
+          ]
+        },
+        "description": "A page of GET /battles is cached under a generation every write bumps: with no write in between, the second read is a hit."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const cache = pm.response.headers.get(\"X-Cache\");",
+              "const want = pm.collectionVariables.get(\"cacheState\") === \"off\" ? \"off\" : \"hit\";",
+              "pm.test(\"the second page comes from the cache (X-Cache \" + want + \")\", function () {",
+              "    pm.expect(cache).to.eql(want);",
+              "});",
+              "pm.test(\"still includes the battle\", function () {",
+              "    pm.expect(pm.response.json().map(function (b) { return b.battleId; }))",
+              "        .to.include(pm.collectionVariables.get(\"battleId\"));",
               "});"
             ]
           }
@@ -1172,6 +1277,53 @@
               "        .to.eql(body.result.rewardXp);",
               "});",
               "pm.collectionVariables.set(\"rewardCurrency\", body.result.rewardCurrency);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Finished battle shows its settlement (read from the database)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}"
+          ]
+        },
+        "description": "The forfeit deleted the cached battle, so this read comes from the database. A finished battle has `settlement`: `settled` while the stack settles through battle.ended, `settling` / `settled` / `settlement_failed` once the settlement saga is on."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const cache = pm.response.headers.get(\"X-Cache\");",
+              "pm.test(\"the read after the forfeit comes from the database (X-Cache miss, or off without a cache)\", function () {",
+              "    pm.expect([\"miss\", \"off\"]).to.include(cache);",
+              "});",
+              "pm.collectionVariables.set(\"cacheState\", cache === \"off\" ? \"off\" : \"on\");",
+              "pm.test(\"finished, with a settlement\", function () {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.status).to.eql(\"finished\");",
+              "    pm.expect([\"settling\", \"settled\", \"settlement_failed\"]).to.include(body.settlement);",
+              "});"
             ]
           }
         }
