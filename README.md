@@ -299,6 +299,7 @@ Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
 | | `POST /raid-configs/{id}/activate` | Player + role: admin |
 | | `POST /raid-configs/{id}/deactivate` | Player + role: admin |
 | | `POST /raid-configs/{id}/cancel` | Player + role: admin |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Every service | `GET /health`, `/docs` | Public |
 
 ### Endpoints
@@ -1469,16 +1470,28 @@ Success Response (201 Created):
 
 **Activate Raid Config**
 
-`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration. This service authors and schedules the config, but does **not** own live raid execution — activating calls Monster Raid Service's `POST /raids` (see that service's section) to actually spin up the live raid and get back a `raidId`; this endpoint's response mirrors that result rather than fabricating its own. Previously this returned a `raidId` with no defined recipient, i.e. nothing ever actually created a live raid from it — that's now closed by Monster Raid Service's side. Monster Raid Service publishes `RaidStarted` once created, consumed by Notification Service.
+`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration. This service authors and schedules the config, but does **not** own live raid execution: Monster Raid Service creates the live raid and owns its `raidId`. **Since Lab 5 (#237) activation is the `raid-activation` saga** ([Raid activation](#raid-activation-package-registry-monster-raid)): Package Registry marks the config `activating` → Monster Raid `create-raid` → Package Registry marks it `active` with the `raidId`; a failed step undoes the finished ones and the config gets back the status it had. The saga is started with `POST /sagas?wait=5s` on the broker. Re-activating a config whose raid is still active returns that raid. Without a broker (a service's standalone stack) it calls Monster Raid's `POST /raids` directly.
 
-Success Response (200 OK):
+Success Response (200 OK), the saga finished within 5 s:
 
 ```json
 {
   "raidId": "string",
-  "status": "string (enum: active)"
+  "status": "string (enum: active)",
+  "sagaId": "string (uuid)"
 }
 ```
+
+Accepted (202), the saga is still running (follow it with the broker's `GET /sagas/{sagaId}`):
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "status": "string (enum: activating)"
+}
+```
+
+`409` when the config is already active, is being activated or was cancelled, or one of Package Registry's steps refused; `502` when Monster Raid's step failed and the saga was undone. Both carry `{error, sagaId, status}`, `status` being the config's status now.
 
 **Deactivate Raid Config**
 
@@ -1505,6 +1518,29 @@ Success Response (200 OK):
   "status": "string (enum: cancelled)"
 }
 ```
+
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) one of Package Registry's steps of the `raid-activation` saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string",
+  "saga": "string (enum: raid-activation)",
+  "step": "string (enum: mark-activating, activate)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object (the saga's payload, plus results by step name)"
+}
+```
+
+| `step` | `payload` | `do` | `compensate` |
+|---|---|---|---|
+| `mark-activating` | `{raidConfigId}` | remembers the config's status, sets `activating`; `409` if it is active, activating or cancelled | restores the remembered status, unless a person changed it meanwhile |
+| `activate` | `{raidConfigId, results: {"create-raid": {raidId}}}` | `active` with that `raidId`; `409` if the config isn't `activating` any more (e.g. cancelled meanwhile) | back to `activating` with the previous `raidId` |
+
+The saga's payload, which Monster Raid's `create-raid` reads too: `{raidConfigId, configId, guildId, monsterName, maxHp, duration, rewards, previousRaidId}` (the `CreateRaid` fields, plus the config's last raid for re-activation).
+
+Success Response (200 OK): `{"result": {...}}`: what the step did, e.g. `{raidConfigId, status: "activating", previousStatus: "draft"}`. Idempotent per `sagaId` + step: delivered again, it returns its first answer with `alreadyApplied: true`. A compensation that arrives before its step answers `200` and records the step as cancelled; the late step then answers `{skipped: true}`. `422` for a step Package Registry doesn't run.
 
 ## Lab 5 Decisions
 
@@ -1682,18 +1718,20 @@ Postgres + Patroni image, plus running etcd.
   `NOTIFICATION_EVENTS_REDIS_URL` Pub/Sub fallback: every event already goes
   through the broker.
 
-**Running now: Map, Monster Raid, Tamagotchi and Notification.**
+**Running now: Map, Monster Raid, Tamagotchi, Notification, Guild and Package Registry.**
 
 | Store | Containers | Services connect to |
 |---|---|---|
 | Monster Raid's Postgres | `monster-raid-service-db-0..2` (repmgr), `monster-raid-service-db` (pgpool) | `monster-raid-service-db:5432`, as before |
+| Guild's Postgres | `guild-service-db-0..2` (repmgr), `guild-service-db` (pgpool) | `guild-service-db:5432`, as before (host port `5437` in the machines override) |
+| Package Registry's Postgres | `package-registry-service-db-0..2` (repmgr), `package-registry-service-db` (pgpool) | `package-registry-service-db:5432`, as before (host port `5438`) |
 | Monster Raid's Redis | `monster-raid-service-cache`, `-1`, `-2` | the master `monster-raid-service-cache`, through the Sentinels |
 | Map's Redis | `map-service-db`, `-1`, `-2` | the master `map-service-db`, through the Sentinels |
 | Tamagotchi's Postgres | `tamagotchi-service-db-0..2` (repmgr), `tamagotchi-service-db` (pgpool) | `tamagotchi-service-db:5432`, as before |
 | Notification's Redis | `notification-service-db`, `-1`, `-2` (`172.29.14.31-.33`) | the master `notification-service-db`, through the Sentinels |
 | shared | `redis-sentinel-1..3` | `REDIS_SENTINELS=redis-sentinel-1:26379,...` |
 
-Two things that bite anyone adding a store:
+Three things that bite anyone adding a store:
 - **Sentinel watches the nodes by IP**, on the `redis-replication` network
   (`172.29.14.0/24`; the blocks in use are listed at the top of
   `docker-compose.yml`). Watched by name, a stopped container's name stops
@@ -1702,6 +1740,27 @@ Two things that bite anyone adding a store:
   migration that creates a role (`etl_reader`) fails unless an init script,
   run as `postgres` (`POSTGRESQL_INITSCRIPTS_USERNAME`), gives it `CREATEROLE`.
   Init scripts run only when a node's volume is empty.
+- **Restarting a repmgr node needs two fixes** (found while testing #220;
+  Guild's and Package Registry's nodes have both, through a small
+  `entrypoint` wrapper in `docker-compose.yml`; Monster Raid's since #264).
+  *Tamagotchi's nodes don't have them yet: Daniel, worth copying.*
+  - **A stale PID file.** repmgrd runs as PID 1 and keeps `/tmp/repmgrd.pid`,
+    which survives a container restart. After an unclean stop (e.g. Docker
+    restarting), the new entrypoint is PID 1 again, repmgrd thinks it is
+    already running, and the node restarts forever. Remove only that file
+    before the image's entrypoint. (Wiping all of `/tmp` is worse: the image
+    keeps state there, and an old primary then came back as a second
+    primary.)
+  - **A split brain right after a failover.** A node that was primary before
+    (`/bitnami/postgresql/lock/master.lock`) asks the others who is primary
+    now. Restarted within seconds of a failover, their metadata can still
+    name it too, the image can't decide, and starts it as a **second primary
+    with old data**. Waiting 30 s first lets the new primary mark it
+    inactive, and it rejoins as a replica.
+
+  Tested on a 3-node cluster: an old primary restarted right after a
+  failover, killing all 3 nodes after a failover, and a second failover the
+  other way. One primary every time, no row lost, no restart loop.
 
 Measured with a request every 250 ms: stopping Monster Raid's Postgres primary
 gave about 13 s of errors (`503` + `Retry-After`) before a replica was
@@ -1719,6 +1778,16 @@ pass afterwards.
 (`tamagotchi-service-db-{0,1,2}-data`); the old `tamagotchi-service-db-data` is no
 longer used. Notification's master keeps its volume and data. Copy the four new
 `TAMAGOTCHI_*_PASSWORD` settings from `.env.example`.
+
+Guild and Package Registry (#220) retry what is safe to retry instead of
+failing: a read, or getting a connection, is tried again until 1 s before the
+request's deadline; a write that was already sent is not repeated (it may
+have been saved) and answers `503` + `Retry-After: 2`. Measured with a read
+and a write to each service every 250 ms while **both** primaries were
+stopped at once: 230 rounds, Guild 0 errors, Package Registry 1 `503` (the
+write in flight, which was indeed not saved). Guild chat's `LISTEN`
+connection reconnected by itself about 10 s later. Details: each service's
+README, "Database failover (Lab 5)".
 
 To see it:
 
@@ -3447,7 +3516,7 @@ Conventions, so entries do not collide — please follow them:
 |---|---|---|
 | Service entry | the repo name | `guild-service` |
 | Database entry | `<service>-db` | `guild-service-db` |
-| Volume | `<service>-db-data` | `guild-service-db-data` |
+| Volume | `<service>-db-data` (replicated: `<service>-db-0..2-data`) | `battle-service-db-data` |
 | Env prefix | `<SERVICE>_` | `GUILD_DB_PASSWORD` |
 | Image | your published image, pinned to a version tag | `you/guild-service:v1.0.0` |
 
@@ -3581,7 +3650,6 @@ DB_USER=guild_user
 DB_PASSWORD=<the main machine's GUILD_DB_PASSWORD>
 GATEWAY_KEY=<the main machine's>
 USER_MANAGEMENT_URL=http://192.168.1.10:8080
-NOTIFICATION_EVENTS_REDIS_URL=redis://:<NOTIFICATION_REDIS_PASSWORD>@192.168.1.10:6374/0
 ```
 
 Map (an excerpt: the rest is in Map's README):
@@ -3690,7 +3758,7 @@ npx newman run collections/notification-service.postman_collection.json --env-va
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY> --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
-npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY>
+npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/gateway.postman_collection.json --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID> --env-var adminKey=<BROKER_ADMIN_KEY>
 ```
 
