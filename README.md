@@ -3278,7 +3278,8 @@ and how to add a source.
   Prometheus scrapes its `/metrics` and probes its `/health`.
 - **Sources:** each one through its read-only role `etl_reader` and the address
   the service itself uses (pgpool after replication, so the ETL follows the
-  primary). Wired today: **Tamagotchi** (`TAMAGOTCHI_ETL_DB_URL`). A source
+  primary). Wired today: **Tamagotchi** (`TAMAGOTCHI_ETL_DB_URL`), **Guild**
+  (`GUILD_ETL_DB_URL`) and **Package Registry** (`PACKAGE_REGISTRY_ETL_DB_URL`). A source
   that is down is skipped (the run ends `partial`, or `failed` when no source
   loaded), and the next run catches up.
 
@@ -3303,6 +3304,21 @@ Query the warehouse (psql inside the container, or any client on
 docker compose exec data-warehouse psql -U <DATA_WAREHOUSE_DB_USER> warehouse \
   -c "SELECT owner_id, count(*) AS tamagotchis, max(level) AS best_level
       FROM dim_tamagotchi GROUP BY owner_id ORDER BY tamagotchis DESC LIMIT 10"
+```
+
+Guild and Package Registry (#215) fill `dim_guild`, `guild_membership`,
+`dim_package`, `dim_raid_config`, `package_moderator` and
+`package_registration`, e.g. the biggest guilds and how often each guild's
+raid configs went live:
+
+```sql
+SELECT g.name, count(m.user_id) AS members
+FROM dim_guild g JOIN guild_membership m USING (guild_id)
+GROUP BY g.name ORDER BY members DESC LIMIT 10;
+
+SELECT g.name, rc.status, count(*) AS raid_configs
+FROM dim_raid_config rc LEFT JOIN dim_guild g USING (guild_id)
+GROUP BY g.name, rc.status ORDER BY g.name;
 ```
 
 **Adding your service as a source:** give your database an `etl_reader` role
