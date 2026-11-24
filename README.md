@@ -1682,10 +1682,13 @@ Postgres + Patroni image, plus running etcd.
   `NOTIFICATION_EVENTS_REDIS_URL` Pub/Sub fallback: every event already goes
   through the broker.
 
-**Running now: Map, Monster Raid, Tamagotchi and Notification.**
+**Running now: User Management, Battle, Map, Monster Raid, Tamagotchi and Notification.**
 
 | Store | Containers | Services connect to |
 |---|---|---|
+| User Management's Postgres | `user-management-service-db-0..2` (repmgr), `user-management-service-db` (pgpool) | `user-management-service-db:5432`, as before |
+| Battle's Postgres | `battle-service-db-0..2` (repmgr), `battle-service-db` (pgpool) | `battle-service-db:5432`, as before |
+| Battle's Redis | `battle-service-cache`, `-1`, `-2` (`172.29.14.41-.43`) | the master `battle-service-cache`, through the Sentinels |
 | Monster Raid's Postgres | `monster-raid-service-db-0..2` (repmgr), `monster-raid-service-db` (pgpool) | `monster-raid-service-db:5432`, as before |
 | Monster Raid's Redis | `monster-raid-service-cache`, `-1`, `-2` | the master `monster-raid-service-cache`, through the Sentinels |
 | Map's Redis | `map-service-db`, `-1`, `-2` | the master `map-service-db`, through the Sentinels |
@@ -1715,10 +1718,23 @@ promoted primary and the other replica; stopping Notification's Redis master
 cost 1 request of 248 while the Sentinels moved the master. Both collections
 pass afterwards.
 
-**Heads-up:** Tamagotchi's Postgres starts empty, on new volumes
-(`tamagotchi-service-db-{0,1,2}-data`); the old `tamagotchi-service-db-data` is no
-longer used. Notification's master keeps its volume and data. Copy the four new
-`TAMAGOTCHI_*_PASSWORD` settings from `.env.example`.
+User Management and Battle (with the Lab 5 release, which answers `503` +
+`Retry-After: 2` while their database fails over): with a write and a read every 250 ms against User
+Management, stopping its Postgres primary gave **1** failed request of 201
+(`503` + `Retry-After: 2`, the one keyless write in flight, which is deliberately
+not repeated) and **no failed read**: reads and idempotency-keyed adjustments
+are repeated for up to 4 s, so a failover costs no `500`. With the previous
+release the same test gave six `500`s. All 200 acknowledged writes were on the
+promoted primary and the other replica. Battle served 210 list-and-get pairs
+through the same failover with no failed request. Stopping Battle's Redis master:
+the Sentinels promoted a replica after 8 s and Battle, which follows the master
+through them, was listening for live updates again 3 s later.
+
+**Heads-up:** Tamagotchi's, User Management's and Battle's Postgres start empty,
+on new volumes (`<service>-db-{0,1,2}-data`); the old `<service>-db-data` is no
+longer used, so a local user or battle starts over. Notification's master and
+Battle's Redis keep their volumes and data. Copy the new `TAMAGOTCHI_*`,
+`USER_MANAGEMENT_*` and `BATTLE_*` password settings from `.env.example`.
 
 To see it:
 
