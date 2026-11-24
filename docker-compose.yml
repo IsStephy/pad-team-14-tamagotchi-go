@@ -599,6 +599,18 @@ services:
     depends_on:
       map-service-db:
         condition: service_healthy
+      # Its replicas: nothing else starts them.
+      map-service-db-1:
+        condition: service_healthy
+      map-service-db-2:
+        condition: service_healthy
+      # It finds its Redis master through the Sentinels (REDIS_SENTINELS).
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
+        condition: service_healthy
       service-discovery:
         condition: service_healthy
     environment:
@@ -694,13 +706,22 @@ services:
       PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
       PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
       PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up monster-raid-service` never
+    # starts them, and pgpool started before them marks them down.
     depends_on:
       monster-raid-service-db-0:
         condition: service_healthy
+      monster-raid-service-db-1:
+        condition: service_healthy
+      monster-raid-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
       test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 15s
       retries: 30
     restart: unless-stopped
 
@@ -770,6 +791,18 @@ services:
       monster-raid-service-db:
         condition: service_healthy
       monster-raid-service-cache:
+        condition: service_healthy
+      # Its replicas: nothing else starts them.
+      monster-raid-service-cache-1:
+        condition: service_healthy
+      monster-raid-service-cache-2:
+        condition: service_healthy
+      # It finds its Redis master through the Sentinels (REDIS_SENTINELS).
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
         condition: service_healthy
       service-discovery:
         condition: service_healthy
