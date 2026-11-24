@@ -374,7 +374,7 @@ Success Response (200 OK):
 
 **Get Player**
 
-`GET` `/users/{userId}` — Description: Retrieves a player's profile.
+`GET` `/users/{userId}` — Description: Retrieves a player's profile. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -453,7 +453,7 @@ Success Response (200 OK):
 
 **Get Relationship**
 
-`GET` `/users/{userId}/relationship/{targetId}` — Description: Returns the relationship between two players.
+`GET` `/users/{userId}/relationship/{targetId}` — Description: Returns the relationship between two players. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -554,7 +554,7 @@ Success Response (200 OK):
 
 **Get Battle**
 
-`GET` `/battles/{battleId}` — Description: Retrieves the current state of a battle.
+`GET` `/battles/{battleId}` — Description: Retrieves the current state of a battle. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1618,7 +1618,9 @@ prefix keeps the services apart.
 | Tamagotchi | `GET /tamagotchis/{id}` (120 s) and `GET /users/{userId}/tamagotchis` (60 s), REST and gRPC; Package Registry's `GET /packages/{packageId}` (its stat keys, 30 s) |
 | Notification | nothing: its data already lives in Redis, so a cache in front of it would add a hop and gain nothing |
 | Gateway | verified tokens (#228, #234) |
-| User Management, Battle, Map, Monster Raid | *owners to add* |
+| User Management | `GetUser` (`user-management-service:user:<userId>`, without the password hash) and `GetRelationship` (`...:relationship:<userId>:<targetId>`), REST and gRPC, 60 s; never balances (#226, #232) |
+| Battle | `GET /battles/{battleId}` (60 s) and the pages of `GET /battles` (60 s, under a generation every write bumps); turns, accepts and settlement steps read the database (#226, #232) |
+| Map, Monster Raid | *owners to add* |
 
 **Settings** (in each service's `.env.example`, placeholders only):
 `CACHE_NODES=cache-1:6379,cache-2:6379,cache-3:6379`, `CACHE_PASSWORD`, and
