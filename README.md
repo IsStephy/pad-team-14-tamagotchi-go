@@ -691,7 +691,7 @@ Success Response (201 Created):
 
 **Get Tamagotchi**
 
-`GET` `/tamagotchis/{id}` — Description: Retrieves a Tamagotchi's details.
+`GET` `/tamagotchis/{id}` — Description: Retrieves a Tamagotchi's details. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -708,7 +708,7 @@ Success Response (200 OK):
 
 **List Player's Tamagotchis**
 
-`GET` `/users/{userId}/tamagotchis` — Description: Lists all Tamagotchis owned by a player.
+`GET` `/users/{userId}/tamagotchis` — Description: Lists all Tamagotchis owned by a player. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1579,7 +1579,7 @@ prefix keeps the services apart.
 |---|---|
 | Guild | `GET /guilds/{guildId}`, `GET /users/{userId}/guilds`, User Management `GetUser` / `GetRelationship` |
 | Package Registry | `GET /packages`, `GET /packages/{packageId}`, User Management `GetUser` |
-| Tamagotchi | its `GET`s, and Package Registry's `GET /packages/{packageId}` |
+| Tamagotchi | `GET /tamagotchis/{id}` (120 s) and `GET /users/{userId}/tamagotchis` (60 s), REST and gRPC; Package Registry's `GET /packages/{packageId}` (its stat keys, 30 s) |
 | Notification | nothing: its data already lives in Redis, so a cache in front of it would add a hop and gain nothing |
 | Gateway | verified tokens (#228, #234) |
 | User Management, Battle, Map, Monster Raid | *owners to add* |
@@ -2443,6 +2443,14 @@ each replica deregisters first, then lets its requests in progress finish.
   [gRPC between services](#grpc-between-services)). With
   `TAMAGOTCHI_GRPC_DEPENDENCIES=package-registry-service` it also reads the stat
   definitions over gRPC, once Package Registry serves gRPC.
+- **Cache** (Lab 5): a Tamagotchi, an owner's list and a Package Registry package are
+  read through `cache-1..3`, each key on the node the shared hash ring picks
+  (`tamagotchi-service:tamagotchi:<id>`, `tamagotchi-service:owner-tamagotchis:<ownerId>`,
+  `tamagotchi-service:package:<packageId>`). Every write (REST, gRPC, `battle.ended`, saga
+  steps) deletes what it changed after its commit. A node that is down only turns its
+  own keys into database reads: no request fails, `cache unavailable` is logged once.
+  `TAMAGOTCHI_CACHE_NODES` set empty in `.env` turns it off; the details are in the
+  service's README ("Cache").
 
 ```bash
 docker compose up -d tamagotchi-service
@@ -2456,6 +2464,10 @@ curl -s localhost:8089/services/tamagotchi-service -H "X-Discovery-Key: <DISCOVE
 
 # battle.ended lists tamagotchi-service as a subscriber (BROKER_KEY is in .env):
 curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
+
+# The cache: the second read is a hit, and where each key lives.
+curl -si http://localhost:8080/tamagotchis/<tamagotchi id> -H "Authorization: Bearer <token>" | grep X-Cache
+for n in cache-1 cache-2 cache-3; do docker compose exec $n valkey-cli -a "<CACHE_PASSWORD>" --no-auth-warning --scan --pattern 'tamagotchi-service:*'; done
 
 # A gRPC call through the broker, as Battle (grpcurl, from tamagotchi-service/):
 grpcurl -plaintext -import-path proto -proto tamagotchigo/tamagotchi/v1/tamagotchi.proto \
