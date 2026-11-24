@@ -1,0 +1,17 @@
+{
+  "name": "hash-ring",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Consistent-hash ring with virtual nodes, shared by every service that shards its cache (Lab 5).",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test dist/test/",
+    "vectors": "tsc && node dist/src/generateVectors.js",
+    "stats": "tsc && node dist/src/stats.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  }
+}
