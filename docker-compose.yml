@@ -217,8 +217,9 @@ x-package-registry-db: &package-registry-db
     - --
   command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
 
-# User Management's and Battle's Postgres (#221): the same setup. Both services create the etl_reader role at start-up,
-# so their init script gives the app user CREATEROLE.
+# User Management's and Battle's Postgres (#221): the same setup, with the
+# same restart wrapper. Both services create the etl_reader role at
+# start-up, so their init script gives the app user CREATEROLE.
 x-user-management-db: &user-management-db
   image: bitnamilegacy/postgresql-repmgr:16
   environment: &user-management-db-env
@@ -246,6 +247,31 @@ x-user-management-db: &user-management-db
     timeout: 5s
     retries: 30
   restart: unless-stopped
+  # Two fixes before the image's own entrypoint (found by restarting a
+  # cluster after a failover and after an unclean stop):
+  # - repmgrd runs as PID 1 and writes its PID file to /tmp, which survives a
+  #   container restart. After an unclean stop the new entrypoint is PID 1
+  #   again, repmgrd takes the stale file for a live repmgrd and refuses to
+  #   start, so the node restarted forever. Only that file is removed: the
+  #   image keeps state it needs elsewhere in /tmp.
+  # - A node that was the primary before it stopped (master.lock) asks the
+  #   others who is primary now. Right after a failover their metadata can
+  #   still name it too; the image then can't decide, and starts it as a
+  #   SECOND primary with old data (split brain). Waiting 30 s first lets the
+  #   new primary's repmgrd mark the old one inactive, so it rejoins as a
+  #   replica.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
 
 x-battle-db: &battle-db
   image: bitnamilegacy/postgresql-repmgr:16
@@ -274,6 +300,31 @@ x-battle-db: &battle-db
     timeout: 5s
     retries: 30
   restart: unless-stopped
+  # Two fixes before the image's own entrypoint (found by restarting a
+  # cluster after a failover and after an unclean stop):
+  # - repmgrd runs as PID 1 and writes its PID file to /tmp, which survives a
+  #   container restart. After an unclean stop the new entrypoint is PID 1
+  #   again, repmgrd takes the stale file for a live repmgrd and refuses to
+  #   start, so the node restarted forever. Only that file is removed: the
+  #   image keeps state it needs elsewhere in /tmp.
+  # - A node that was the primary before it stopped (master.lock) asks the
+  #   others who is primary now. Right after a failover their metadata can
+  #   still name it too; the image then can't decide, and starts it as a
+  #   SECOND primary with old data (split brain). Waiting 30 s first lets the
+  #   new primary's repmgrd mark the old one inactive, so it rejoins as a
+  #   replica.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
 
 x-redis-node: &redis-node
   image: redis:7-alpine
