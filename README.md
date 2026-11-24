@@ -2410,7 +2410,7 @@ Claim a free one when you wire up your service and add it here.
 | Grafana | `3000` |
 | Prometheus | `9090` |
 | Loki | `3100` (not published: Grafana reads it inside the stack) |
-| Data Warehouse (`data-warehouse`, Lab 5) | `5440` |
+| Data Warehouse (`data-warehouse`, Lab 5; `127.0.0.1` only) | `5440` |
 | Cache nodes (`cache-1`, `cache-2`, `cache-3`, Lab 5) | `6381`, `6382`, `6383` |
 | ETL (`etl-service`, Lab 5) | `8091` |
 
@@ -3260,6 +3260,56 @@ Filters: `service`, `level`, `requestId`, `since`, `until` and `limit` (at most
 24 h and 5,000 lines per download). Tokens are redacted. It answers `401`
 without the key and `503` when Loki is down.
 
+### Data Warehouse and ETL
+
+**What it does:** the ETL copies every service's data into the Data Warehouse,
+one star schema for analysis (Lab 5, #214; the design is in "Data Warehouse"
+and "ETL" under [Lab 5 Decisions](#lab-5-decisions)). Python 3.13 + FastAPI,
+in [`Dackohn/etl-service`](https://github.com/Dackohn/etl-service) (the
+`etl-service` submodule); its README lists the sources, the warehouse tables
+and how to add a source.
+
+**In the shared stack:**
+- `data-warehouse`: PostgreSQL 16, published on `127.0.0.1:5440` only, its own
+  volume. The ETL creates its schema at start-up; nobody else writes to it.
+- `etl-service`: `dackohn/etl-service:latest` on port `8091`, **one replica**.
+  It runs once at start-up, every `ETL_INTERVAL_SECONDS` (default `300`) and
+  on `POST /runs`. It registers with Service Discovery (no topics), so
+  Prometheus scrapes its `/metrics` and probes its `/health`.
+- **Sources:** each one through its read-only role `etl_reader` and the address
+  the service itself uses (pgpool after replication, so the ETL follows the
+  primary). Wired today: **Tamagotchi** (`TAMAGOTCHI_ETL_DB_URL`). A source
+  that is down is skipped (the run ends `partial`, or `failed` when no source
+  loaded), and the next run catches up.
+
+Set `DATA_WAREHOUSE_DB_USER`, `DATA_WAREHOUSE_DB_PASSWORD` and every
+`<SERVICE>_ETL_DB_PASSWORD` in `.env`. `POST /runs` and `GET /runs/latest`
+need `BROKER_ADMIN_KEY` as `X-Admin-Key` (`401` without it).
+
+```bash
+docker compose up -d etl-service
+curl http://localhost:8091/health
+curl -X POST http://localhost:8091/runs -H "X-Admin-Key: <BROKER_ADMIN_KEY>"
+# {"runId":"…","status":"started"}    (409 with the running run's id while one is going)
+curl http://localhost:8091/runs/latest -H "X-Admin-Key: <BROKER_ADMIN_KEY>"
+# {"runId":"…","trigger":"manual","status":"ok","tables":{"dim_tamagotchi":
+#   {"source":"tamagotchi","status":"ok","read":12,"written":12,"skipped":0}},"errors":[],…}
+```
+
+Query the warehouse (psql inside the container, or any client on
+`localhost:5440`):
+
+```bash
+docker compose exec data-warehouse psql -U <DATA_WAREHOUSE_DB_USER> warehouse \
+  -c "SELECT owner_id, count(*) AS tamagotchis, max(level) AS best_level
+      FROM dim_tamagotchi GROUP BY owner_id ORDER BY tamagotchis DESC LIMIT 10"
+```
+
+**Adding your service as a source:** give your database an `etl_reader` role
+(see "ETL read-only access and `updated_at`"), add a module in the ETL's
+`app/sources/` (its README shows how), and add your
+`<SERVICE>_ETL_DB_URL` to the `etl-service` block of `docker-compose.yml`.
+
 ## Running the Whole System
 
 [`docker-compose.yml`](docker-compose.yml) in this repository runs every
@@ -3722,6 +3772,7 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 | Guild | [`isstephy1/guild-service:latest`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
 | Package Registry | [`isstephy1/package-registry-service:latest`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
 | Gateway | [`isstephy1/gateway:latest`](https://hub.docker.com/r/isstephy1/gateway) | — | `8080` |
+| ETL | [`dackohn/etl-service:latest`](https://hub.docker.com/r/dackohn/etl-service) | PostgreSQL 16 (the Data Warehouse) | `8091` |
 
 ### Image tags
 
