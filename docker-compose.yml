@@ -1304,6 +1304,8 @@ services:
       # One URL per source, through its read-only role etl_reader and the
       # address the service itself uses (pgpool after replication, so the ETL
       # follows the primary). A source without a URL is skipped.
+      USER_MANAGEMENT_ETL_DB_URL: postgresql://etl_reader:${USER_MANAGEMENT_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@user-management-service-db:5432/${USER_MANAGEMENT_DB_NAME:-user_management_db}
+      BATTLE_ETL_DB_URL: postgresql://etl_reader:${BATTLE_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@battle-service-db:5432/${BATTLE_DB_NAME:-battle_db}
       TAMAGOTCHI_ETL_DB_URL: postgresql://etl_reader:${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
       ETL_INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-300}
       ETL_OVERLAP_SECONDS: ${ETL_OVERLAP_SECONDS:-60}

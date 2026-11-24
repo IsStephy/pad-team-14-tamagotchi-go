@@ -3294,7 +3294,11 @@ and how to add a source.
   Prometheus scrapes its `/metrics` and probes its `/health`.
 - **Sources:** each one through its read-only role `etl_reader` and the address
   the service itself uses (pgpool after replication, so the ETL follows the
-  primary). Wired today: **Tamagotchi** (`TAMAGOTCHI_ETL_DB_URL`). A source
+  primary). Wired today: **Tamagotchi** (`TAMAGOTCHI_ETL_DB_URL`), **User
+  Management** (`USER_MANAGEMENT_ETL_DB_URL`: `dim_user` with the balance,
+  `fact_currency_change`, `relationship`) and **Battle** (`BATTLE_ETL_DB_URL`:
+  `fact_battle`). Neither reads a password hash, an email or a battle's turn
+  log: their `etl_reader` role is granted named columns only. A source
   that is down is skipped (the run ends `partial`, or `failed` when no source
   loaded), and the next run catches up.
 
