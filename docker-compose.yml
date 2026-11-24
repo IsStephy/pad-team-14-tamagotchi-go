@@ -1599,6 +1599,10 @@ services:
       # start-up from the same <SERVICE>_ETL_DB_PASSWORD.
       GUILD_ETL_DB_URL: postgresql://etl_reader:${GUILD_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@guild-service-db:5432/${GUILD_DB_NAME:-guild_db}
       PACKAGE_REGISTRY_ETL_DB_URL: postgresql://etl_reader:${PACKAGE_REGISTRY_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@package-registry-service-db:5432/${PACKAGE_REGISTRY_DB_NAME:-package_registry_db}
+      # Monster Raid: raids and raid_participants from monster_raid_db, through
+      # the etl_reader role its migrations create (password from
+      # MONSTER_RAID_ETL_DB_PASSWORD, the same one its pgpool lets in).
+      MONSTER_RAID_ETL_DB_URL: postgresql://etl_reader:${MONSTER_RAID_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@monster-raid-service-db:5432/${MONSTER_RAID_DB_NAME:-monster_raid_db}
       ETL_INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-300}
       ETL_OVERLAP_SECONDS: ${ETL_OVERLAP_SECONDS:-60}
       # POST /runs and GET /runs/latest need the team's admin key (X-Admin-Key).
