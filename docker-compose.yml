@@ -1042,6 +1042,11 @@ services:
       # address the service itself uses (pgpool after replication, so the ETL
       # follows the primary). A source without a URL is skipped.
       TAMAGOTCHI_ETL_DB_URL: postgresql://etl_reader:${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
+      # Guild and Package Registry (#215): the guild_db and package_registry_db
+      # through their etl_reader roles, which each service gives its password at
+      # start-up from the same <SERVICE>_ETL_DB_PASSWORD.
+      GUILD_ETL_DB_URL: postgresql://etl_reader:${GUILD_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@guild-service-db:5432/${GUILD_DB_NAME:-guild_db}
+      PACKAGE_REGISTRY_ETL_DB_URL: postgresql://etl_reader:${PACKAGE_REGISTRY_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@package-registry-service-db:5432/${PACKAGE_REGISTRY_DB_NAME:-package_registry_db}
       ETL_INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-300}
       ETL_OVERLAP_SECONDS: ${ETL_OVERLAP_SECONDS:-60}
       # POST /runs and GET /runs/latest need the team's admin key (X-Admin-Key).
