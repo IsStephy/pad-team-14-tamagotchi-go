@@ -974,6 +974,69 @@ services:
       replicas: ${PACKAGE_REGISTRY_REPLICAS:-3}
     restart: unless-stopped
 
+  # ------------------------------------------------ Python / data warehouse + ETL
+  # Lab 5 (#214): the ETL copies every service's data into the Data Warehouse,
+  # one star schema for analysis (see "Data Warehouse" and "ETL" in the README).
+  # The ETL owns the warehouse: it creates the schema at start-up. Nobody else
+  # writes to it.
+  data-warehouse:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DATA_WAREHOUSE_DB_NAME:-warehouse}
+      POSTGRES_USER: ${DATA_WAREHOUSE_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${DATA_WAREHOUSE_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - data-warehouse-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Published for analysis queries (psql, a BI tool) from this machine only.
+    ports:
+      - "127.0.0.1:${DATA_WAREHOUSE_PORT:-5440}:5432"
+    restart: unless-stopped
+
+  etl-service:
+    # :latest = the newest version released to main (moved by the repo's release
+    # workflow). Run `docker compose pull` to get a new release.
+    image: dackohn/etl-service:latest
+    # No depends_on on the sources: a source that is down is skipped (the run
+    # ends "partial", or "failed" when no source loaded) and the next run
+    # catches up.
+    depends_on:
+      data-warehouse:
+        condition: service_healthy
+      service-discovery:
+        condition: service_healthy
+    environment:
+      PORT: 8091
+      WAREHOUSE_URL: postgresql://${DATA_WAREHOUSE_DB_USER}:${DATA_WAREHOUSE_DB_PASSWORD}@data-warehouse:5432/${DATA_WAREHOUSE_DB_NAME:-warehouse}
+      # One URL per source, through its read-only role etl_reader and the
+      # address the service itself uses (pgpool after replication, so the ETL
+      # follows the primary). A source without a URL is skipped.
+      TAMAGOTCHI_ETL_DB_URL: postgresql://etl_reader:${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
+      ETL_INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-300}
+      ETL_OVERLAP_SECONDS: ${ETL_OVERLAP_SECONDS:-60}
+      # POST /runs and GET /runs/latest need the team's admin key (X-Admin-Key).
+      # Empty = both endpoints answer 503.
+      ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
+      # It registers with no topics: Prometheus finds its /metrics and /health
+      # there. Nothing calls it in the request path.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      LOG_LEVEL: ${ETL_LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    # One replica only, so a run happens exactly once.
+    ports:
+      - "${ETL_PORT:-8091}:8091"
+    restart: unless-stopped
+
   # ------------------------------------------------------------ Python / gateway
   # The single entry point: clients, and services calling each other, go
   # through it. It verifies user tokens against User Management's keys, strips
@@ -1254,6 +1317,7 @@ volumes:
   monster-raid-service-cache-2-data:
   guild-service-db-data:
   package-registry-service-db-data:
+  data-warehouse-data:
   prometheus-data:
   broker-data:
   loki-data:
