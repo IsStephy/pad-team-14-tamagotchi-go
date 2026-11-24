@@ -1682,13 +1682,15 @@ Postgres + Patroni image, plus running etcd.
   `NOTIFICATION_EVENTS_REDIS_URL` Pub/Sub fallback: every event already goes
   through the broker.
 
-**Running now: Map and Monster Raid.**
+**Running now: Map, Monster Raid, Tamagotchi and Notification.**
 
 | Store | Containers | Services connect to |
 |---|---|---|
 | Monster Raid's Postgres | `monster-raid-service-db-0..2` (repmgr), `monster-raid-service-db` (pgpool) | `monster-raid-service-db:5432`, as before |
 | Monster Raid's Redis | `monster-raid-service-cache`, `-1`, `-2` | the master `monster-raid-service-cache`, through the Sentinels |
 | Map's Redis | `map-service-db`, `-1`, `-2` | the master `map-service-db`, through the Sentinels |
+| Tamagotchi's Postgres | `tamagotchi-service-db-0..2` (repmgr), `tamagotchi-service-db` (pgpool) | `tamagotchi-service-db:5432`, as before |
+| Notification's Redis | `notification-service-db`, `-1`, `-2` (`172.29.14.31-.33`) | the master `notification-service-db`, through the Sentinels |
 | shared | `redis-sentinel-1..3` | `REDIS_SENTINELS=redis-sentinel-1:26379,...` |
 
 Two things that bite anyone adding a store:
@@ -1705,6 +1707,18 @@ Measured with a request every 250 ms: stopping Monster Raid's Postgres primary
 gave about 13 s of errors (`503` + `Retry-After`) before a replica was
 promoted; stopping a Redis master about 10 s. A stopped primary or master that
 starts again rejoins as a replica.
+
+Tamagotchi and Notification, the same way on the whole stack (a write and a read
+every 250 ms to each): stopping Tamagotchi's Postgres primary gave about 9 s of
+`503` + `Retry-After: 2` and no `500`, and every acknowledged write was on the
+promoted primary and the other replica; stopping Notification's Redis master
+cost 1 request of 248 while the Sentinels moved the master. Both collections
+pass afterwards.
+
+**Heads-up:** Tamagotchi's Postgres starts empty, on new volumes
+(`tamagotchi-service-db-{0,1,2}-data`); the old `tamagotchi-service-db-data` is no
+longer used. Notification's master keeps its volume and data. Copy the four new
+`TAMAGOTCHI_*_PASSWORD` settings from `.env.example`.
 
 To see it:
 
