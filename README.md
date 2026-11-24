@@ -1706,8 +1706,8 @@ Three things that bite anyone adding a store:
   Init scripts run only when a node's volume is empty.
 - **Restarting a repmgr node needs two fixes** (found while testing #220;
   Guild's and Package Registry's nodes have both, through a small
-  `entrypoint` wrapper in `docker-compose.yml`). *Monster Raid's and
-  Tamagotchi's nodes have neither yet: Denis, Daniel, worth copying.*
+  `entrypoint` wrapper in `docker-compose.yml`; Monster Raid's since #264).
+  *Tamagotchi's nodes don't have them yet: Daniel, worth copying.*
   - **A stale PID file.** repmgrd runs as PID 1 and keeps `/tmp/repmgrd.pid`,
     which survives a container restart. After an unclean stop (e.g. Docker
     restarting), the new entrypoint is PID 1 again, repmgrd thinks it is
