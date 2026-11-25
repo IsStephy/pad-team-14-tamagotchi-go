@@ -2673,6 +2673,12 @@ There is no way around the gateway or the broker from outside the stack any more
 (no host port); the service's README shows calls with the gateway's or the
 broker's headers for a local `go run`.
 
+**API docs:** every replica serves `GET /docs` (Swagger UI) and `GET /openapi.yaml`
+(OpenAPI 3.0, every endpoint and DTO) without a key, like `/health`. In the stack:
+`docker compose exec tamagotchi-service wget -qO- localhost:8083/openapi.yaml`;
+on its own (the service's compose) the interactive docs are at
+<http://localhost:8080/docs>.
+
 **Gateway routes:** `/tamagotchis/**`, `/types/**` and
 `/users/{userId}/tamagotchis/**` → Tamagotchi (the gateway matches the last one
 before User Management's `/users/**`). `GET /types/advantages` needs no token.
@@ -2727,9 +2733,15 @@ docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD
 ```
 
 **In the shared stack** it's reached only through the gateway: every endpoint
-except `GET /health` needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
+except `GET /health` and the API docs needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
 player can only register their own device and read their own notifications.
 There is no way around the gateway from outside the stack (no host port).
+
+**API docs:** every replica serves `GET /docs` (Swagger UI) and `GET /openapi.yaml`
+(OpenAPI 3.0, every endpoint and DTO) without a key, like `/health`. In the stack:
+`docker compose exec notification-service wget -qO- localhost:8084/openapi.yaml`;
+on its own (the service's compose) the interactive docs are at
+<http://localhost:8080/docs>.
 
 **Gateway routes:** `/notifications/**` → Notification. No WebSocket endpoints
 and no outgoing calls; events arrive from the Message Broker at `POST /events`
