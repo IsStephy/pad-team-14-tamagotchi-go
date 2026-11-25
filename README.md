@@ -2215,9 +2215,14 @@ payloads: [Saga Steps](#tamagotchi-service-tamagotchi-notification-go)
 #### Raid rewards: Monster Raid, User Management, Tamagotchi
 
 Monster Raid's and Tamagotchi's steps are confirmed (Denis, Daniel); User
-Management's `pay-raid-rewards` is implemented (Pavel, #238). User Management
-keeps paying from `raid.completed` until `RAID_REWARDS_BY_SAGA=true`, which goes
-on together with Monster Raid starting this saga.
+Management's `pay-raid-rewards` is implemented (Pavel, #238).
+
+**On in the stack:** `RAID_REWARDS_BY_SAGA=true` in `.env` (the default) is
+passed to both services at once: Monster Raid as `REWARDS_BY_SAGA` (it starts
+this saga instead of calling `AdjustCurrency`), User Management as
+`RAID_REWARDS_BY_SAGA` (it stops paying from `raid.completed`). One key, so
+the two can't disagree and a reward is paid exactly once. `false` goes back to
+the direct payment.
 
 | # | Service | Step | Compensation |
 |---|---|---|---|
