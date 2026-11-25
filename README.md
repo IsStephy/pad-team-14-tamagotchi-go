@@ -3451,17 +3451,22 @@ and how to add a source.
   Prometheus scrapes its `/metrics` and probes its `/health`.
 - **Sources:** each one through its read-only role `etl_reader` and the address
   the service itself uses (pgpool after replication, so the ETL follows the
-  primary). Wired today: **Tamagotchi** (`TAMAGOTCHI_ETL_DB_URL`), **Guild**
-  (`GUILD_ETL_DB_URL`) and **Package Registry** (`PACKAGE_REGISTRY_ETL_DB_URL`).
-  **User Management** (`USER_MANAGEMENT_ETL_DB_URL`: `dim_user` with the
-  balance, `fact_currency_change`, `relationship`) and **Battle**
-  (`BATTLE_ETL_DB_URL`: `fact_battle`) have their URLs here already; the ETL
-  reads them once its sources (Dackohn/etl-service#6) are released, and the
-  services create `etl_reader` from their `v5` images. Neither role can read a
-  password hash, an email or a battle's turn log: it is granted named columns
-  only. A source
-  that is down is skipped (the run ends `partial`, or `failed` when no source
-  loaded), and the next run catches up.
+  primary). Every service with a PostgreSQL database is a source:
+
+  | Source | Its URL | Into |
+  |---|---|---|
+  | User Management | `USER_MANAGEMENT_ETL_DB_URL` | `dim_user` (with the balance), `fact_currency_change`, `relationship` |
+  | Battle | `BATTLE_ETL_DB_URL` | `fact_battle` |
+  | Tamagotchi | `TAMAGOTCHI_ETL_DB_URL` | `dim_tamagotchi` |
+  | Monster Raid | `MONSTER_RAID_ETL_DB_URL` | `fact_raid`, `fact_raid_participation` |
+  | Guild | `GUILD_ETL_DB_URL` | `dim_guild`, `guild_membership` |
+  | Package Registry | `PACKAGE_REGISTRY_ETL_DB_URL` | `dim_package`, `dim_raid_config`, `package_moderator`, `package_registration` |
+
+  No `etl_reader` role can read a password hash, an email or a battle's turn
+  log: each is granted named columns only. Map and Notification are not read
+  (live locations that expire; a delivery queue). A source that is down is
+  skipped (the run ends `partial`, or `failed` when no source loaded), and the
+  next run catches up.
 
 Set `DATA_WAREHOUSE_DB_USER`, `DATA_WAREHOUSE_DB_PASSWORD` and every
 `<SERVICE>_ETL_DB_PASSWORD` in `.env`. `POST /runs` and `GET /runs/latest`
