@@ -472,13 +472,22 @@ services:
       PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
       PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
       PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up user-management-service` never
+    # starts them, and pgpool started before them marks them down (#264).
     depends_on:
       user-management-service-db-0:
         condition: service_healthy
+      user-management-service-db-1:
+        condition: service_healthy
+      user-management-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
       test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 15s
       retries: 30
     restart: unless-stopped
 
@@ -612,13 +621,22 @@ services:
       PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
       PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
       PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up battle-service` never
+    # starts them, and pgpool started before them marks them down (#264).
     depends_on:
       battle-service-db-0:
         condition: service_healthy
+      battle-service-db-1:
+        condition: service_healthy
+      battle-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
       test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 15s
       retries: 30
     restart: unless-stopped
 
@@ -814,13 +832,22 @@ services:
       PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
       PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
       PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up tamagotchi-service` never
+    # starts them, and pgpool started before them marks them down (#264).
     depends_on:
       tamagotchi-service-db-0:
         condition: service_healthy
+      tamagotchi-service-db-1:
+        condition: service_healthy
+      tamagotchi-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
       test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 15s
       retries: 30
     restart: unless-stopped
 
@@ -1364,13 +1391,22 @@ services:
       PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
       PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
       PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up guild-service` never
+    # starts them, and pgpool started before them marks them down (#264).
     depends_on:
       guild-service-db-0:
         condition: service_healthy
+      guild-service-db-1:
+        condition: service_healthy
+      guild-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
       test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 15s
       retries: 30
     restart: unless-stopped
 
@@ -1495,13 +1531,22 @@ services:
       PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
       PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
       PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up package-registry-service` never
+    # starts them, and pgpool started before them marks them down (#264).
     depends_on:
       package-registry-service-db-0:
         condition: service_healthy
+      package-registry-service-db-1:
+        condition: service_healthy
+      package-registry-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
       test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
-      interval: 5s
-      timeout: 5s
+      interval: 10s
+      timeout: 15s
       retries: 30
     restart: unless-stopped
 
