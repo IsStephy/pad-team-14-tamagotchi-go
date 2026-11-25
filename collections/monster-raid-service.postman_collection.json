@@ -68,6 +68,10 @@
     {
       "key": "sagaRaidId",
       "value": ""
+    },
+    {
+      "key": "rewardSagaSteps",
+      "value": ""
     }
   ],
   "item": [
@@ -460,6 +464,7 @@
                   "const count = (name, labels) => pm.response.text().split('\\n').filter(l => l.startsWith(name + '{') && labels.every(x => l.includes(x))).reduce((sum, l) => sum + Number(l.split(' ').pop()), 0);",
                   "pm.collectionVariables.set('guildCalls', count('broker_grpc_calls_total', ['target=\"guild-service\"', 'method=\"GetGuild\"', 'code=\"OK\"']));",
                   "pm.collectionVariables.set('rewardCalls', count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"AdjustCurrency\"']));",
+                  "pm.collectionVariables.set('rewardSagaSteps', count('broker_saga_steps_total', ['saga=\"raid-rewards\"', 'step=\"pay-raid-rewards\"', 'action=\"do\"', 'outcome=\"ok\"']));",
                   "pm.collectionVariables.set('tamagotchiRequests', count('broker_requests_total', ['target=\"tamagotchi-service\"']));",
                   "pm.collectionVariables.set('raidEvents', count('broker_events_published_total', ['topic=\"raid.completed\"', 'source=\"monster-raid-service\"']));"
                 ]
@@ -826,8 +831,18 @@
           "response": []
         },
         {
-          "name": "Through the broker: Guild and User Management over gRPC, Tamagotchi over REST, raid.completed",
+          "name": "Through the broker: Guild over gRPC, Tamagotchi over REST, the reward paid, raid.completed",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The raid-rewards saga runs in the broker after the last attack has answered.",
+                  "setTimeout(function () {}, 3000);"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -838,8 +853,10 @@
                   "pm.test('membership was checked with GetGuild over gRPC', function () {",
                   "  pm.expect(count('broker_grpc_calls_total', ['target=\"guild-service\"', 'method=\"GetGuild\"', 'code=\"OK\"'])).to.be.above(Number(pm.collectionVariables.get('guildCalls')));",
                   "});",
-                  "pm.test('the reward was paid with AdjustCurrency over gRPC', function () {",
-                  "  pm.expect(count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"AdjustCurrency\"'])).to.be.above(Number(pm.collectionVariables.get('rewardCalls')));",
+                  "pm.test('the reward was paid: by the raid-rewards saga (pay-raid-rewards), or with AdjustCurrency over gRPC when RAID_REWARDS_BY_SAGA=false', function () {",
+                  "  const bySaga = count('broker_saga_steps_total', ['saga=\"raid-rewards\"', 'step=\"pay-raid-rewards\"', 'action=\"do\"', 'outcome=\"ok\"']) > Number(pm.collectionVariables.get('rewardSagaSteps'));",
+                  "  const direct = count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"AdjustCurrency\"']) > Number(pm.collectionVariables.get('rewardCalls'));",
+                  "  pm.expect(bySaga || direct, 'no saga step and no AdjustCurrency call').to.eql(true);",
                   "});",
                   "pm.test('the Tamagotchi was read through the broker', function () {",
                   "  pm.expect(count('broker_requests_total', ['target=\"tamagotchi-service\"'])).to.be.above(Number(pm.collectionVariables.get('tamagotchiRequests')));",

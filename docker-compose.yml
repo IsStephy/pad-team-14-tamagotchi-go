@@ -534,6 +534,10 @@ services:
       # raid.completed, taken at POST /events).
       BROKER_URL: http://message-broker:8090
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # true: raid rewards are paid by the raid-rewards saga (step
+      # pay-raid-rewards), and raid.completed is no longer consumed. Goes on
+      # and off together with Monster Raid's REWARDS_BY_SAGA (one .env key).
+      RAID_REWARDS_BY_SAGA: ${RAID_REWARDS_BY_SAGA:-true}
       # gRPC (GetUser, GetBalance, AdjustCurrency, GetRelationship): registered
       # with Service Discovery as metadata.grpcPort, reached through the broker.
       GRPC_PORT: 50081
@@ -1279,6 +1283,11 @@ services:
       # Requests the broker delivers carry BROKER_KEY next to the sender's key.
       BROKER_URL: ${MONSTER_RAID_BROKER_URL-http://message-broker:8090}
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # true: a completed raid's rewards are paid by the broker's raid-rewards
+      # saga (Monster Raid, User Management, Tamagotchi) instead of a direct
+      # AdjustCurrency call. Same .env key as User Management's, so both switch
+      # together and nothing is paid twice or not at all.
+      REWARDS_BY_SAGA: ${RAID_REWARDS_BY_SAGA:-true}
       LOG_LEVEL: ${MONSTER_RAID_LOG_LEVEL:-info}
     # Replicas publish no ports: clients reach the live raid socket through ws-proxy.
     deploy:
