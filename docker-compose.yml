@@ -1581,6 +1581,7 @@ services:
       USER_MANAGEMENT_ETL_DB_URL: postgresql://etl_reader:${USER_MANAGEMENT_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@user-management-service-db:5432/${USER_MANAGEMENT_DB_NAME:-user_management_db}
       BATTLE_ETL_DB_URL: postgresql://etl_reader:${BATTLE_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@battle-service-db:5432/${BATTLE_DB_NAME:-battle_db}
       TAMAGOTCHI_ETL_DB_URL: postgresql://etl_reader:${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
+      MONSTER_RAID_ETL_DB_URL: postgresql://etl_reader:${MONSTER_RAID_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@monster-raid-service-db:5432/${MONSTER_RAID_DB_NAME:-monster_raid_db}
       # Guild and Package Registry (#215): the guild_db and package_registry_db
       # through their etl_reader roles, which each service gives its password at
       # start-up from the same <SERVICE>_ETL_DB_PASSWORD.
