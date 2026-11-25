@@ -504,7 +504,7 @@ Success Response (200 OK):
 | `battle.ended` | pays `rewardCurrency` to `winnerId`, charges `loserCurrencyPenalty` to `loserId` (global currency) | `battle-ended:<battleId>:winner`, `battle-ended:<battleId>:loser` |
 | `raid.completed` | pays each `rewards[].currency` to its `userId` (global currency) | `raid:<raidId>:<userId>`, the key Monster Raid pays with directly |
 
-The keys are the ones Battle and Monster Raid use when they pay directly, so a payment made both ways counts once. With the sagas on, the event a saga pays is no longer consumed (`SETTLEMENT_BY_SAGA=true` for `battle.ended`, `RAID_REWARDS_BY_SAGA=true` for `raid.completed`; both off by default), so nothing is paid twice.
+The keys are the ones Battle and Monster Raid use when they pay directly, so a payment made both ways counts once. With the sagas on, the event a saga pays is no longer consumed (`SETTLEMENT_BY_SAGA=true` for `battle.ended`, `RAID_REWARDS_BY_SAGA=true` for `raid.completed`; both off in the image, **both on in the stack**), so nothing is paid twice.
 
 **Saga Steps**
 
@@ -689,7 +689,7 @@ Each event's `messageId` is a UUIDv5 of the topic and its key (`battle-ended:<ba
 
 **Saga Steps**
 
-`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) Battle's steps of the `battle-settlement` saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). With `SETTLEMENT_BY_SAGA=true` (off by default), a battle that ends stores its outcome with `settlement: settling` and starts the saga `battle:<battleId>`; `battle.ended` is then published only once the saga has completed. See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) Battle's steps of the `battle-settlement` saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). With `SETTLEMENT_BY_SAGA=true` (off in the image, on in the stack), a battle that ends stores its outcome with `settlement: settling` and starts the saga `battle:<battleId>`; `battle.ended` is then published only once the saga has completed. See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
 
 ```json
 {
@@ -879,7 +879,7 @@ Success Response (200 OK):
 
 Each change is its own transaction. The answer is the ack: `200 {messageId, applied, duplicates}` once every change is made (a redelivery answers `200` with `applied: 0`); `400` for an event it can't read; `422` when a change can never be made (e.g. a Tamagotchi that doesn't exist; the others are still made); `503` + `Retry-After` when it may work later.
 
-`APPLY_BATTLE_ENDED` (`TAMAGOTCHI_APPLY_BATTLE_ENDED` in `.env`, default `true`): set it to `false` in the release where Battle settles through the battle-settlement saga below. Tamagotchi then no longer subscribes to `battle.ended`, and one still delivered is acked without changes. The saga's steps claim the same keys, so an award or a transfer can't be made both ways even while both are on.
+`APPLY_BATTLE_ENDED` (`TAMAGOTCHI_APPLY_BATTLE_ENDED` in `.env`, **`false` in the stack**, since battles are settled by the battle-settlement saga below; it goes back to `true` together with `SETTLEMENT_BY_SAGA=false`). Tamagotchi then no longer subscribes to `battle.ended`, and one still delivered is acked without changes. The saga's steps claim the same keys, so an award or a transfer can't be made both ways even while both are on.
 
 **Saga Steps**
 
@@ -2200,15 +2200,24 @@ first (agreed on #247) is a change to that table only.
 | 5 | Tamagotchi | `transfer-owner` of the captured Tamagotchi, if any | Transfer it back to the previous owner |
 | 6 | Battle | `mark-settled`: battle `settled`, then `battle.ended` is published | Battle `settlement_failed` (it may have run) |
 
-**No double XP during the switch:** today Tamagotchi applies `battle.ended`
-itself, with Battle's keys. Tamagotchi's saga steps claim those same keys
-(`battle-ended:<battleId>:primary` / `:secondary` / `battle-ended:<battleId>`),
-so the event and the saga can't both make a change, whichever arrives first.
-Once Battle starts the saga, set `TAMAGOTCHI_APPLY_BATTLE_ENDED=false` in the
-same release, and Tamagotchi stops applying the event. **The switch-over is
-one change in this repository's compose file:** `SETTLEMENT_BY_SAGA=true` for
-User Management and Battle (both off by default since their `v5.0.0`) and
-`TAMAGOTCHI_APPLY_BATTLE_ENDED=false`; setting them back undoes it. Tamagotchi's step
+**On in the stack:** `SETTLEMENT_BY_SAGA=true` in `.env` (the default) is
+passed to Battle (a finished battle starts this saga, `battle:<battleId>`, and
+`battle.ended` is published once it has completed) and to User Management (it
+stops paying from `battle.ended`), and `TAMAGOTCHI_APPLY_BATTLE_ENDED=false`
+stops Tamagotchi applying the event. One key for the two services that pay, so
+they can't disagree. To go back: `SETTLEMENT_BY_SAGA=false` and
+`TAMAGOTCHI_APPLY_BATTLE_ENDED=true` together.
+
+**No double XP, either way:** Tamagotchi's saga steps claim the keys
+`battle.ended` uses (`battle-ended:<battleId>:primary` / `:secondary` /
+`battle-ended:<battleId>`), so the event and the saga can't both make a
+change, whichever arrives first.
+
+**A step that fails for a moment** (a 5xx, a timeout) is tried again
+`SAGA_STEP_RETRIES` times by the broker: **4** in the stack (after 1, 2, 4,
+8 s, 15 s in all), longer than a Postgres failover (9-13 s), so a battle that
+ends during one is settled once the database is back, instead of being
+cancelled. Tamagotchi's step
 payloads: [Saga Steps](#tamagotchi-service-tamagotchi-notification-go)
 (Tamagotchi Service).
 
@@ -2602,8 +2611,8 @@ each replica deregisters first, then lets its requests in progress finish.
 - **Saga steps** (Lab 5): the broker's saga coordinator runs Tamagotchi's steps of
   the battle-settlement and raid-rewards sagas at `POST /saga-steps` (payloads in
   [Saga Steps](#tamagotchi-service-tamagotchi-notification-go)), recorded in the
-  `saga_steps` table. `TAMAGOTCHI_APPLY_BATTLE_ENDED=false` stops applying
-  `battle.ended` once Battle settles through the saga.
+  `saga_steps` table. `TAMAGOTCHI_APPLY_BATTLE_ENDED=false` (the stack's
+  setting) stops applying `battle.ended`: the battle-settlement saga does it.
 - **gRPC** on `50083`, registered as `metadata.grpcPort`: the same calls between
   services, with the same keys, limits and errors as REST (see
   [gRPC between services](#grpc-between-services)). With
@@ -3901,7 +3910,7 @@ ids into collection variables as it goes. They also run headlessly:
 
 ```bash
 npx newman run collections/user-management-service.postman_collection.json --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var guildServiceKey=<SERVICE_KEY_GUILD> --env-var mapServiceKey=<SERVICE_KEY_MAP>
-npx newman run collections/battle-service.postman_collection.json
+npx newman run collections/battle-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY>
 npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 npx newman run collections/notification-service.postman_collection.json --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/map-service.postman_collection.json

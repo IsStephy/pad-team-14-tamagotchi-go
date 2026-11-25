@@ -538,6 +538,11 @@ services:
       # pay-raid-rewards), and raid.completed is no longer consumed. Goes on
       # and off together with Monster Raid's REWARDS_BY_SAGA (one .env key).
       RAID_REWARDS_BY_SAGA: ${RAID_REWARDS_BY_SAGA:-true}
+      # true: battles are paid by the battle-settlement saga (steps charge-loser,
+      # pay-winner), and battle.ended is no longer consumed. Goes on and off
+      # together with Battle's SETTLEMENT_BY_SAGA (one .env key) and
+      # TAMAGOTCHI_APPLY_BATTLE_ENDED=false.
+      SETTLEMENT_BY_SAGA: ${SETTLEMENT_BY_SAGA:-true}
       # gRPC (GetUser, GetBalance, AdjustCurrency, GetRelationship): registered
       # with Service Discovery as metadata.grpcPort, reached through the broker.
       GRPC_PORT: 50081
@@ -714,6 +719,12 @@ services:
       # Tamagotchi, so Battle calls neither. false = Battle calls Tamagotchi's
       # xp and transfer-owner itself (same keys, so never twice).
       TAMAGOTCHI_BY_EVENT: ${BATTLE_TAMAGOTCHI_BY_EVENT:-true}
+      # true: a finished battle is settled by the broker's battle-settlement saga
+      # (Battle, User Management, Tamagotchi; undone together if a step fails)
+      # instead of battle.ended, which Battle then publishes once the saga has
+      # completed. Same .env key as User Management's, so both switch together;
+      # TAMAGOTCHI_APPLY_BATTLE_ENDED goes to false with it.
+      SETTLEMENT_BY_SAGA: ${SETTLEMENT_BY_SAGA:-true}
       # Authorization is at the gateway: only requests carrying GATEWAY_KEY as
       # X-Gateway-Key are served, and the player comes as X-User-Id. Live
       # sockets are opened directly with a single-use ticket the gateway signs
@@ -843,10 +854,10 @@ services:
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       BROKER_URL: ${TAMAGOTCHI_BROKER_URL:-}
       # Lab 5 sagas: the broker's coordinator runs Tamagotchi's steps at POST
-      # /saga-steps (broker key only). Set TAMAGOTCHI_APPLY_BATTLE_ENDED=false in the
-      # release where Battle settles through the battle-settlement saga: Tamagotchi
-      # then stops applying battle.ended (the saga makes those changes).
-      APPLY_BATTLE_ENDED: ${TAMAGOTCHI_APPLY_BATTLE_ENDED:-true}
+      # /saga-steps (broker key only). Battles are settled by the battle-settlement
+      # saga (SETTLEMENT_BY_SAGA=true), so Tamagotchi doesn't apply battle.ended
+      # (false here): the saga makes those changes. Set both back together.
+      APPLY_BATTLE_ENDED: ${TAMAGOTCHI_APPLY_BATTLE_ENDED:-false}
       # gRPC (GetTamagotchi, ListByOwner, GetTypeAdvantages, AddXp, TransferOwner):
       # registered with Service Discovery as metadata.grpcPort, reached through the
       # broker with the same keys as REST. Needs BROKER_KEY.
@@ -1754,6 +1765,10 @@ services:
       # GET /dead-letters (the Dead Letter Channel) needs this key, not the
       # broker key every service holds. Empty = the endpoint refuses everyone.
       ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
+      # Saga steps that answer 5xx or time out are tried again this many times
+      # (after 1, 2, 4, 8 s): 15 s, longer than a Postgres failover (9-13 s), so a
+      # battle that ends during one waits instead of being cancelled.
+      SAGA_STEP_RETRIES: ${BROKER_SAGA_STEP_RETRIES:-4}
     volumes:
       - broker-data:/data
     healthcheck:
