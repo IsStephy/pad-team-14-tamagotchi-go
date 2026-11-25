@@ -48,17 +48,17 @@
     },
     {
       "key": "primaryTamagotchiId",
-      "value": "tama-ember",
+      "value": "",
       "type": "string"
     },
     {
       "key": "secondaryTamagotchiId",
-      "value": "tama-ripple",
+      "value": "",
       "type": "string"
     },
     {
       "key": "opponentTamagotchiId",
-      "value": "tama-bramble",
+      "value": "",
       "type": "string"
     },
     {
@@ -77,6 +77,22 @@
     },
     {
       "key": "cacheState",
+      "value": ""
+    },
+    {
+      "key": "gatewayKey",
+      "value": ""
+    },
+    {
+      "key": "packageRegistryUrl",
+      "value": "http://localhost:8088"
+    },
+    {
+      "key": "packageAdminId",
+      "value": "admin-1"
+    },
+    {
+      "key": "packageId",
       "value": ""
     }
   ],
@@ -301,6 +317,208 @@
               "pm.collectionVariables.set(\"token2\", body.token);"
             ]
           }
+        }
+      ]
+    },
+    {
+      "name": "Setup: real Tamagotchis for the settlement",
+      "description": "The battle's Tamagotchis must exist: settling a battle awards XP to the winner's and moves the loser's primary to the winner (the settlement saga's Tamagotchi steps, or Tamagotchi applying battle.ended). A package is registered first, as the Tamagotchi collection does: Package Registry directly, as its seeded admin, with the gateway's key.",
+      "item": [
+        {
+          "name": "Register a package (as the seeded admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{packageAdminId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{packageRegistryUrl}}/packages",
+              "host": [
+                "{{packageRegistryUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
+            "description": "A package for the Tamagotchis below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Battle collection {{challengerName}}\",\n  \"version\": \"1.0.{{$timestamp}}\",\n  \"description\": \"Created by the battle-service collection\",\n  \"moderatorIds\": [\n    \"{{packageAdminId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"packageId\", pm.response.json().packageId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player one creates a Flame Tamagotchi (primary)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token1}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis"
+              ]
+            },
+            "description": "Player one's primary: it changes hands when player one loses.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerId\": \"{{player1Id}}\",\n  \"type\": \"Flame\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Ember\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"primaryTamagotchiId\", pm.response.json().tamagotchiId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player one creates a Water Tamagotchi (secondary)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token1}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis"
+              ]
+            },
+            "description": "Player one's secondary.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerId\": \"{{player1Id}}\",\n  \"type\": \"Water\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Ripple\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"secondaryTamagotchiId\", pm.response.json().tamagotchiId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player two creates a Nature Tamagotchi",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token2}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis"
+              ]
+            },
+            "description": "Player two's primary: it gets the winner's XP.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerId\": \"{{player2Id}}\",\n  \"type\": \"Nature\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Bramble\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 Created\", function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set(\"opponentTamagotchiId\", pm.response.json().tamagotchiId);"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1330,7 +1548,7 @@
       ]
     },
     {
-      "name": "Winner was paid from battle.ended",
+      "name": "Winner was paid",
       "request": {
         "method": "GET",
         "header": [
@@ -1350,7 +1568,7 @@
             "currency"
           ]
         },
-        "description": "Battle publishes battle.ended on the Message Broker, and User Management pays the reward from it (key battle-ended:<battleId>:winner). Read through the gateway as the winner."
+        "description": "The battle's reward reached the winner's balance: paid by the settlement saga (SETTLEMENT_BY_SAGA=true), or by User Management from battle.ended. Both run after the forfeit has answered, so this waits 3 s first."
       },
       "event": [
         {
@@ -1358,8 +1576,8 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "// The broker delivers battle.ended at once; give User Management a moment to pay it.",
-              "setTimeout(function () {}, 2000);"
+              "// The settlement runs after the last action has answered.",
+              "setTimeout(function () {}, 3000);"
             ]
           }
         },
@@ -1371,9 +1589,47 @@
               "pm.test(\"responds 200\", function () {",
               "    pm.response.to.have.status(200);",
               "});",
-              "pm.test(\"User Management paid the reward from battle.ended\", function () {",
+              "pm.test(\"the winner was paid the reward, once\", function () {",
               "    pm.expect(pm.response.json().globalCurrency)",
               "        .to.eql(Number(pm.collectionVariables.get(\"rewardCurrency\")));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "The battle is settled",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token1}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/battles/{{battleId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "battles",
+            "{{battleId}}"
+          ]
+        },
+        "description": "The money, the XP and the transfer are all applied: `settled`. With the settlement saga a step that failed would show `settlement_failed` here, with everything undone."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () { pm.response.to.have.status(200); });",
+              "pm.test(\"settlement is settled\", function () {",
+              "    pm.expect(pm.response.json().settlement).to.eql(\"settled\");",
               "});"
             ]
           }
