@@ -1,0 +1,1355 @@
+{
+  "info": {
+    "name": "Lab 5 demo (Team 14)",
+    "description": "The Lab 5 demo, one folder per grade, in the order it is presented. Send the requests top to bottom; steps marked ▶ are done by hand (terminal, Docker Desktop): their description says what to do. Run folder 0 first: it creates the demo player and its token.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Before the demo",
+      "description": "Run these once, about 10 minutes before presenting. They check the stack is up\nand create the demo player whose token the other folders use.\n\nSelect the environment that holds this stack's keys (brokerKey, adminKey,\ngatewayKey) first: the defaults here are the `.env.example` placeholders.",
+      "item": [
+        {
+          "name": "▶ Start the stack, check Docker Desktop",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "In PowerShell, in `pad-team-14-tamagotchi-go`:\n\n    docker compose up -d\n\nThen Docker Desktop → Containers → `tamagotchi-go`: nothing should be\n\"Restarting\". Every pgpool now waits for its three Postgres nodes, so a cold\nstart should be clean. If a service still loops on \"pgpool is not accepting any\nnew connections\" or stops at \"waiting for migration lock\", restart its pgpool,\nthen the service, e.g.:\n\n    docker compose restart package-registry-service-db\n    docker compose restart package-registry-service"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Gateway is up",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Message Broker is up",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{brokerUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ETL service is up",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{etlUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register the demo player",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/users/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{demoUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{demoUsername}}@example.com\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "A new player for this demo. Registration and login need no token."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new name every send, so the demo can be run again.",
+                  "pm.variables.set('demoUsername', 'demo_' + Date.now().toString().slice(-8));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('userId', pm.response.json().userId);",
+                  "pm.collectionVariables.set('username', pm.variables.get('demoUsername'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in: the token for the next requests",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/users/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('a token for ' + pm.collectionVariables.get('username'), () => pm.expect(body.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('token', body.token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Grades 2 and 3 – The architecture diagram",
+      "description": "",
+      "item": [
+        {
+          "name": "▶ Open the diagram",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Open `docs/images/architecture.png` (or the README's \"Architecture Diagram\"\nsection on GitHub, `dev` branch). Point at, in order:\n\n1. API Gateway: the single entry point.\n2. Message Broker, and inside it the Saga coordinator and its SQLite store.\n3. Service Discovery, ws-proxy, monitoring (Prometheus, Loki, Grafana).\n4. Every service with its replicas.\n5. Every data store: PostgreSQL ×3 behind pgpool, Redis ×3, and the\n   replication note (repmgr, 3 shared Sentinels, quorum 2).   ← grade 3\n6. cache-1, cache-2, cache-3: the shared cache on the hash ring.     ← grade 3\n7. ETL service and Data Warehouse.                                   ← grade 3"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Grade 4 – Data Warehouse and ETL",
+      "description": "A separate warehouse database (`data-warehouse`, PostgreSQL 16) in Docker\nCompose, and an ETL service that copies every service's data into it,\nincrementally, on a timer and on demand.",
+      "item": [
+        {
+          "name": "Run the ETL now",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{etlUrl}}/runs",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Starts a run at once (it also runs by itself every ETL_INTERVAL_SECONDS)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the run started', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]);",
+                  "    pm.expect(pm.response.json().runId).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The run's report: every table, from every service",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{etlUrl}}/runs/latest",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Point at `tables`: each warehouse table, the service it comes from (`source`) and how many rows were written."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The ETL run takes a few seconds; wait before reading its report.",
+                  "setTimeout(() => {}, 6000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const run = pm.response.json();",
+                  "pm.test('the run finished: ' + run.status, () => pm.expect(run.status).to.eql('ok'));",
+                  "Object.entries(run.tables || {}).sort().forEach(([table, t]) =>",
+                  "    pm.test(`${table}  ←  ${t.source}: ${t.status}, ${t.written} written`, () => pm.expect(t.status).to.eql('ok')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register a new player (new data in User Management)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/users/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{etlUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{etlUsername}}@example.com\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new name every send, so the demo can be run again.",
+                  "pm.variables.set('etlUsername', 'etl_' + Date.now().toString().slice(-8));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('etlUsername', pm.variables.get('etlUsername'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run the ETL again",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{etlUrl}}/runs",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('the run started', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The new player was copied into dim_user",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{etlUrl}}/runs/latest",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Only rows changed since the last run (its watermark) are read, plus a 60 s overlap; rows are upserted, so nothing is duplicated."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The ETL run takes a few seconds; wait before reading its report.",
+                  "setTimeout(() => {}, 6000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const run = pm.response.json();",
+                  "pm.test('the run finished: ' + run.status, () => pm.expect(run.status).to.eql('ok'));",
+                  "pm.test('dim_user  ←  user_management: ' + run.tables.dim_user.written + ' written (the new player among them)',",
+                  "    () => pm.expect(run.tables.dim_user.written).to.be.at.least(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "▶ See the player in the warehouse",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "In PowerShell (the exact line, with this run's username, is in Test Results):\n\n    docker compose exec data-warehouse psql -U warehouse_user -d warehouse -c \"select user_id, username, loaded_at from dim_user where username = '<etl_ username>'\"\n\nOne row, `loaded_at` a few seconds ago. All tables and their row counts:\n\n    docker compose exec data-warehouse psql -U warehouse_user -d warehouse -c \"select relname, n_live_tup from pg_stat_user_tables order by 1\""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));",
+                  "const u = pm.collectionVariables.get('etlUsername');",
+                  "pm.test(`docker compose exec data-warehouse psql -U warehouse_user -d warehouse -c \"select user_id, username, loaded_at from dim_user where username = '${u}'\"`, () => {});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Grade 5 – Replication and failover",
+      "description": "User Management's PostgreSQL: three nodes under repmgr behind pgpool\n(`user-management-service-db`). Registering a player is a write, so it must\nreach the primary: it shows the failover directly (no cache in between).",
+      "item": [
+        {
+          "name": "▶ Who is the primary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "In PowerShell:\n\n    docker compose exec -u 1001 user-management-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n\nOne `primary`, two `standby`. Note which node is the primary."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register a player (a write, to the primary)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/users/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{foUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{foUsername}}@example.com\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new name every send, so the demo can be run again.",
+                  "pm.variables.set('foUsername', 'before_' + Date.now().toString().slice(-8));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "▶ Stop the primary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Docker Desktop → `tamagotchi-go` → press **Stop** on the node that\n`cluster show` named primary (e.g. `user-management-service-db-0`).\n\nThen go straight on to the next request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register a player during the failover",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/users/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{foUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{foUsername}}@example.com\",\n  \"packageId\": \"pkg-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Send it right after stopping the primary, and again until it is 201.\nFor a few seconds, while repmgr promotes a standby, the service answers\n503 + Retry-After: 2 (a write in flight is not repeated blindly). Measured:\ntwo 503s, then every write 201."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A new name every send, so the demo can be run again.",
+                  "pm.variables.set('foUsername', 'during_' + Date.now().toString().slice(-8));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 503) {",
+                  "    pm.test('503 + Retry-After: the database is failing over, send again in 2 s', () =>",
+                  "        pm.expect(pm.response.headers.get('Retry-After')).to.exist);",
+                  "} else {",
+                  "    pm.test('201 Created: the write reached the new primary', () => pm.response.to.have.status(201));",
+                  "    pm.collectionVariables.set('foUsername', pm.variables.get('foUsername'));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in as that player (a read from the new primary)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/users/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{foUsername}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK: the player written during the failover is there', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "▶ Who is the primary now",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "In PowerShell, against a node that is still running (not the one you stopped):\n\n    docker compose exec -u 1001 user-management-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n    docker compose exec -u 1001 user-management-service-db-2 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n\nThe stopped node is `failed`; a former standby is now `primary`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "▶ Start the old primary again",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Docker Desktop → press **Start** on the node you stopped. After about 40 s:\n\n    docker compose exec -u 1001 user-management-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n\nIt is back as a `standby` of the new primary: it rejoined by itself."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "▶ Redis too: master, 2 replicas, 3 Sentinels",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "In PowerShell:\n\n    docker compose exec redis-sentinel-1 redis-cli -p 26379 sentinel get-master-addr-by-name monster-raid-service-cache\n\nStop `monster-raid-service-cache` in Docker Desktop, run it again: within\nabout 5 s the address is a replica's (the Sentinels promoted it). Start the old\none again: about 15 s later it is a replica of the new master.\nEvery group at once: `docker compose exec redis-sentinel-1 redis-cli -p 26379 sentinel masters`"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Grade 6 – Caching",
+      "description": "Commonly read GETs and authentication data come from the shared cache nodes.\nEvery cached read says where it came from in the X-Cache response header:\n`miss` (the database, now cached) or `hit` (the cache). Open the response's\nHeaders tab.",
+      "item": [
+        {
+          "name": "My profile, first read (X-Cache: miss)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/users/{{userId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('X-Cache: miss - read from the database, now cached', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My profile again (X-Cache: hit)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/users/{{userId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('X-Cache: hit - read from the cache', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup: a package the demo player moderates",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{adminId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{packageRegistryUrl}}/packages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Demo package\",\n  \"version\": \"1.0.{{$timestamp}}\",\n  \"description\": \"Lab 5 demo\",\n  \"moderatorIds\": [\n    \"{{userId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Registered by the stack's seeded admin, with the demo player as its moderator."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('packageId', pm.response.json().packageId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The package, first read (X-Cache: miss)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/packages/{{packageId}}",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('X-Cache: miss', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The package again (X-Cache: hit)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/packages/{{packageId}}",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('X-Cache: hit', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change it (the write deletes the cached copy)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{userId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{packageRegistryUrl}}/packages/{{packageId}}/stat-definitions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statDefinitions\": {\n    \"hunger\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 80,\n      \"bonusMultiplier\": 1.5\n    },\n    \"happiness\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 60,\n      \"bonusMultiplier\": 1.1\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "After the database commit, Package Registry deletes the package's cache key."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The package after the change (X-Cache: miss, new value)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/packages/{{packageId}}",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('X-Cache: miss - the write deleted the cached copy', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'));",
+                  "pm.test('the new value, not a stale one', () => pm.expect(pm.response.json().statDefinitions.hunger.bonusMultiplier).to.eql(1.5));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Auth data: the gateway's verified-token cache",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/metrics",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Every request above with a Bearer token was checked by the gateway once\n(signature), then found in the cache (`gateway:token:<sha256>`, until the\ntoken's exp, at most 5 min). The log shows it too:\n\n    docker compose logs --since 5m gateway | Select-String \"cache (hit|miss)\""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const rows = pm.response.text().split('\\n').filter(l => l.startsWith('cache_requests_total'));",
+                  "rows.forEach(l => pm.test(l, () => {}));",
+                  "pm.test('token cache hits are counted', () => pm.expect(rows.some(l => l.includes('result=\"hit\"'))).to.be.true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Grade 7 – Consistent hashing and the sharded cache",
+      "description": "Every key goes to one of cache-1..3, picked by our consistent-hash ring\n(FNV-1a + fmix32, 160 virtual nodes per node), the same in TypeScript, Go and\nPython. The research: README, \"Cache Sharding with Consistent Hashing\".",
+      "item": [
+        {
+          "name": "Every cache node is in use (all services, from Prometheus)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{prometheusUrl}}/api/v1/query?query=sum by (node) (cache_requests_total)",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Prometheus adds up cache_requests_total from every replica of every service, per cache node: all three nodes get traffic."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const rows = pm.response.json().data.result;",
+                  "['cache-1', 'cache-2', 'cache-3'].forEach(n => {",
+                  "    const r = rows.find(x => x.metric.node === n);",
+                  "    pm.test(n + ': ' + (r ? r.value[1] : 0) + ' cache lookups', () => pm.expect(r).to.exist);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "▶ Keys spread over the three nodes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "In PowerShell, in `pad-team-14-tamagotchi-go`:\n\n    $p = (Select-String '^CACHE_PASSWORD=' .env).Line.Split('=',2)[1]\n    foreach ($n in 'cache-1','cache-2','cache-3') { \"$n : $(docker compose exec $n valkey-cli -a $p --no-auth-warning dbsize)\" }\n\nEach node holds a share. The keys on one node, from several services:\n\n    docker compose exec cache-2 valkey-cli -a $p --no-auth-warning --scan"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "▶ Why a ring: measured",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "In PowerShell, in `pad-team-14-tamagotchi-go\\hash-ring`:\n\n    npm install\n    npm run stats\n\nWith 1 virtual node the split is about 5% / 34% / 61%; with 160, a third\neach. Adding a 4th node moves about 25% of the keys on the ring, against 75%\nwith `hash mod N`. The three ports agree on one file of test vectors:\n`cd python; python -m unittest -v`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Grade 9 – Long-running sagas, coordinator in the Message Broker",
+      "description": "The coordinator runs each saga's steps in order (POST /saga-steps on each\nservice). If a step says no, it undoes the finished steps in reverse order.\nHere: raid-activation = Package Registry `mark-activating` → Monster Raid\n`create-raid` → Package Registry `activate`.",
+      "item": [
+        {
+          "name": "A draft raid config",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{adminId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{packageRegistryUrl}}/raid-configs",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Demo Wyrm {{$timestamp}}\",\n  \"maxHp\": 1000,\n  \"duration\": 600,\n  \"rewards\": {\n    \"coins\": 50\n  },\n  \"createdByAdminId\": \"{{adminId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('raidConfigId', pm.response.json().raidConfigId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rollback: a raid Monster Raid rejects (maxHp 0)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{brokerUrl}}/sagas?wait=15s",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"saga\": \"raid-activation\",\n  \"payload\": {\n    \"raidConfigId\": \"{{raidConfigId}}\",\n    \"configId\": \"{{raidConfigId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"monsterName\": \"Rollback Wyrm\",\n    \"maxHp\": 0,\n    \"duration\": 600,\n    \"rewards\": {\n      \"coins\": 50\n    },\n    \"previousRaidId\": null\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Started on the coordinator directly, with a raid Monster Raid must refuse.\nStep 1 marks the config `activating`; step 2 answers 422; the coordinator\ncompensates step 1 (the config goes back to `draft`); step 3 never runs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const saga = pm.response.json();",
+                  "pm.collectionVariables.set('rollbackSagaId', saga.sagaId);",
+                  "pm.test('saga ' + saga.state + ': ' + saga.error, () => pm.expect(saga.state).to.eql('compensated'));",
+                  "saga.steps.forEach((s, i) => pm.test(`step ${i + 1} ${s.step} (${s.service}): ${s.state}`, () => {}));",
+                  "pm.test('step 1 undone, step 2 rejected, step 3 never ran', () =>",
+                  "    pm.expect(saga.steps.map(s => s.state)).to.eql(['compensated', 'rejected', 'pending']));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Activate the same config the normal way",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{adminId}}"
+              }
+            ],
+            "url": "{{packageRegistryUrl}}/raid-configs/{{raidConfigId}}/activate",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "After the rollback the config is a draft again, so it can be activated. Package Registry starts the raid-activation saga on the broker."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('the raid is active: ' + body.raidId, () => pm.expect(body.status).to.eql('active'));",
+                  "pm.collectionVariables.set('activationSagaId', body.sagaId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "That activation, as a completed saga",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{brokerUrl}}/sagas/{{activationSagaId}}",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const saga = pm.response.json();",
+                  "pm.test('saga ' + saga.saga + ': ' + saga.state, () => pm.expect(saga.state).to.eql('completed'));",
+                  "saga.steps.forEach((s, i) => pm.test(`step ${i + 1} ${s.step} (${s.service}): ${s.state}`, () => pm.expect(s.state).to.eql('done')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Every saga so far",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{brokerUrl}}/sagas?limit=50",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Run the Battle collection before the demo and a battle-settlement (6 steps, 4 services) is in this list too: open it with GET /sagas/<its sagaId>."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const counts = {};",
+                  "pm.response.json().forEach(s => { const k = s.saga + ': ' + s.state; counts[k] = (counts[k] || 0) + 1; });",
+                  "Object.entries(counts).sort().forEach(([k, n]) => pm.test(`${k} × ${n}`, () => {}));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The sagas in the broker's metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{brokerUrl}}/metrics",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const rows = pm.response.text().split('\\n').filter(l => l.startsWith('broker_sagas_total'));",
+                  "rows.forEach(l => pm.test(l, () => {}));",
+                  "pm.test('sagas are counted', () => pm.expect(rows.length).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Grade 10 – Postman, diagram, Docker Hub, README",
+      "description": "",
+      "item": [
+        {
+          "name": "▶ Collections, Docker Hub, README",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{gatewayUrl}}/health",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "- Postman: right-click a service collection → Run collection → Run. Gateway,\n  Package Registry, Message Broker, Battle and Monster Raid pass every check.\n- Docker Hub: every image has a description, e.g.\n  https://hub.docker.com/r/dackohn/message-broker,\n  https://hub.docker.com/r/dackohn/etl-service,\n  https://hub.docker.com/r/isstephy1/gateway\n- README: the \"Lab 5 Decisions\" section (cache, hash ring, replication,\n  warehouse, ETL, sagas and their compensations).\n- Diagram: grades 2 and 3 above."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Do this step by hand: see the description', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "etlUrl",
+      "value": "http://localhost:8091"
+    },
+    {
+      "key": "prometheusUrl",
+      "value": "http://localhost:9090"
+    },
+    {
+      "key": "packageRegistryUrl",
+      "value": "http://localhost:8088"
+    },
+    {
+      "key": "brokerKey",
+      "value": "change_me"
+    },
+    {
+      "key": "adminKey",
+      "value": "change_me"
+    },
+    {
+      "key": "gatewayKey",
+      "value": "change_me"
+    },
+    {
+      "key": "adminId",
+      "value": "admin-1"
+    },
+    {
+      "key": "guildId",
+      "value": "guild-demo-1"
+    },
+    {
+      "key": "password",
+      "value": "DemoPass123!"
+    },
+    {
+      "key": "username",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "etlUsername",
+      "value": ""
+    },
+    {
+      "key": "foUsername",
+      "value": ""
+    },
+    {
+      "key": "packageId",
+      "value": ""
+    },
+    {
+      "key": "raidConfigId",
+      "value": ""
+    },
+    {
+      "key": "rollbackSagaId",
+      "value": ""
+    },
+    {
+      "key": "activationSagaId",
+      "value": ""
+    }
+  ]
+}
