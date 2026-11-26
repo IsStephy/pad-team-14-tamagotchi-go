@@ -14,7 +14,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -37,7 +45,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -59,7 +75,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{brokerUrl}}/health",
+            "url": {
+              "raw": "{{brokerUrl}}/health",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -81,7 +105,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{etlUrl}}/health",
+            "url": {
+              "raw": "{{etlUrl}}/health",
+              "host": [
+                "{{etlUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -108,7 +140,16 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{gatewayUrl}}/users/register",
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"{{demoUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{demoUsername}}@example.com\",\n  \"packageId\": \"pkg-demo\"\n}",
@@ -157,7 +198,16 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{gatewayUrl}}/users/login",
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
@@ -197,7 +247,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -231,7 +289,15 @@
                 "value": "{{adminKey}}"
               }
             ],
-            "url": "{{etlUrl}}/runs",
+            "url": {
+              "raw": "{{etlUrl}}/runs",
+              "host": [
+                "{{etlUrl}}"
+              ],
+              "path": [
+                "runs"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -262,7 +328,16 @@
                 "value": "{{adminKey}}"
               }
             ],
-            "url": "{{etlUrl}}/runs/latest",
+            "url": {
+              "raw": "{{etlUrl}}/runs/latest",
+              "host": [
+                "{{etlUrl}}"
+              ],
+              "path": [
+                "runs",
+                "latest"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -304,7 +379,16 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{gatewayUrl}}/users/register",
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"{{etlUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{etlUsername}}@example.com\",\n  \"packageId\": \"pkg-demo\"\n}",
@@ -351,7 +435,15 @@
                 "value": "{{adminKey}}"
               }
             ],
-            "url": "{{etlUrl}}/runs",
+            "url": {
+              "raw": "{{etlUrl}}/runs",
+              "host": [
+                "{{etlUrl}}"
+              ],
+              "path": [
+                "runs"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -378,7 +470,16 @@
                 "value": "{{adminKey}}"
               }
             ],
-            "url": "{{etlUrl}}/runs/latest",
+            "url": {
+              "raw": "{{etlUrl}}/runs/latest",
+              "host": [
+                "{{etlUrl}}"
+              ],
+              "path": [
+                "runs",
+                "latest"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -414,7 +515,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -445,7 +554,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -473,7 +590,16 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{gatewayUrl}}/users/register",
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"{{foUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{foUsername}}@example.com\",\n  \"packageId\": \"pkg-demo\"\n}",
@@ -514,7 +640,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -542,7 +676,16 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{gatewayUrl}}/users/register",
+            "url": {
+              "raw": "{{gatewayUrl}}/users/register",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "register"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"{{foUsername}}\",\n  \"password\": \"{{password}}\",\n  \"email\": \"{{foUsername}}@example.com\",\n  \"packageId\": \"pkg-demo\"\n}",
@@ -595,7 +738,16 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{gatewayUrl}}/users/login",
+            "url": {
+              "raw": "{{gatewayUrl}}/users/login",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"{{foUsername}}\",\n  \"password\": \"{{password}}\"\n}",
@@ -626,7 +778,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -649,7 +809,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -672,7 +840,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -701,7 +877,16 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/users/{{userId}}",
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{userId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}"
+              ]
+            },
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -731,7 +916,16 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/users/{{userId}}",
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{userId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}"
+              ]
+            },
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -774,7 +968,15 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{packageRegistryUrl}}/packages",
+            "url": {
+              "raw": "{{packageRegistryUrl}}/packages",
+              "host": [
+                "{{packageRegistryUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Demo package\",\n  \"version\": \"1.0.{{$timestamp}}\",\n  \"description\": \"Lab 5 demo\",\n  \"moderatorIds\": [\n    \"{{userId}}\"\n  ]\n}",
@@ -807,7 +1009,16 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/packages/{{packageId}}",
+            "url": {
+              "raw": "{{gatewayUrl}}/packages/{{packageId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -830,7 +1041,16 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/packages/{{packageId}}",
+            "url": {
+              "raw": "{{gatewayUrl}}/packages/{{packageId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -866,7 +1086,17 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{packageRegistryUrl}}/packages/{{packageId}}/stat-definitions",
+            "url": {
+              "raw": "{{packageRegistryUrl}}/packages/{{packageId}}/stat-definitions",
+              "host": [
+                "{{packageRegistryUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}",
+                "stat-definitions"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"statDefinitions\": {\n    \"hunger\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 80,\n      \"bonusMultiplier\": 1.5\n    },\n    \"happiness\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 60,\n      \"bonusMultiplier\": 1.1\n    }\n  }\n}",
@@ -898,7 +1128,16 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/packages/{{packageId}}",
+            "url": {
+              "raw": "{{gatewayUrl}}/packages/{{packageId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -921,7 +1160,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/metrics",
+            "url": {
+              "raw": "{{gatewayUrl}}/metrics",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -953,7 +1200,23 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{prometheusUrl}}/api/v1/query?query=sum by (node) (cache_requests_total)",
+            "url": {
+              "raw": "{{prometheusUrl}}/api/v1/query?query=sum%20by%20(node)%20(cache_requests_total)",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "query"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "sum%20by%20(node)%20(cache_requests_total)"
+                }
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -981,7 +1244,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -1004,7 +1275,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -1046,7 +1325,15 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{packageRegistryUrl}}/raid-configs",
+            "url": {
+              "raw": "{{packageRegistryUrl}}/raid-configs",
+              "host": [
+                "{{packageRegistryUrl}}"
+              ],
+              "path": [
+                "raid-configs"
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Demo Wyrm {{$timestamp}}\",\n  \"maxHp\": 1000,\n  \"duration\": 600,\n  \"rewards\": {\n    \"coins\": 50\n  },\n  \"createdByAdminId\": \"{{adminId}}\"\n}",
@@ -1087,7 +1374,21 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{brokerUrl}}/sagas?wait=15s",
+            "url": {
+              "raw": "{{brokerUrl}}/sagas?wait=15s",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "wait",
+                  "value": "15s"
+                }
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"saga\": \"raid-activation\",\n  \"payload\": {\n    \"raidConfigId\": \"{{raidConfigId}}\",\n    \"configId\": \"{{raidConfigId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"monsterName\": \"Rollback Wyrm\",\n    \"maxHp\": 0,\n    \"duration\": 600,\n    \"rewards\": {\n      \"coins\": 50\n    },\n    \"previousRaidId\": null\n  }\n}",
@@ -1133,7 +1434,17 @@
                 "value": "{{adminId}}"
               }
             ],
-            "url": "{{packageRegistryUrl}}/raid-configs/{{raidConfigId}}/activate",
+            "url": {
+              "raw": "{{packageRegistryUrl}}/raid-configs/{{raidConfigId}}/activate",
+              "host": [
+                "{{packageRegistryUrl}}"
+              ],
+              "path": [
+                "raid-configs",
+                "{{raidConfigId}}",
+                "activate"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -1164,7 +1475,16 @@
                 "value": "{{adminKey}}"
               }
             ],
-            "url": "{{brokerUrl}}/sagas/{{activationSagaId}}",
+            "url": {
+              "raw": "{{brokerUrl}}/sagas/{{activationSagaId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "{{activationSagaId}}"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -1193,7 +1513,21 @@
                 "value": "{{adminKey}}"
               }
             ],
-            "url": "{{brokerUrl}}/sagas?limit=50",
+            "url": {
+              "raw": "{{brokerUrl}}/sagas?limit=50",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
@@ -1219,7 +1553,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{brokerUrl}}/metrics",
+            "url": {
+              "raw": "{{brokerUrl}}/metrics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
             "auth": {
               "type": "noauth"
             }
@@ -1249,7 +1591,15 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{gatewayUrl}}/health",
+            "url": {
+              "raw": "{{gatewayUrl}}/health",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
             "auth": {
               "type": "noauth"
             },
