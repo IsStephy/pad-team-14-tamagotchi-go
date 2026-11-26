@@ -1812,10 +1812,10 @@ Three things that bite anyone adding a store:
   migration that creates a role (`etl_reader`) fails unless an init script,
   run as `postgres` (`POSTGRESQL_INITSCRIPTS_USERNAME`), gives it `CREATEROLE`.
   Init scripts run only when a node's volume is empty.
-- **Restarting a repmgr node needs two fixes** (found while testing #220;
-  Guild's and Package Registry's nodes have both, through a small
-  `entrypoint` wrapper in `docker-compose.yml`; Monster Raid's since #264).
-  *Tamagotchi's nodes don't have them yet: Daniel, worth copying.*
+- **Restarting a repmgr node needs two fixes** (found while testing #220).
+  Every service's Postgres nodes have both, through a small `entrypoint`
+  wrapper in `docker-compose.yml`: Guild's and Package Registry's first,
+  then Monster Raid's (#264), User Management's, Battle's and Tamagotchi's.
   - **A stale PID file.** repmgrd runs as PID 1 and keeps `/tmp/repmgrd.pid`,
     which survives a container restart. After an unclean stop (e.g. Docker
     restarting), the new entrypoint is PID 1 again, repmgrd thinks it is
