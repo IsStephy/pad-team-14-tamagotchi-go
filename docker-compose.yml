@@ -111,6 +111,26 @@ x-tamagotchi-db: &tamagotchi-db
     timeout: 5s
     retries: 30
   restart: unless-stopped
+  # Two fixes before the image's own entrypoint (the same as the other
+  # services' nodes):
+  # - repmgrd keeps its PID file in /tmp, which survives a container restart:
+  #   after an unclean stop it took the stale file for a live repmgrd and the
+  #   node restarted forever. Only that file is removed.
+  # - A node that was the primary before it stopped waits 30 s, so the new
+  #   primary's repmgrd has marked it inactive and it rejoins as a replica
+  #   instead of starting as a second primary with old data.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
 
 # Guild's and Package Registry's Postgres (#220): the same setup as Monster
 # Raid's above, one template per service because each has its own users and
