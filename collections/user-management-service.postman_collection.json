@@ -80,6 +80,10 @@
     {
       "key": "battleMessageId",
       "value": ""
+    },
+    {
+      "key": "cacheState",
+      "value": ""
     }
   ],
   "item": [
@@ -552,6 +556,96 @@
               "});",
               "pm.test(\"leaves untouched fields alone\", function () {",
               "    pm.expect(body.username).to.eql(pm.collectionVariables.get(\"username1\"));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get user after the update (read from the database)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/{{userId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "Lab 5: GET /users/{userId} is read through the shared cache. The update deleted the cached entry, so this read comes from the database and shows the new profile."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const cache = pm.response.headers.get(\"X-Cache\");",
+              "pm.test(\"the read after the update comes from the database (X-Cache miss, or off without a cache)\", function () {",
+              "    pm.expect([\"miss\", \"off\"]).to.include(cache);",
+              "});",
+              "pm.collectionVariables.set(\"cacheState\", cache === \"off\" ? \"off\" : \"on\");",
+              "pm.test(\"shows the updated profile\", function () {",
+              "    pm.expect(pm.response.json().profile).to.be.a(\"string\").that.is.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get user again (read from the cache)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/{{userId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}"
+          ]
+        },
+        "description": "The same read again: from the cache, with the same answer."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const cache = pm.response.headers.get(\"X-Cache\");",
+              "const want = pm.collectionVariables.get(\"cacheState\") === \"off\" ? \"off\" : \"hit\";",
+              "pm.test(\"the second read comes from the cache (X-Cache \" + want + \")\", function () {",
+              "    pm.expect(cache).to.eql(want);",
+              "});",
+              "pm.test(\"the same user\", function () {",
+              "    pm.expect(pm.response.json().userId).to.eql(pm.collectionVariables.get(\"userId\"));",
               "});"
             ]
           }
@@ -1219,6 +1313,53 @@
               "    pm.response.to.have.status(200);",
               "});",
               "pm.test(\"reads back as a friendship\", function () {",
+              "    pm.expect(pm.response.json().relationship).to.eql(\"friend\");",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get relationship again (read from the cache)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{gatewayUrl}}/users/{{userId}}/relationship/{{targetUserId}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "users",
+            "{{userId}}",
+            "relationship",
+            "{{targetUserId}}"
+          ]
+        },
+        "description": "GET /users/{userId}/relationship/{targetId} is read through the shared cache: the second read is a hit. \"Relationship is gone\" below checks that a change deletes it."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"responds 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "const cache = pm.response.headers.get(\"X-Cache\");",
+              "const want = pm.collectionVariables.get(\"cacheState\") === \"off\" ? \"off\" : \"hit\";",
+              "pm.test(\"the second read comes from the cache (X-Cache \" + want + \")\", function () {",
+              "    pm.expect(cache).to.eql(want);",
+              "});",
+              "pm.test(\"still friends\", function () {",
               "    pm.expect(pm.response.json().relationship).to.eql(\"friend\");",
               "});"
             ]

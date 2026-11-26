@@ -684,6 +684,284 @@
       ]
     },
     {
+      "name": "Cache (Lab 5)",
+      "description": "Lab 5 (#227, #233): GET /tamagotchis/{id} and GET /users/{userId}/tamagotchis are read through the shared cache nodes (cache-1..3, sharded with the consistent-hash ring). Every response says where it came from in the X-Cache header: miss (read from the database, now cached), hit (served from the cache), off (cache switched off). Every write deletes the cached copies it changed, after its commit, so the next read is a miss with the new data.\n\nNeeds the stack's cache on (TAMAGOTCHI_CACHE_NODES). The last request puts the stats back, so the folders after this one see the same data as without it.",
+      "item": [
+        {
+          "name": "Update stats (deletes the cached Tamagotchi and the owner's list)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('stats stored', function () { pm.expect(pm.response.json().packageStats).to.include({ hunger: 70 }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 70\n  }\n}"
+            },
+            "description": "A write: the cached copies of this Tamagotchi and of its owner's list are deleted after the commit."
+          },
+          "response": []
+        },
+        {
+          "name": "Get the Tamagotchi after the write (X-Cache: miss)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: miss', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'); });",
+                  "pm.test('the new stats', function () { pm.expect(pm.response.json().packageStats.hunger).to.eql(70); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get it again (X-Cache: hit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: hit', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'); });",
+                  "pm.test('the same stats, from the cache', function () { pm.expect(pm.response.json().packageStats.hunger).to.eql(70); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List my Tamagotchis after the write (X-Cache: miss)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: miss', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'); });",
+                  "pm.test('both of them', function () { pm.expect(pm.response.json()).to.have.lengthOf(2); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "tamagotchis"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List them again (X-Cache: hit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: hit', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'); });",
+                  "pm.test('both of them', function () { pm.expect(pm.response.json()).to.have.lengthOf(2); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/users/{{ownerId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{ownerId}}",
+                "tamagotchis"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Put the stats back (deletes the cached copies again)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('stats stored', function () { pm.expect(pm.response.json().packageStats).to.include({ hunger: 80 }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}/stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}",
+                "stats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statUpdates\": {\n    \"hunger\": 80\n  }\n}"
+            },
+            "description": "Back to the stats set above, for the folders after this one."
+          },
+          "response": []
+        },
+        {
+          "name": "Get the Tamagotchi after the second write (X-Cache: miss)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: miss', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'); });",
+                  "pm.test('the stats as they are now, not the cached ones', function () { pm.expect(pm.response.json().packageStats.hunger).to.eql(80); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Battle and Monster Raid, through the Message Broker",
       "item": [
         {
@@ -1117,6 +1395,659 @@
                 "tamagotchi-service",
                 "tamagotchis",
                 "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Saga steps from the Message Broker's coordinator",
+      "description": "Tamagotchi's steps of the battle-settlement and raid-rewards sagas (POST /saga-steps, broker key only), called here through the broker's queue for Tamagotchi as the coordinator would call them. Every step is undone again, so the folder leaves the Tamagotchis as it found them.",
+      "item": [
+        {
+          "name": "add-xp: 300 XP to the winner's primary (level 3 -> 4)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('one change, now level 4', function () { var c = pm.response.json().result.changed; pm.expect(c).to.have.lengthOf(1); pm.expect(c[0].level).to.eql(4); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-a-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"add-xp\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"battleId\": \"pm-saga-{{runId}}\",\n    \"winnerId\": \"{{otherId}}\",\n    \"winnerPrimaryTamagotchiId\": \"{{tamagotchiId}}\",\n    \"primaryXp\": 300,\n    \"winnerSecondaryTamagotchiId\": \"\",\n    \"secondaryXp\": 0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The same step again changes nothing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the first result again', function () { pm.expect(pm.response.json().result.changed[0].level).to.eql(4); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-a-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"add-xp\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"battleId\": \"pm-saga-{{runId}}\",\n    \"winnerId\": \"{{otherId}}\",\n    \"winnerPrimaryTamagotchiId\": \"{{tamagotchiId}}\",\n    \"primaryXp\": 300,\n    \"winnerSecondaryTamagotchiId\": \"\",\n    \"secondaryXp\": 0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Level 4, once",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('level 4', function () { pm.expect(pm.response.json().level).to.eql(4); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Compensate: exactly that XP comes off (level 4 -> 3)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('one change undone, back to level 3', function () { var u = pm.response.json().result.undone; pm.expect(u).to.have.lengthOf(1); pm.expect(u[0].level).to.eql(3); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-a-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"add-xp\",\n  \"action\": \"compensate\"\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Back to level 3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('level 3', function () { pm.expect(pm.response.json().level).to.eql(3); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The compensated step can't run again (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-a-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"add-xp\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"battleId\": \"pm-saga-{{runId}}\",\n    \"winnerId\": \"{{otherId}}\",\n    \"winnerPrimaryTamagotchiId\": \"{{tamagotchiId}}\",\n    \"primaryXp\": 300,\n    \"winnerSecondaryTamagotchiId\": \"\",\n    \"secondaryXp\": 0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A compensation before its step: recorded as cancelled",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the step never ran', function () { pm.expect(pm.response.json().result.stepRan).to.eql(false); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-b-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"add-xp\",\n  \"action\": \"compensate\"\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "The late step changes nothing (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-b-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"add-xp\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"battleId\": \"pm-saga-{{runId}}\",\n    \"winnerId\": \"{{otherId}}\",\n    \"winnerPrimaryTamagotchiId\": \"{{tamagotchiId}}\",\n    \"primaryXp\": 300,\n    \"winnerSecondaryTamagotchiId\": \"\",\n    \"secondaryXp\": 0\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "transfer-owner: the captured Tamagotchi to the winner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('moved to the winner', function () { var c = pm.response.json().result.changed; pm.expect(c[0].ownerId).to.eql(pm.collectionVariables.get('ownerId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-c-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"transfer-owner\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"battleId\": \"pm-saga-{{runId}}\",\n    \"winnerId\": \"{{ownerId}}\",\n    \"loserId\": \"{{otherId}}\",\n    \"transferredTamagotchiId\": \"{{tamagotchiId}}\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Compensate: it goes back to the loser",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('back to the loser', function () { var u = pm.response.json().result.undone; pm.expect(u[0].ownerId).to.eql(pm.collectionVariables.get('otherId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-c-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"transfer-owner\",\n  \"action\": \"compensate\"\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Its owner is the loser again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('owned by the loser', function () { pm.expect(pm.response.json().ownerId).to.eql(pm.collectionVariables.get('otherId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "X-Service-Key",
+                "value": "{{battleServiceKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/tamagotchis/{{tamagotchiId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "tamagotchis",
+                "{{tamagotchiId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A transfer from someone who doesn't own it (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-d-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"transfer-owner\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"battleId\": \"pm-saga-{{runId}}\",\n    \"winnerId\": \"pm-third-player-{{runId}}\",\n    \"loserId\": \"{{ownerId}}\",\n    \"transferredTamagotchiId\": \"{{tamagotchiId}}\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "raid-rewards add-xp: XP to each player's primary; a player without one is skipped",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('the owner\\'s primary got 40 XP, the other player is skipped', function () { var r = pm.response.json().result; pm.expect(r.changed).to.have.lengthOf(1); pm.expect(r.changed[0].tamagotchiId).to.eql(pm.collectionVariables.get('secondaryTamagotchiId')); pm.expect(r.skipped).to.have.lengthOf(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-e-{{runId}}\",\n  \"saga\": \"raid-rewards\",\n  \"step\": \"add-xp\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"raidId\": \"pm-saga-{{runId}}\",\n    \"rewards\": [\n      {\n        \"userId\": \"{{ownerId}}\",\n        \"xp\": 40,\n        \"currency\": 10\n      },\n      {\n        \"userId\": \"{{otherId}}\",\n        \"xp\": 40,\n        \"currency\": 10\n      }\n    ]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Compensate the raid XP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('one change undone', function () { pm.expect(pm.response.json().result.undone).to.have.lengthOf(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-e-{{runId}}\",\n  \"saga\": \"raid-rewards\",\n  \"step\": \"add-xp\",\n  \"action\": \"compensate\"\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "An unknown step (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable Entity', function () { pm.response.to.have.status(422); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"pm-saga-f-{{runId}}\",\n  \"saga\": \"battle-settlement\",\n  \"step\": \"pay-winner\",\n  \"action\": \"do\",\n  \"payload\": {}\n}"
+            },
+            "url": {
+              "raw": "{{brokerUrl}}/services/tamagotchi-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "tamagotchi-service",
+                "saga-steps"
               ]
             }
           },

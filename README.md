@@ -104,7 +104,7 @@ Every request — from a client or from another service — goes through the **A
 
 #### Service keys
 
-Endpoints marked **Service** below are internal: only the listed callers may use them. Since Lab 4, service-to-service calls go through the **Message Broker**, not the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token) and `X-Broker-Key`, and the callee checks both — the broker key proves the call came through the broker, the service key proves *which* service made it (team decisions, #182). The broker key alone opens nothing but `POST /events`. Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others, and a key opens only the endpoints that list its service: another service's key gets `403`.
+Endpoints marked **Service** below are internal: only the listed callers may use them. Since Lab 4, service-to-service calls go through the **Message Broker**, not the gateway: the caller sends its own `X-Service-Key: <key>` (never a player's token) and `X-Broker-Key`, and the callee checks both — the broker key proves the call came through the broker, the service key proves *which* service made it (team decisions, #182). The broker key alone opens nothing but `POST /events` (and, since Lab 5, `POST /saga-steps` for the broker's saga coordinator). Every caller has its own key (`SERVICE_KEY_*` in `.env`, read by both sides; placeholders only in `.env.example`), so one caller's access can be revoked without touching the others, and a key opens only the endpoints that list its service: another service's key gets `403`.
 
 **The gateway forwards no service-to-service call** (gateway v4.2.0, Dackohn/gateway#18). The endpoints that only services call answer `404 {"error": "POST /raids is not available through the gateway"}` there, without reaching the service: `POST /users/{userId}/currency/adjust`, `POST /tamagotchis/{id}/xp`, `POST /tamagotchis/{id}/transfer-owner` and `POST /raids`. A request with only an `X-Service-Key` gets `401` like any request without a token, and the gateway drops any `X-Service-Key` or `X-Broker-Key` a client sends.
 
@@ -252,11 +252,13 @@ Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
 | | `POST /users/{userId}/enemies/{targetId}` | Player (self) |
 | | `GET /users/{userId}/relationship/{targetId}` | Player (self), or **Service** — Map, Battle, Guild |
 | | `POST /events` | **Message Broker** only (`X-Broker-Key`); not routed by the gateway |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Battle | `POST /battles/challenge` | Player (self — the challenger) |
 | | `POST /battles/{battleId}/accept` | Player (self — the challenged player) |
 | | `GET /battles/{battleId}` | Player |
 | | `POST /battles/{battleId}/action` | Player (self — a participant) |
 | | `WS /battles/{battleId}/live` | Player — gateway ticket |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Tamagotchi | `GET /types/advantages` | Public |
 | | `POST /tamagotchis` | Player (self — the owner) |
 | | `GET /tamagotchis/{id}` | Player, or **Service** — Monster Raid (ownership and attack power on raid joins), Battle (combat stats and equipped boosts) |
@@ -266,6 +268,7 @@ Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
 | | `POST /tamagotchis/{id}/xp` | **Service** — Battle; not routed by the gateway |
 | | `POST /tamagotchis/{id}/transfer-owner` | **Service** — Battle; not routed by the gateway |
 | | `POST /events` | **Message Broker** only (`X-Broker-Key`); not routed by the gateway |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Notification | `POST /notifications/register-device` | Player (self) |
 | | `GET /notifications/{userId}` | Player (self) |
 | | `PATCH /notifications/{id}/read` | Player (self — the recipient) |
@@ -298,6 +301,7 @@ Reference implementations: the broker's `app/breaker.py` (Python) and Battle's
 | | `POST /raid-configs/{id}/activate` | Player + role: admin |
 | | `POST /raid-configs/{id}/deactivate` | Player + role: admin |
 | | `POST /raid-configs/{id}/cancel` | Player + role: admin |
+| | `POST /saga-steps` | **Message Broker** only (`X-Broker-Key`, its saga coordinator); not routed by the gateway |
 | Every service | `GET /health`, `/docs` | Public |
 
 ### Endpoints
@@ -372,7 +376,7 @@ Success Response (200 OK):
 
 **Get Player**
 
-`GET` `/users/{userId}` — Description: Retrieves a player's profile.
+`GET` `/users/{userId}` — Description: Retrieves a player's profile. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -451,7 +455,7 @@ Success Response (200 OK):
 
 **Get Relationship**
 
-`GET` `/users/{userId}/relationship/{targetId}` — Description: Returns the relationship between two players.
+`GET` `/users/{userId}/relationship/{targetId}` — Description: Returns the relationship between two players. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -500,7 +504,39 @@ Success Response (200 OK):
 | `battle.ended` | pays `rewardCurrency` to `winnerId`, charges `loserCurrencyPenalty` to `loserId` (global currency) | `battle-ended:<battleId>:winner`, `battle-ended:<battleId>:loser` |
 | `raid.completed` | pays each `rewards[].currency` to its `userId` (global currency) | `raid:<raidId>:<userId>`, the key Monster Raid pays with directly |
 
-The keys are the ones Battle and Monster Raid use when they pay directly, so a payment made both ways counts once.
+The keys are the ones Battle and Monster Raid use when they pay directly, so a payment made both ways counts once. With the sagas on, the event a saga pays is no longer consumed (`SETTLEMENT_BY_SAGA=true` for `battle.ended`, `RAID_REWARDS_BY_SAGA=true` for `raid.completed`; both off in the image, **both on in the stack**), so nothing is paid twice.
+
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) one of User Management's money steps of a long-running saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string",
+  "saga": "string (enum: battle-settlement, raid-rewards)",
+  "step": "string (enum: charge-loser, pay-winner, pay-raid-rewards)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object (per step, below)"
+}
+```
+
+| `saga` / `step` | `payload` | `do` | `compensate` |
+|---|---|---|---|
+| `battle-settlement` / `charge-loser` | `{battleId, winnerId, loserId, rewardCurrency, loserCurrencyPenalty}` (the names `battle.ended` uses) | `-loserCurrencyPenalty` from `loserId` (global currency); a loser who can't cover it, or no longer exists, is **not charged** (`charged: 0`) and the saga goes on | gives back what was charged |
+| `battle-settlement` / `pay-winner` | as above | `+rewardCurrency` to `winnerId`; a winner who no longer exists: `409` | takes back what the winner **still holds**, never below zero; the rest is logged as a shortfall |
+| `raid-rewards` / `pay-raid-rewards` | `{raidId, rewards: [{userId, currency}]}` (other fields ignored) | each `+currency`; a player listed twice is paid the sum, a player who no longer exists is skipped | takes each reward back, as above |
+
+Success Response (200 OK):
+
+```json
+{
+  "result": "object (charge-loser: {userId, charged, skipped?}; pay-winner: {userId, paid}; pay-raid-rewards: {paid: [{userId, paid}], total, skipped?}; compensate: what was given or taken back)"
+}
+```
+
+- **Repeats change nothing:** every step is recorded (`saga_steps`, by `sagaId` + `step`) in the same transaction as its balance change, and a repeated `do` or `compensate` answers the first result.
+- **A `compensate` can come before its `do`:** the step is recorded as cancelled, and the late `do` answers `409` and changes nothing.
+- `409`: the step can't be done (the saga undoes the ones before it); `422`: a call this service can't make sense of; `503` + `Retry-After`: the database is failing over (the coordinator tries again).
 
 **gRPC** (`tamagotchigo.user.v1.UserManagement`, through the broker at `message-broker:50051`): `GetUser`, `GetBalance`, `AdjustCurrency`, `GetRelationship`, with the same rules and callers as the REST endpoints above, on each replica's `GRPC_PORT` (`50081`). See [gRPC between services](#grpc-between-services).
 
@@ -552,7 +588,7 @@ Success Response (200 OK):
 
 **Get Battle**
 
-`GET` `/battles/{battleId}` — Description: Retrieves the current state of a battle.
+`GET` `/battles/{battleId}` — Description: Retrieves the current state of a battle. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -562,9 +598,12 @@ Success Response (200 OK):
   "state": "string",
   "currentTurn": "int",
   "healthP1": "int",
-  "healthP2": "int"
+  "healthP2": "int",
+  "settlement": "string (enum: settling, settled, settlement_failed; absent until the battle is finished)"
 }
 ```
+
+`settlement` is where a finished battle's money, XP and transfer stand: `settled` once they are applied, `settling` while the settlement saga runs, `settlement_failed` when a step failed and the saga undid the others (the outcome stands, its consequences were cancelled).
 
 > **Type advantage & package bonuses:** damage calculation resolves type advantage via Tamagotchi Service's `GET /types/advantages` (canonical source, see the Tamagotchi Service section — Battle Service must not hardcode its own copy of the advantage cycle) and package-specific stat bonuses via Package Registry's stat definitions. If a Tamagotchi has a stat with no matching definition in Package Registry (e.g. an incompletely-configured package), that stat contributes **zero bonus** rather than failing the battle.
 
@@ -648,6 +687,36 @@ Not client-facing — published on `battle.ended` when a battle ends, consumed b
 
 Each event's `messageId` is a UUIDv5 of the topic and its key (`battle-ended:<battleId>`, `battle-request:<battleId>`), so a republish is dropped as a duplicate.
 
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) Battle's steps of the `battle-settlement` saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). With `SETTLEMENT_BY_SAGA=true` (off in the image, on in the stack), a battle that ends stores its outcome with `settlement: settling` and starts the saga `battle:<battleId>`; `battle.ended` is then published only once the saga has completed. See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string (battle:<battleId>)",
+  "saga": "string (enum: battle-settlement)",
+  "step": "string (enum: record-result, mark-settled)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object ({battleId, winnerId, loserId, rewardCurrency, loserCurrencyPenalty, rewardXp, loserXp, winnerPrimaryTamagotchiId, primaryXp, winnerSecondaryTamagotchiId, secondaryXp, transferredTamagotchiId}, plus results)"
+}
+```
+
+| `step` | `do` | `compensate` |
+|---|---|---|
+| `record-result` | checks the battle is finished and its settlement wasn't cancelled (`409` otherwise) | `settlement` → `settlement_failed` |
+| `mark-settled` | `settling` → `settled`, then publishes `battle.ended` (and `battle.tamagotchi_captured`) | `settlement` → `settlement_failed` |
+
+Success Response (200 OK):
+
+```json
+{
+  "result": "object ({battleId, settlement}; record-result also winnerId, loserId)"
+}
+```
+
+- **Repeats change nothing:** the battle's `settlement` is the step's memory; a repeated `do` answers the same and publishes the same `messageId`.
+- **A late `do` after a compensation** answers `409` and changes nothing, so a step the coordinator gave up on can't settle a battle whose consequences were undone. A `compensate` for a battle that doesn't exist does nothing.
+
 #### Tamagotchi Service (`tamagotchi-notification`, Go)
 
 **Get Type Advantages**
@@ -690,7 +759,7 @@ Success Response (201 Created):
 
 **Get Tamagotchi**
 
-`GET` `/tamagotchis/{id}` — Description: Retrieves a Tamagotchi's details.
+`GET` `/tamagotchis/{id}` — Description: Retrieves a Tamagotchi's details. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -707,7 +776,7 @@ Success Response (200 OK):
 
 **List Player's Tamagotchis**
 
-`GET` `/users/{userId}/tamagotchis` — Description: Lists all Tamagotchis owned by a player.
+`GET` `/users/{userId}/tamagotchis` — Description: Lists all Tamagotchis owned by a player. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -809,6 +878,57 @@ Success Response (200 OK):
 **gRPC** (`tamagotchigo.tamagotchi.v1.TamagotchiService`, through the broker at `message-broker:50051`): `GetTamagotchi`, `ListByOwner`, `GetTypeAdvantages`, `AddXp` and `TransferOwner` (with `idempotency_key`, the same keys as REST's `idempotencyKey`), with the same rules and callers as the REST endpoints above, on each replica's `GRPC_PORT` (`50083`). `GetTamagotchi`'s `package_stats` carries the numeric stats only (`map<string, double>`). See [gRPC between services](#grpc-between-services).
 
 Each change is its own transaction. The answer is the ack: `200 {messageId, applied, duplicates}` once every change is made (a redelivery answers `200` with `applied: 0`); `400` for an event it can't read; `422` when a change can never be made (e.g. a Tamagotchi that doesn't exist; the others are still made); `503` + `Retry-After` when it may work later.
+
+`APPLY_BATTLE_ENDED` (`TAMAGOTCHI_APPLY_BATTLE_ENDED` in `.env`, **`false` in the stack**, since battles are settled by the battle-settlement saga below; it goes back to `true` together with `SETTLEMENT_BY_SAGA=false`). Tamagotchi then no longer subscribes to `battle.ended`, and one still delivered is acked without changes. The saga's steps claim the same keys, so an award or a transfer can't be made both ways even while both are on.
+
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) one of Tamagotchi's steps of a long-running saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "saga": "string (enum: battle-settlement, raid-rewards)",
+  "step": "string (enum: add-xp, transfer-owner)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object (per step, below)"
+}
+```
+
+| `saga` / `step` | `payload` | `do` | `compensate` |
+|---|---|---|---|
+| `battle-settlement` / `add-xp` | `{battleId, winnerId, winnerPrimaryTamagotchiId, primaryXp, winnerSecondaryTamagotchiId, secondaryXp}` (the names `battle.ended` uses) | XP to each Tamagotchi named, when its XP isn't 0 (keys `battle-ended:<battleId>:primary` / `:secondary`) | removes exactly that XP; the level goes down if it went up |
+| `battle-settlement` / `transfer-owner` | `{battleId, winnerId, loserId, transferredTamagotchiId}` | the captured Tamagotchi to `winnerId`, as a secondary (key `battle-ended:<battleId>`); no `transferredTamagotchiId`: nothing to do | back to `loserId`; their primary again only if they haven't chosen another since |
+| `raid-rewards` / `add-xp` | `{raidId, rewards: [{userId, xp}]}` (other fields, e.g. `currency`, are ignored) | XP to each player's **primary** Tamagotchi (key `raid-rewards:<raidId>:<userId>`); a player without one is skipped and listed in `result.skipped` | removes each XP given |
+
+Success Response (200 OK), for `do`:
+
+```json
+{
+  "result": {
+    "changed": "array<object> (e.g. {kind: xp, tamagotchiId, ownerId, xpAdded, level, xp} or {kind: transfer, tamagotchiId, previousOwnerId, ownerId})",
+    "alreadyApplied": "array<object> (changes already made under the same key, e.g. by battle.ended)",
+    "skipped": "array<object> ({userId, xp, reason}: raid players without a primary Tamagotchi)"
+  }
+}
+```
+
+and for `compensate`:
+
+```json
+{
+  "result": {
+    "undone": "array<object>",
+    "leftAsIs": "array<object> (a change that can't be undone any more, e.g. the Tamagotchi changed hands again; never a failure)",
+    "stepRan": "bool (false: the compensation came before its step)"
+  }
+}
+```
+
+- **Repeats change nothing:** every step is recorded (`saga_steps`, by `sagaId` + `step`) in the same transaction as its changes, and a repeated `do` or `compensate` answers the first result.
+- **A `compensate` can come before its `do`:** the step is recorded as cancelled, and the late `do` answers `409` and changes nothing.
+- A step that can't make all its changes makes none. A compensation releases the keys its step claimed, so a retried saga (a new `sagaId`) can award again.
+- Errors: `409 {"error"}` the step was already compensated, the captured Tamagotchi doesn't belong to `loserId`, or a key already used for another change; `422 {"error"}` an unknown saga or step, an unreadable payload, a required id missing, negative XP, a Tamagotchi that doesn't exist; `503` + `Retry-After` may work later (the coordinator retries); `401` without the broker key.
 
 #### Notification Service (`tamagotchi-notification`, Go)
 
@@ -943,7 +1063,7 @@ Published when two unrelated users cross the proximity threshold, finalized at *
 
 **Create Raid (internal)**
 
-`POST` `/raids` — Description: Creates a live raid instance from a Package Registry raid configuration. Called when an admin activates a raid config (`POST /raid-configs/{id}/activate` in Package Registry Service) — previously that endpoint returned a `raidId` with nowhere for it to actually land; this is the entrypoint that closes that gap. Not client-facing. Publishes `RaidStarted {raidId, guildId}` on success (consumed by Notification Service) — previously nothing ever emitted this event despite Notification Service listing it as consumed. Payload:
+`POST` `/raids` — Description: Creates a live raid instance from a Package Registry raid configuration. Called when an admin activates a raid config (`POST /raid-configs/{id}/activate` in Package Registry Service) — previously that endpoint returned a `raidId` with nowhere for it to actually land; this is the entrypoint that closes that gap. Not client-facing. Publishes `RaidStarted {raidId, guildId, userIds}` on success, `userIds` being the guild's members (empty when Guild can't say) (consumed by Notification Service) — previously nothing ever emitted this event despite Notification Service listing it as consumed. Payload:
 
 ```json
 {
@@ -1045,7 +1165,8 @@ After `completed` or `failed` the socket is closed (`1000`).
 
 **Raid Completed / Raid Failed (events)**
 
-Published on kill or on timeout.
+Published on kill or on timeout. `RaidFailed` names the raid's participants in
+`userIds`, so Notification can tell each of them.
 
 ```json
 {
@@ -1062,7 +1183,8 @@ Published on kill or on timeout.
 
 ```json
 {
-  "raidId": "string"
+  "raidId": "string",
+  "userIds": ["string"]
 }
 ```
 
@@ -1178,7 +1300,7 @@ Success Response (200 OK):
 
 **List My Guilds**
 
-`GET` `/users/{userId}/guilds` — Description: Lists the guilds a player belongs to. Previously a player needed to already know their `guildId` to call anything guild-related — this covers the common "show me my guild" case on load.
+`GET` `/users/{userId}/guilds` — Description: Lists the guilds a player belongs to. Previously a player needed to already know their `guildId` to call anything guild-related — this covers the common "show me my guild" case on load. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1194,7 +1316,7 @@ Success Response (200 OK):
 
 **Get Guild**
 
-`GET` `/guilds/{guildId}` — Description: Retrieves a guild's details and members. Called by players, and by Monster Raid Service with its own `X-Service-Key` (through the gateway) to check that a raid joiner is a member of the raid's guild — it no longer has the player's token to forward.
+`GET` `/guilds/{guildId}` — Description: Retrieves a guild's details and members. Called by players, and by Monster Raid Service with its own `X-Service-Key` (through the gateway) to check that a raid joiner is a member of the raid's guild — it no longer has the player's token to forward. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1263,7 +1385,7 @@ Success Response (200 OK):
 
 **List Packages**
 
-`GET` `/packages` — Description: Lists all registered packages. Previously there was no discovery endpoint — a caller needed to already know a `packageId`.
+`GET` `/packages` — Description: Lists all registered packages. Previously there was no discovery endpoint — a caller needed to already know a `packageId`. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1302,7 +1424,7 @@ Success Response (201 Created):
 
 **Get Package**
 
-`GET` `/packages/{packageId}` — Description: Retrieves a package's details.
+`GET` `/packages/{packageId}` — Description: Retrieves a package's details. Lab 5: read through the shared cache; the `X-Cache` response header says where the answer came from: `hit` (the cache), `miss` (the database, now cached) or `off` (cache switched off).
 
 Success Response (200 OK):
 
@@ -1415,16 +1537,28 @@ Success Response (201 Created):
 
 **Activate Raid Config**
 
-`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration. This service authors and schedules the config, but does **not** own live raid execution — activating calls Monster Raid Service's `POST /raids` (see that service's section) to actually spin up the live raid and get back a `raidId`; this endpoint's response mirrors that result rather than fabricating its own. Previously this returned a `raidId` with no defined recipient, i.e. nothing ever actually created a live raid from it — that's now closed by Monster Raid Service's side. Monster Raid Service publishes `RaidStarted` once created, consumed by Notification Service.
+`POST` `/raid-configs/{id}/activate` — Description: Activates a raid configuration. This service authors and schedules the config, but does **not** own live raid execution: Monster Raid Service creates the live raid and owns its `raidId`. **Since Lab 5 (#237) activation is the `raid-activation` saga** ([Raid activation](#raid-activation-package-registry-monster-raid)): Package Registry marks the config `activating` → Monster Raid `create-raid` → Package Registry marks it `active` with the `raidId`; a failed step undoes the finished ones and the config gets back the status it had. The saga is started with `POST /sagas?wait=5s` on the broker. Re-activating a config whose raid is still active returns that raid. Without a broker (a service's standalone stack) it calls Monster Raid's `POST /raids` directly.
 
-Success Response (200 OK):
+Success Response (200 OK), the saga finished within 5 s:
 
 ```json
 {
   "raidId": "string",
-  "status": "string (enum: active)"
+  "status": "string (enum: active)",
+  "sagaId": "string (uuid)"
 }
 ```
+
+Accepted (202), the saga is still running (follow it with the broker's `GET /sagas/{sagaId}`):
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "status": "string (enum: activating)"
+}
+```
+
+`409` when the config is already active, is being activated or was cancelled, or one of Package Registry's steps refused; `502` when Monster Raid's step failed and the saga was undone. Both carry `{error, sagaId, status}`, `status` being the config's status now.
 
 **Deactivate Raid Config**
 
@@ -1452,42 +1586,751 @@ Success Response (200 OK):
 }
 ```
 
+**Saga Steps**
+
+`POST` `/saga-steps` — Description: Runs (`action: do`) or undoes (`action: compensate`) one of Package Registry's steps of the `raid-activation` saga, for the Message Broker's saga coordinator only (`X-Broker-Key` alone, like `POST /events`). See [Saga flows and their compensations](#saga-flows-and-their-compensations). Payload:
+
+```json
+{
+  "sagaId": "string",
+  "saga": "string (enum: raid-activation)",
+  "step": "string (enum: mark-activating, activate)",
+  "action": "string (enum: do, compensate)",
+  "payload": "object (the saga's payload, plus results by step name)"
+}
+```
+
+| `step` | `payload` | `do` | `compensate` |
+|---|---|---|---|
+| `mark-activating` | `{raidConfigId}` | remembers the config's status, sets `activating`; `409` if it is active, activating or cancelled | restores the remembered status, unless a person changed it meanwhile |
+| `activate` | `{raidConfigId, results: {"create-raid": {raidId}}}` | `active` with that `raidId`; `409` if the config isn't `activating` any more (e.g. cancelled meanwhile) | back to `activating` with the previous `raidId` |
+
+The saga's payload, which Monster Raid's `create-raid` reads too: `{raidConfigId, configId, guildId, monsterName, maxHp, duration, rewards, previousRaidId}` (the `CreateRaid` fields, plus the config's last raid for re-activation).
+
+Success Response (200 OK): `{"result": {...}}`: what the step did, e.g. `{raidConfigId, status: "activating", previousStatus: "draft"}`. Idempotent per `sagaId` + step: delivered again, it returns its first answer with `alreadyApplied: true`. A compensation that arrives before its step answers `200` and records the step as cancelled; the late step then answers `{skipped: true}`. `422` for a step Package Registry doesn't run.
+
+## Lab 5 Decisions
+
+> **Status: in review (#211, PR #247).** These are the shared choices for
+> Lab 5. They change the communication contract, so the PR needs
+> **2 approvals**, and nobody changes their service for Lab 5 until it is
+> merged.
+>
+> **Votes so far:** replication **A** (bitnamilegacy repmgr + pgpool),
+> **Valkey 8**, **our own hash ring**: Denis, Daniel and Stefan. Pavel to vote.
+> Rows still marked *owner to confirm* wait for that owner.
+
+### Cache settings and key naming
+
+**What:** commonly read `GET`s and authentication data (sessions, tokens,
+user lookups) are cached in **Valkey 8** (`valkey/valkey:8-alpine`).
+
+**Why Valkey:** it is the open-source fork of Redis 7 and speaks the same
+protocol, so the clients we already use (`redis` for Node, `go-redis` for Go,
+`redis-py` for Python) work unchanged.
+
+**Where:** three shared cache nodes, `cache-1`, `cache-2` and `cache-3`,
+used by every service. Each key goes to one node, picked by the
+[hash ring](#hash-ring). Sharing three nodes, instead of giving every service
+three of its own, keeps the stack at 3 extra containers instead of 24. The key
+prefix keeps the services apart.
+
+**Key naming:** `<service>:<entity>:<id>`, all lowercase, `-` inside words:
+
+| Example key | Holds |
+|---|---|
+| `guild-service:guild:<guildId>` | one guild with its members |
+| `guild-service:user-guilds:<userId>` | the guilds a user belongs to |
+| `package-registry-service:package:<packageId>` | one package |
+| `package-registry-service:packages:v<gen>:<queryHash>` | one page of `GET /packages` (see "Lists" below) |
+| `<service>:um-user:<userId>` | a User Management `GetUser` result, cached by the caller |
+| `gateway:token:<sha256 of the token>` | a token the gateway has already verified |
+
+**Time to live, per key type:**
+
+| Key type | TTL | Why |
+|---|---|---|
+| An entity the service owns | 60–120 s | Every write deletes it anyway; the TTL only bounds a missed delete |
+| A list or search page | 60 s | Lists change with every write to any of their entities |
+| Another service's data (e.g. `um-user`) | 30 s | We never hear when it changes, so the TTL is the only invalidation |
+| A verified token | until the token's `exp`, at most 5 min | Never trust a token after it expires; never keep a revoked one long |
+
+**Rules every service follows:**
+- **Invalidate on every write, after the database commit.** Deleting before
+  the commit lets a read that runs in between put the old row back.
+- **Lists:** a write bumps a generation counter
+  (`<service>:<entity>s:gen`) instead of deleting every list key. Keys with
+  the old generation can no longer be reached, and their TTL removes them. We
+  never need `SCAN` across three nodes.
+- **A cache that is down never fails a request.** Every cache call has a
+  short timeout (about 100 ms). On an error the service reads from its
+  database and logs `cache unavailable`. The cache only makes things faster:
+  it must never be the reason a request fails.
+- **Never cache raw secrets.** Tokens are keyed by their SHA-256, never the
+  token itself.
+- **Logout:** a token revoked by logout can still pass the gateway for up to
+  5 minutes, while it is cached. We accept that. The alternative, User
+  Management publishing a `user.logged_out` event that the gateway listens to,
+  is new work in two services for a 5-minute window.
+- **Metric:** every service adds
+  `cache_requests_total{result="hit|miss", node="cache-1|cache-2|cache-3"}`
+  to `/metrics`. A hit or a miss is also a log line with the key and the node.
+
+**What each service caches:**
+
+| Service | Cached |
+|---|---|
+| Guild | `GET /guilds/{guildId}`, `GET /users/{userId}/guilds`, User Management `GetUser` / `GetRelationship` |
+| Package Registry | `GET /packages`, `GET /packages/{packageId}`, User Management `GetUser` |
+| Tamagotchi | `GET /tamagotchis/{id}` (120 s) and `GET /users/{userId}/tamagotchis` (60 s), REST and gRPC; Package Registry's `GET /packages/{packageId}` (its stat keys, 30 s) |
+| Notification | nothing: its data already lives in Redis, so a cache in front of it would add a hop and gain nothing |
+| Gateway | verified tokens (#228, #234) |
+| User Management | `GetUser` (`user-management-service:user:<userId>`, without the password hash) and `GetRelationship` (`...:relationship:<userId>:<targetId>`), REST and gRPC, 60 s; never balances (#226, #232) |
+| Battle | `GET /battles/{battleId}` (60 s) and the pages of `GET /battles` (60 s, under a generation every write bumps); turns, accepts and settlement steps read the database (#226, #232) |
+| Map, Monster Raid | *owners to add* |
+
+**Settings** (in each service's `.env.example`, placeholders only):
+`CACHE_NODES=cache-1:6379,cache-2:6379,cache-3:6379`, `CACHE_PASSWORD`, and
+optional per-type TTLs (`CACHE_TTL_SECONDS`, ...).
+
+### Hash ring
+
+**What:** our own consistent-hash ring, the same algorithm in every service,
+not Redis Cluster.
+
+**Why not Redis Cluster:** it shards by 16384 fixed hash slots,
+`CRC16(key) mod 16384`, assigned to masters. Adding a node moves whole slots,
+and the client must follow `MOVED` redirects. It works, but the grade-7 task
+asks us to shard with consistent hashing, and a ring we wrote ourselves is
+something we can explain line by line.
+
+**The algorithm** (identical in every language, so a key always maps to the
+same node no matter which service computes it):
+
+1. **Hash:** FNV-1a, 32 bit, over the key's UTF-8 bytes, then murmur3's
+   `fmix32` finalizer. Both are a few lines in any language, which makes
+   them easy to port exactly. `fmix32` is needed because FNV-1a alone
+   spreads labels that differ only at the end (`cache-1#0`,
+   `cache-1#1`, ...) badly: one node of three got 59% of the keys.
+2. **Virtual nodes:** each node is placed on the ring **160 times**, at the
+   hashes of `"<node>#0"` … `"<node>#159"`. Without them, 3 points on a
+   circle split the keys very unevenly.
+3. **Lookup:** a key belongs to the first virtual node whose hash is `>=` the
+   key's hash, wrapping around to the first one. It is a binary search over
+   the sorted points.
+4. **A node that is down stays on the ring.** Its keys become misses, read
+   from the database, until it comes back. Removing it would move its keys
+   away and then back again.
+
+**Shared code, in `hash-ring/`:** one file per language, which every service
+in that language copies. All three are held to the same `test-vectors.json`
+(keys, node lists and the node each key must map to), so a copy that passes
+picks the same node as every other service:
+
+| Language | File | Services | Written by |
+|---|---|---|---|
+| TypeScript | `hash-ring/src/hashRing.ts` | Guild, Package Registry, Map, Monster Raid | Stefan (#230) |
+| Go | `hash-ring/go/hashring.go` | User Management, Battle, Tamagotchi, Notification | Stefan (#230): one file every Go service copies |
+| Python | `hash-ring/python/` | Gateway (its token cache, #234) | Denis |
+
+The research write-up (ring vs `hash mod N` vs Redis Cluster slots, and which
+keys move when a node is added or removed) comes with #230.
+
+**Tests the ring must pass:** keys spread evenly over 3 nodes (each node gets
+33% ± 5%), and adding a 4th node moves only about 1/4 of the keys, all of
+them to the new node.
+
+### Replication
+
+**What:** every PostgreSQL database becomes **1 primary + 2 replicas** with
+streaming replication and automatic failover. Services reach it through
+**one address that always points at the primary**.
+
+**Setup (option A, voted):** `postgresql-repmgr` nodes with `pgpool` in front:
+
+| Container | Role |
+|---|---|
+| `<service>-db-0` | starts as the primary |
+| `<service>-db-1`, `<service>-db-2` | replicas: repmgr promotes one when the primary stops |
+| `<service>-db` | pgpool, the address the service connects to |
+
+- **pgpool keeps the old container name**, so every service's `DB_HOST`
+  stays the same and its published port (`543N`) does not change. The
+  repmgr nodes publish no ports.
+- **`load_balance_mode = off`**: all queries go to the primary. Sending reads
+  to replicas would give stale reads right after a write, and it would break
+  `LISTEN/NOTIFY` and advisory locks, which only work on the primary.
+- **Every service must survive a failover:** the pool reconnects instead of
+  crashing, logs it, and a query that failed because the connection dropped is
+  retried within the request's deadline. A long-lived connection (e.g. a
+  `LISTEN`) needs its own reconnect.
+
+**Why A and not B:** Bitnami withdrew its free images in 2025, but
+`bitnamilegacy/postgresql-repmgr:16` and `bitnamilegacy/pgpool:4` still pull.
+They are ready-made and configured only by environment variables. They are
+frozen, which is fine for a lab, so the versions are pinned (see
+[Image tags](#image-tags)). Option B, Patroni + etcd + HAProxy, is the usual
+production setup, but it would mean building and maintaining our own
+Postgres + Patroni image, plus running etcd.
+
+**Redis stores:** the same idea for every Redis.
+- **Master + 2 replicas**, and the service's client connects in
+  **Sentinel mode**, so it always finds the current master.
+- **3 Sentinels shared by every Redis in the stack** (`redis-sentinel-1..3`),
+  each watching all the masters. That is 3 extra containers in total, not 3
+  per Redis.
+- **Map** (its Redis holds player locations: its data, not a cache),
+  **Monster Raid's cache** and **Notification** (its only store) are
+  replicated this way. **Battle's cache:** *Pavel to confirm*.
+- **No service connects to a fixed Redis node of another service**, because
+  after a failover that node can be a read-only replica. Guild drops its
+  `NOTIFICATION_EVENTS_REDIS_URL` Pub/Sub fallback: every event already goes
+  through the broker.
+
+**Running now: User Management, Battle, Map, Monster Raid, Tamagotchi, Notification, Guild and Package Registry.**
+
+| Store | Containers | Services connect to |
+|---|---|---|
+| User Management's Postgres | `user-management-service-db-0..2` (repmgr), `user-management-service-db` (pgpool) | `user-management-service-db:5432`, as before |
+| Battle's Postgres | `battle-service-db-0..2` (repmgr), `battle-service-db` (pgpool) | `battle-service-db:5432`, as before |
+| Battle's Redis | `battle-service-cache`, `-1`, `-2` (`172.29.14.41-.43`) | the master `battle-service-cache`, through the Sentinels |
+| Monster Raid's Postgres | `monster-raid-service-db-0..2` (repmgr), `monster-raid-service-db` (pgpool) | `monster-raid-service-db:5432`, as before |
+| Guild's Postgres | `guild-service-db-0..2` (repmgr), `guild-service-db` (pgpool) | `guild-service-db:5432`, as before (host port `5437` in the machines override) |
+| Package Registry's Postgres | `package-registry-service-db-0..2` (repmgr), `package-registry-service-db` (pgpool) | `package-registry-service-db:5432`, as before (host port `5438`) |
+| Monster Raid's Redis | `monster-raid-service-cache`, `-1`, `-2` | the master `monster-raid-service-cache`, through the Sentinels |
+| Map's Redis | `map-service-db`, `-1`, `-2` | the master `map-service-db`, through the Sentinels |
+| Tamagotchi's Postgres | `tamagotchi-service-db-0..2` (repmgr), `tamagotchi-service-db` (pgpool) | `tamagotchi-service-db:5432`, as before |
+| Notification's Redis | `notification-service-db`, `-1`, `-2` (`172.29.14.31-.33`) | the master `notification-service-db`, through the Sentinels |
+| shared | `redis-sentinel-1..3` | `REDIS_SENTINELS=redis-sentinel-1:26379,...` |
+
+Three things that bite anyone adding a store:
+- **Sentinel watches the nodes by IP**, on the `redis-replication` network
+  (`172.29.14.0/24`; the blocks in use are listed at the top of
+  `docker-compose.yml`). Watched by name, a stopped container's name stops
+  resolving, Sentinel stalls on it (`+tilt`) and never fails over.
+- **With `bitnamilegacy/postgresql-repmgr` the app user is not a superuser.** A
+  migration that creates a role (`etl_reader`) fails unless an init script,
+  run as `postgres` (`POSTGRESQL_INITSCRIPTS_USERNAME`), gives it `CREATEROLE`.
+  Init scripts run only when a node's volume is empty.
+- **Restarting a repmgr node needs two fixes** (found while testing #220).
+  Every service's Postgres nodes have both, through a small `entrypoint`
+  wrapper in `docker-compose.yml`: Guild's and Package Registry's first,
+  then Monster Raid's (#264), User Management's, Battle's and Tamagotchi's.
+  - **A stale PID file.** repmgrd runs as PID 1 and keeps `/tmp/repmgrd.pid`,
+    which survives a container restart. After an unclean stop (e.g. Docker
+    restarting), the new entrypoint is PID 1 again, repmgrd thinks it is
+    already running, and the node restarts forever. Remove only that file
+    before the image's entrypoint. (Wiping all of `/tmp` is worse: the image
+    keeps state there, and an old primary then came back as a second
+    primary.)
+  - **A split brain right after a failover.** A node that was primary before
+    (`/bitnami/postgresql/lock/master.lock`) asks the others who is primary
+    now. Restarted within seconds of a failover, their metadata can still
+    name it too, the image can't decide, and starts it as a **second primary
+    with old data**. Waiting 30 s first lets the new primary mark it
+    inactive, and it rejoins as a replica.
+
+  Tested on a 3-node cluster: an old primary restarted right after a
+  failover, killing all 3 nodes after a failover, and a second failover the
+  other way. One primary every time, no row lost, no restart loop.
+
+Measured with a request every 250 ms: stopping Monster Raid's Postgres primary
+gave about 13 s of errors (`503` + `Retry-After`) before a replica was
+promoted; stopping a Redis master about 10 s. A stopped primary or master that
+starts again rejoins as a replica.
+
+Tamagotchi and Notification, the same way on the whole stack (a write and a read
+every 250 ms to each): stopping Tamagotchi's Postgres primary gave about 9 s of
+`503` + `Retry-After: 2` and no `500`, and every acknowledged write was on the
+promoted primary and the other replica; stopping Notification's Redis master
+cost 1 request of 248 while the Sentinels moved the master. Both collections
+pass afterwards.
+
+User Management and Battle (with the Lab 5 release, which answers `503` +
+`Retry-After: 2` while their database fails over): with a write and a read every 250 ms against User
+Management, stopping its Postgres primary gave **1** failed request of 201
+(`503` + `Retry-After: 2`, the one keyless write in flight, which is deliberately
+not repeated) and **no failed read**: reads and idempotency-keyed adjustments
+are repeated for up to 4 s, so a failover costs no `500`. With the previous
+release the same test gave six `500`s. All 200 acknowledged writes were on the
+promoted primary and the other replica. Battle served 210 list-and-get pairs
+through the same failover with no failed request. Stopping Battle's Redis master:
+the Sentinels promoted a replica after 8 s and Battle, which follows the master
+through them, was listening for live updates again 3 s later.
+
+**Heads-up:** Tamagotchi's, User Management's and Battle's Postgres start empty,
+on new volumes (`<service>-db-{0,1,2}-data`); the old `<service>-db-data` is no
+longer used, so a local user or battle starts over. Notification's master and
+Battle's Redis keep their volumes and data. Copy the new `TAMAGOTCHI_*`,
+`USER_MANAGEMENT_*` and `BATTLE_*` password settings from `.env.example`.
+
+Guild and Package Registry (#220) retry what is safe to retry instead of
+failing: a read, or getting a connection, is tried again until 1 s before the
+request's deadline; a write that was already sent is not repeated (it may
+have been saved) and answers `503` + `Retry-After: 2`. Measured with a read
+and a write to each service every 250 ms while **both** primaries were
+stopped at once: 230 rounds, Guild 0 errors, Package Registry 1 `503` (the
+write in flight, which was indeed not saved). Guild chat's `LISTEN`
+connection reconnected by itself about 10 s later. Details: each service's
+README, "Database failover (Lab 5)".
+
+To see it:
+
+```bash
+# Postgres: who is primary
+docker compose exec -u 1001 monster-raid-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh   repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show
+docker compose stop monster-raid-service-db-0     # then run cluster show again: db-1 or db-2 is primary
+# Redis: the master the Sentinels hand out
+docker compose exec redis-sentinel-1 redis-cli -p 26379 sentinel get-master-addr-by-name monster-raid-service-cache
+docker compose stop monster-raid-service-cache    # ~10 s later the address is a replica's
+docker compose logs monster-raid-service | grep -E "redis master found|database (connection lost|reachable again)"
+```
+
+### Data Warehouse
+
+*Owner: Daniel (#214).*
+
+**What:** a separate PostgreSQL 16 database, `data-warehouse` (host port
+`5440`, its own volume and health check). The ETL service owns it: it creates
+the schema with numbered migrations at start-up, under a lock, like every
+other service. Nobody else writes to it.
+
+**Shape:** a small star schema. Dimensions hold the current state of each
+thing; facts hold what happened. Each row also has `source_updated_at` (from
+the source) and `loaded_at` (when the ETL wrote it).
+
+| Table | Kind | From | Columns |
+|---|---|---|---|
+| `dim_user` | dimension | User Management `users` + `balances` | `user_id`, `username`, `package_id`, `level`, `xp`, `local_currency`, `global_currency`, `created_at` |
+| `dim_tamagotchi` | dimension | Tamagotchi `tamagotchis` | `tamagotchi_id`, `owner_id`, `type`, `package_id`, `name`, `level`, `xp`, `is_primary`, `created_at` |
+| `dim_package` | dimension | Package Registry `packages` | `package_id`, `name`, `version`, `status`, `created_at` |
+| `dim_raid_config` | dimension | Package Registry `raid_configs` | `raid_config_id`, `guild_id`, `monster_name`, `max_hp`, `duration`, `status`, `raid_id`, `created_at` |
+| `dim_guild` | dimension | Guild `guilds` | `guild_id`, `name`, `created_at` |
+| `dim_date` | dimension | generated by the migration | `date`, `year`, `month`, `week`, `weekday` |
+| `fact_battle` | fact, one row per battle | Battle `battles` | `battle_id`, `player1_id`, `player2_id`, `status`, `winner_id`, `loser_id`, `reward_currency`, `reward_xp`, `transferred_tamagotchi_id`, `turns`, `started_at`, `finished_at` |
+| `fact_raid` | fact, one row per raid | Monster Raid `raids` | `raid_id`, `config_id`, `guild_id`, `monster_name`, `max_hp`, `status`, `reward_currency`, `reward_xp`, `created_at`, `expires_at` |
+| `fact_raid_participation` | fact, one row per player per raid | Monster Raid `raid_participants` | `raid_id`, `user_id`, `tamagotchi_id`, `damage_dealt`, `joined_at` |
+| `fact_currency_change` | fact, one row per ledger entry | User Management `currency_ledger` | `entry_id`, `user_id`, `local_delta`, `global_delta`, `reason`, `created_at` |
+| `guild_membership` | snapshot | Guild `guild_members` | `guild_id`, `user_id`, `role`, `joined_at` |
+| `package_moderator` | snapshot | Package Registry `package_moderators` | `package_id`, `user_id`, `granted_at` |
+| `package_registration` | snapshot | Package Registry `package_users` | `package_id`, `user_id`, `registered_at` |
+| `relationship` | snapshot | User Management `relationships` | `user_id`, `target_id`, `status`, `created_at` |
+
+**Left out on purpose:**
+- **Credentials and secrets:** `password_hash`, `signing_keys`.
+- **Personal data that analytics doesn't need:** `email`.
+- **Chat text:** `chat_messages`.
+- **Plumbing:** `schema_migrations`, `pgmigrations`, `used_ws_tickets`,
+  `idempotency_keys`, `admins`.
+- **Battle's per-turn `log` and player snapshots** stay in Battle; the
+  warehouse keeps the outcome.
+- **Map and Notification:** Map holds live locations that expire after 2
+  minutes, and Notification keeps notifications for 30 days as a delivery
+  queue. Every event that creates a notification (battles, raids, guild
+  invitations) already reaches the warehouse from the service it came from.
+
+**Transform rules:**
+- **Ids:** every id is stored as `text`, trimmed and lowercased, so the same
+  id matches across sources. Not `uuid`: the sources disagree on types (User
+  Management's ids are `uuid`, most others keep them as `text`), and some real
+  ids aren't UUIDs at all (package ids like `p1` in `users.package_id` and
+  `tamagotchis.package_id`, and some moderator ids), so a `uuid` column would
+  reject them.
+- **Timestamps:** `timestamptz`, in UTC.
+- **Currency:** whole units as `bigint`. Raid `rewards` uses both `coins` and
+  `currency` today; both become `reward_currency` (*Denis to confirm which key
+  is current*).
+- **Battle outcome:** `winner_id`, `loser_id`, `reward_currency`, `reward_xp`
+  and `transferred_tamagotchi_id` come from `battles.result`, following the
+  `BattleEnded` payload in this README (*Pavel to confirm the JSON keys of
+  `result`*). `finished_at` is `updated_at` once the status is `finished`.
+
+**Example queries:**
+
+```sql
+-- Top 10 players by battles won
+SELECT u.username, count(*) AS wins
+FROM fact_battle b JOIN dim_user u ON u.user_id = b.winner_id
+WHERE b.status = 'finished'
+GROUP BY u.username ORDER BY wins DESC LIMIT 10;
+
+-- Raids per guild, and how many were beaten
+SELECT g.name, count(*) AS raids, count(*) FILTER (WHERE r.status = 'completed') AS won
+FROM fact_raid r JOIN dim_guild g ON g.guild_id = r.guild_id
+GROUP BY g.name ORDER BY raids DESC;
+
+-- Currency created and spent per day, by reason
+SELECT date_trunc('day', created_at) AS day, reason, sum(local_delta) AS local, sum(global_delta) AS global
+FROM fact_currency_change GROUP BY 1, 2 ORDER BY 1, 2;
+
+-- Tamagotchis per package, with their average level
+SELECT p.name, count(*) AS tamagotchis, round(avg(t.level), 1) AS avg_level
+FROM dim_tamagotchi t JOIN dim_package p ON p.package_id = t.package_id
+GROUP BY p.name ORDER BY tamagotchis DESC;
+```
+
+### ETL
+
+*Owner: Daniel (#214).*
+
+**What:** a separate service, `etl-service`, in **Python**. One container,
+**one replica**, so a run happens exactly once. It talks only to databases:
+nothing calls it in the request path.
+
+**Why a service:**
+- **Not a job inside another service:** it would run once per replica, and
+  that service would hold read access to every database, which breaks our
+  ownership rule.
+- **Not a loose script:** nothing would run it on a schedule, and it would
+  have no health check, metrics or image.
+
+**Why Python:** the job is mostly SQL (`psycopg`), and the team already has
+Python Dockerfiles, CI and logging (the broker, the gateway, Service
+Discovery).
+
+**How it runs:**
+- **When:** every `ETL_INTERVAL_SECONDS` (default `300`), and on demand with
+  `POST /runs`. One run at a time: `POST /runs` during a run answers `409`
+  with the running run's id, a scheduled tick during a run is skipped, and a
+  PostgreSQL advisory lock in the warehouse stops a second container from
+  running in parallel.
+- **Extract:** from each source, through its `etl_reader` role and the same
+  `<service>-db` address the service uses (pgpool after replication, so it
+  follows the primary). It reads the rows changed since the last run:
+  `updated_at > watermark - ETL_OVERLAP_SECONDS` (default `60`). The overlap
+  catches rows committed late with an older `updated_at`; reading them twice
+  is harmless.
+- **Transform:** the rules above.
+- **Load:** `INSERT ... ON CONFLICT DO UPDATE` on each table's key, so a
+  re-run writes the same rows again and never duplicates them. Each source
+  table's watermark is stored in the warehouse (`etl_watermarks`) in the same
+  transaction as its rows, so a restart continues where it stopped.
+- **A source that is down** (for example during a failover) is logged and
+  counted, its watermark stays, and the run carries on with the other sources.
+
+**Endpoints:**
+
+| Endpoint | Key | What |
+|---|---|---|
+| `GET /health` | none | Docker's health check, the blackbox probe |
+| `GET /metrics` | none | Prometheus: rows read and written per table, run duration, failed runs |
+| `POST /runs` | admin key (`X-Admin-Key`, the team's `ADMIN_KEY`) | starts a run: `202 {runId}`, or `409 {runId}` while one is running |
+| `GET /runs/latest` | admin key | the last run: start, end, status, rows per table, errors |
+
+**Logs and monitoring:**
+- **Logs:** one JSON log line per run in the team format (`ETL run finished`,
+  rows read and written per table, duration, errors).
+- **Service Discovery:** it registers there, with no topics, because
+  Prometheus takes its targets only from Service Discovery. That is how its
+  `/metrics` gets scraped, its `/health` probed, and a Telegram alert sent if
+  it goes down.
+
+**Settings** (placeholders in `.env.example`): `ETL_INTERVAL_SECONDS`,
+`ETL_OVERLAP_SECONDS`, `DATA_WAREHOUSE_DB_USER` / `_PASSWORD` / `_NAME`, one
+`<SERVICE>_ETL_DB_PASSWORD` per source. **Port:** `8091`.
+
+**Image:** `etl-service` on Docker Hub, `v5.x.x` + `latest`, through a release
+workflow like everyone's.
+
+### ETL read-only access and `updated_at`
+
+Each owner gives the ETL a way into their databases:
+
+- **A read-only role `etl_reader`** in each database, created by a migration,
+  with `SELECT` **only on the tables the warehouse needs** (listed under
+  [Data Warehouse](#data-warehouse)). It never gets `INSERT`, `UPDATE`,
+  `DELETE` or DDL.
+- **Its password is not in the migration**, because migrations are in git.
+  The service sets it at startup from `<SERVICE>_ETL_DB_PASSWORD` in `.env`.
+  `.env.example` holds a placeholder.
+- **An `updated_at timestamptz NOT NULL DEFAULT now()` column** on every table
+  loaded incrementally, kept current by a database trigger rather than
+  application code, so no write path can forget it.
+- **Each service README** lists the tables and columns the ETL reads, and what
+  they mean.
+- The ETL connects through the same primary address as the service. The role
+  replicates with everything else, so it survives a failover.
+
+### Deleted rows
+
+A watermark never sees a deleted row. The rule:
+- **Tables where rows are deleted are reloaded in full** on every run, in one
+  warehouse transaction (delete that table's rows, insert everything):
+  `guild_members`, `package_moderators`, `package_users`, `relationships`.
+  They're small, and a reader sees either the old or the new copy, never half.
+- **Everything else loads incrementally** by `updated_at`.
+- **`currency_ledger` is append-only:** it loads by its `id`, so it needs no
+  `updated_at`.
+- **No `deleted_rows` table:** it would mean a trigger and a table in every
+  database for four small tables.
+
+**What each owner adds** (`updated_at` kept by a trigger, per the section
+above), on the tables loaded incrementally:
+
+| Owner | Tables that need `updated_at` | Has it already |
+|---|---|---|
+| Pavel | `balances` | `users`, `battles` |
+| Daniel | — | `tamagotchis` (set by GORM today; Daniel adds the trigger) |
+| Denis | `raids`, `raid_participants` (`damage_dealt` changes) | — |
+| Stefan | `guilds`, `packages`, `raid_configs` | — |
+
+*Owners to confirm:* that rows are never deleted from the tables marked
+incremental (for example a rejected battle request in `battles`). If one is,
+that table moves to the full-reload list.
+
+### Saga flows and their compensations
+
+**What:** every flow that changes 2 or more databases runs as a
+**long-running saga with the coordinator in the Message Broker** (#236), not
+2 Phase Commit (grade 9 replaces grade 8). The coordinator runs the steps in
+order. When a step fails or times out, it runs the compensations of the
+finished steps **in reverse order**.
+
+**Why sagas and not 2PC:** 2PC holds locks in every database until all of
+them vote, and one slow service stalls everyone. A saga commits each step
+locally and undoes it with a compensation if a later step fails. The data is
+briefly inconsistent, but no service ever blocks another.
+
+**Rules every step follows:**
+- **Idempotent, keyed by `sagaId` + step:** a redelivered step or
+  compensation returns its stored result and changes nothing twice.
+  Delivery is at least once.
+- **A compensation can arrive before its step.** This happens when the step
+  timed out at the coordinator, the coordinator compensated, and then the
+  late step arrived. The service then records the step as cancelled, so the
+  late step changes nothing.
+- **A compensation cannot fail for business reasons.** It is retried until it
+  succeeds, so it must always be allowed (e.g. a refund never checks the
+  balance).
+- **The step most likely to fail runs as early as possible** (e.g. charging a
+  player who may not have enough currency), so fewer steps ever need undoing.
+
+**The coordinator's API** (Denis, #236).
+
+*Running a step:* each service gets **one** endpoint, **`POST /saga-steps`**,
+which accepts **the broker key only** (`X-Broker-Key`), like `POST /events`.
+The saga's definition already fixes which service runs which step, so
+forwarding a caller's service key adds nothing. The body:
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "saga": "string (enum: raid-activation, battle-settlement, raid-rewards)",
+  "step": "string",
+  "action": "string (enum: do, compensate)",
+  "payload": {}
+}
+```
+
+The service answers:
+- `200 {"result": {...}}` when the step succeeded;
+- `409` or `422` with `{"error": "..."}` for a business failure, which starts
+  the compensations;
+- a `5xx` or no answer in time: retried, as below.
+
+*Starting a saga:* the service that starts it calls **`POST /sagas {saga,
+payload}`** on the broker, with the broker key:
+- by default, the broker answers `202 {sagaId}`;
+- with `?wait=5s`, it answers with the final result if the saga finishes in
+  time, and `202 {sagaId}` otherwise.
+
+*Timeouts and retries:*
+- **Each step:** a **5 s** timeout, and **3 retries** (after 1, 2 and 4 s) on a
+  `5xx` or a timeout. After that, the saga compensates.
+- **Compensations:** retried until they succeed, backing off up to 30 s.
+- **Saga state** is stored in the broker's SQLite on `broker-data`, so a
+  broker restart continues a saga where it stopped.
+
+*Following a saga:* **`GET /sagas/{sagaId}`**, with the broker key (so the
+starting service can follow its own saga) or the admin key:
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "saga": "string (enum: raid-activation, battle-settlement, raid-rewards)",
+  "state": "string (enum: running, completed, compensating, compensated, failed)",
+  "startedAt": "string (ISO 8601)",
+  "finishedAt": "string (ISO 8601) | null",
+  "steps": [
+    { "step": "string", "service": "string", "state": "string", "attempts": 1, "error": "string | null" }
+  ]
+}
+```
+
+`GET /sagas?state=&limit=` lists sagas, with the same keys.
+
+#### Raid activation: Package Registry, Monster Raid
+
+`POST /raid-configs/{id}/activate` starts the saga with
+`POST /sagas?wait=5s`. It answers `200` with the result when the saga
+finishes in time, otherwise `202 {"sagaId"}`.
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Package Registry | Remember the config's current status, set it to **`activating`** | Restore the remembered status (`draft` stays `draft`, `inactive` stays `inactive`) |
+| 2 | Monster Raid | `create-raid`, which returns the `raidId` | Set that raid to **`cancelled`**: it can't be joined and isn't listed among the active raids |
+| 3 | Package Registry | Set the config to `active` and store the `raidId` | — (last step) |
+
+**Re-activation** (#237): if the config's last raid is **still active**,
+step 2 is skipped and that raid is returned. If it has **finished or
+expired**, a fresh raid is created. So there are no accidental duplicate
+raids, and a config can still be used again.
+
+The gRPC `CreateRaid` stays as it is for callers outside sagas, so no proto
+change is needed.
+
+**Contract changes:**
+- `raid_configs.status` gains `activating`.
+- `activate` answers with `sagaId`, or `202`.
+- Monster Raid's raid status gains `cancelled`.
+
+#### Battle settlement: Battle, User Management, Tamagotchi
+
+All steps are confirmed and implemented: Tamagotchi's (Daniel), Battle's and
+User Management's (Pavel, #238; payloads under each service's **Saga Steps**).
+The order below is the broker's `SAGAS` table today; running Tamagotchi's steps
+first (agreed on #247) is a change to that table only.
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Battle | `record-result`: the result is stored, battle `settling` | Battle `settlement_failed` |
+| 2 | User Management | `charge-loser`: `loserCurrencyPenalty` from the loser (key `saga:<sagaId>:charge-loser:<userId>`). A loser who can't cover it is **not charged** (`charged: 0`) and the saga goes on, as before the broker | Give back what was charged (key `...:undo`) |
+| 3 | User Management | `pay-winner`: `rewardCurrency` to the winner (key `saga:<sagaId>:pay-winner:<userId>`) | Take back what the winner still holds, never below zero; the rest is logged as a shortfall |
+| 4 | Tamagotchi | `add-xp` to the winner's primary Tamagotchi | Remove exactly that XP: this can lower the level, which is the correct undo |
+| 5 | Tamagotchi | `transfer-owner` of the captured Tamagotchi, if any | Transfer it back to the previous owner |
+| 6 | Battle | `mark-settled`: battle `settled`, then `battle.ended` is published | Battle `settlement_failed` (it may have run) |
+
+**On in the stack:** `SETTLEMENT_BY_SAGA=true` in `.env` (the default) is
+passed to Battle (a finished battle starts this saga, `battle:<battleId>`, and
+`battle.ended` is published once it has completed) and to User Management (it
+stops paying from `battle.ended`), and `TAMAGOTCHI_APPLY_BATTLE_ENDED=false`
+stops Tamagotchi applying the event. One key for the two services that pay, so
+they can't disagree. To go back: `SETTLEMENT_BY_SAGA=false` and
+`TAMAGOTCHI_APPLY_BATTLE_ENDED=true` together.
+
+**No double XP, either way:** Tamagotchi's saga steps claim the keys
+`battle.ended` uses (`battle-ended:<battleId>:primary` / `:secondary` /
+`battle-ended:<battleId>`), so the event and the saga can't both make a
+change, whichever arrives first.
+
+**A step that fails for a moment** (a 5xx, a timeout) is tried again
+`SAGA_STEP_RETRIES` times by the broker: **4** in the stack (after 1, 2, 4,
+8 s, 15 s in all), longer than a Postgres failover (9-13 s), so a battle that
+ends during one is settled once the database is back, instead of being
+cancelled. Tamagotchi's step
+payloads: [Saga Steps](#tamagotchi-service-tamagotchi-notification-go)
+(Tamagotchi Service).
+
+#### Raid rewards: Monster Raid, User Management, Tamagotchi
+
+Monster Raid's and Tamagotchi's steps are confirmed (Denis, Daniel); User
+Management's `pay-raid-rewards` is implemented (Pavel, #238).
+
+**On in the stack:** `RAID_REWARDS_BY_SAGA=true` in `.env` (the default) is
+passed to both services at once: Monster Raid as `REWARDS_BY_SAGA` (it starts
+this saga instead of calling `AdjustCurrency`), User Management as
+`RAID_REWARDS_BY_SAGA` (it stops paying from `raid.completed`). One key, so
+the two can't disagree and a reward is paid exactly once. `false` goes back to
+the direct payment.
+
+| # | Service | Step | Compensation |
+|---|---|---|---|
+| 1 | Monster Raid | Raid `completed`, rewards `paying` | Rewards `failed` |
+| 2 | User Management | `pay-raid-rewards`: each `rewards[].currency` to its `userId` (a player listed twice is paid the sum; a player who no longer exists is skipped) | Take each payment back, never below zero |
+| 3 | Tamagotchi | XP to each participant's primary Tamagotchi. A participant without one is skipped and logged, rather than failing the saga and taking everyone's currency back. | Remove that XP |
+| 4 | Monster Raid | Rewards `paid` | — (last step) |
+
+- **Who starts it:** Monster Raid, when a raid completes. Rewards go
+  `paying` → `paid`.
+- **When a step fails:** the compensations run and the rewards end `failed`.
+  Monster Raid's existing expiry job retries a failed saga up to **3 times**,
+  then leaves it `failed` and visible.
+- **What it replaces:** Monster Raid's direct `AdjustCurrency` payment and
+  User Management's subscription to `raid.completed`. `raid.completed` stays
+  for Notification.
+- **While Denis is in there:** Monster Raid adds **`userIds`** to
+  `raid.started` and `raid.failed`. Notification rejects those events today
+  for lacking it, and they end up in the Dead Letter Channel.
+
+These sagas replace today's fan-out of `battle.ended` and `raid.completed` to
+User Management and Tamagotchi. The events stay for Notification.
+
+### Image tags
+
+- Every image we publish in Lab 5 is tagged **`v5.x.x` and `latest`**. Each
+  release workflow sets **`LAB: 5`** (in some of our workflows the variable is
+  called `MAJOR`).
+- **Minor** for a `feat`, **patch** otherwise, as since Lab 2.
+- **Third-party images are pinned** to the versions we agreed, so nobody pulls
+  something else:
+  - `bitnamilegacy/postgresql-repmgr:16` and `bitnamilegacy/pgpool:4`;
+  - `valkey/valkey:8-alpine` (cache nodes);
+  - `postgres:16-alpine` (warehouse);
+  - `redis:7-alpine` (the Redis replicas and the Sentinels).
+- **Docker Hub, at the end:** every image has `latest` = the version the
+  compose file runs, a description and a link to its repository.
+
+### New ports
+
+Added to [Ports](#ports).
+
+| Component | Host port |
+|---|---|
+| `data-warehouse` (PostgreSQL 16) | `5440` |
+| `etl-service` | `8091` |
+| `cache-1`, `cache-2`, `cache-3` (Valkey 8) | `6381`, `6382`, `6383` |
+| Database replicas (`<service>-db-0/1/2`) | none: reached inside the stack, and only through `<service>-db` |
+| Redis replicas and `redis-sentinel-1..3` | none: reached inside the stack |
+
 ## Architecture Diagram
 
 ![Architecture Diagram](docs/images/architecture.png)
 
-Every service, the database it owns, and how requests reach them. The
+Every service, the data store it owns, and how requests reach them. The
 **API Gateway** is the single entry point for clients. Behind it, the
 **Message Broker** carries every request to a service, every
 service-to-service call and every event: requests go on the target
 service's queue and one replica answers; events go on a topic and every
-subscribed service gets a copy.
+subscribed service gets a copy. Components drawn **dashed in red** are
+**Lab 5, planned** (the shared choices are proposed in PR #247):
+they are not in `docker-compose.yml` yet.
 
-**Load balancing (Lab 3).** Each service runs as several replicas, and each
-replica registers with Service Discovery. The gateway refreshes every
-service's live instances from Service Discovery every 5 s
-(`GATEWAY_DISCOVERY_REFRESH_SECONDS`) and sends each REST request to the next
-instance of its service, **round-robin**, one counter per service. A replica
-that starts gets traffic after the next refresh, one that stops no longer gets
-any, and a service with no live instance left answers `503`. A replica that
-keeps failing is removed and deregistered (see **Removing the failing
-instance** under the circuit breaker). A service that doesn't register yet
-keeps its fixed `http://<service>:<port>`. The gateway's
-request log names the replica that answered (`instanceId`). WebSockets are not
-balanced by the gateway: `/ws/negotiate` returns the service's public address,
-and `ws-proxy` hands each socket to one replica (across machines, it can
-return an extra replica's own address instead; see
-[Running across machines](#running-across-machines)).
+**Load balancing.** Each service runs as several replicas, and each replica
+registers with Service Discovery: its address, its gRPC port and the topics it
+wants. The broker reads every service's live instances from Service Discovery
+every 5 s and sends each request, gRPC call and event copy to the **least
+loaded healthy replica** (fewest messages in flight, taking turns among
+equals). A replica that fails is skipped for another one when repeating is
+safe, and one that keeps failing is taken out by the broker's circuit breaker
+and deregistered. Since gateway v4.2.0 the gateway does no balancing of its
+own: it hands every request to the broker. WebSockets are not balanced by the
+broker: `/ws/negotiate` returns the service's public address, and `ws-proxy`
+hands each socket to one replica (across machines, it can return an extra
+replica's own address instead; see [Running across machines](#running-across-machines)).
 
 | | |
 |---|---|
-| **Dark arrow** | REST: client → Gateway → Message Broker, which puts the request on the owning service's queue for one replica |
-| **Amber arrow** | service-to-service call, through the Message Broker, carrying the caller's `X-Service-Key`; the label lists the services it calls |
-| **Thick blue arrow** | WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
-| **Dotted arrow** | an event published on a topic in the Message Broker, which hands one copy to every subscribed service |
-| **Teal arrow** | Service Discovery: every replica registers its own address and the topics it wants, sends heartbeats and deregisters; Service Discovery checks each one's `/health` and sends alerts to Telegram; the broker reads the instances and topics from it |
-| **Purple arrow** | monitoring: Prometheus scrapes `GET /metrics` on every replica, Promtail ships every container's logs to Loki, and Grafana shows both (see [Monitoring](#monitoring)) |
-| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring (Prometheus, Promtail, Loki, Grafana) light purple |
+| **Dark arrow** | a client request: client → Gateway → Message Broker, which puts it on the owning service's queue for one replica |
+| **Amber arrow** | a service-to-service call, through the Message Broker: gRPC on port 50051, or REST at `/services/{service}/…`, carrying the caller's `X-Service-Key` (who calls whom: table below) |
+| **Thick blue arrow** | a WebSocket: the Gateway only negotiates it (`GET /ws/negotiate` → URL + one-time ticket), then the client connects to `ws-proxy`, which hands the socket to one replica of the service |
+| **Dotted grey arrow** | an event: published on a topic, stored on disk by the broker, and delivered as one copy to every subscribed service (topics and subscribers: [Topics](#topics)); copies that are never acknowledged end in the Dead Letter Channel |
+| **Teal arrow** | Service Discovery: every replica registers its address, gRPC port and topics, sends heartbeats and deregisters; Service Discovery checks each one's `/health`, sends alerts to Telegram, and lists every instance for the broker and for Prometheus |
+| **Purple arrow** | monitoring: Prometheus scrapes `GET /metrics` on every replica (targets from Service Discovery), the blackbox exporter probes every `/health`, Promtail ships every container's logs to Loki, Grafana shows both, and the Gateway's `GET /logs` downloads them from Loki |
+| **Red dashed** | Lab 5, planned: replication and failover of every data store, the shared cache (3 Valkey nodes on a consistent-hash ring), the ETL into the Data Warehouse, and the saga coordinator in the broker |
+| **Colour** | which tier a service belongs to; the Gateway is amber, the Message Broker orange, the infrastructure (Service Discovery, `ws-proxy`) teal, monitoring light purple |
+
+**Who calls whom** (the amber arrow), every call through the broker:
+
+| Caller | Calls | Over |
+|---|---|---|
+| Battle | User Management, Tamagotchi | gRPC |
+| Battle | Package Registry | REST |
+| Monster Raid | Guild (`GetGuild`), User Management (`AdjustCurrency`) | gRPC |
+| Monster Raid | Tamagotchi (`GET /tamagotchis/{id}`) | REST |
+| Map | User Management (`GetRelationship`) | gRPC |
+| Guild | User Management (`GetUser`, `GetRelationship`) | gRPC |
+| Package Registry | Monster Raid (`CreateRaid`), User Management (`GetUser`) | gRPC |
+| Tamagotchi | Package Registry | REST |
 
 The three tiers behind the Gateway are the structure worth remembering:
 
@@ -1495,7 +2338,7 @@ The three tiers behind the Gateway are the structure worth remembering:
 2. **Game content** (purple) — Tamagotchi and Package Registry: the rules and definitions gameplay reads.
 3. **Platform** (green) — User Management and Notification: identity, currency and notifications, which everything leans on.
 
-Each service names its own database. No service reads another's store
+Each service names its own data store. No service reads another's store
 directly; that is what the arrows are for. Notification never calls anyone —
 it consumes events and decides what reaches the player.
 
@@ -1512,6 +2355,136 @@ In Git Bash on Windows, put `MSYS_NO_PATHCONV=1 ` in front of `docker run`:
 otherwise Git Bash rewrites `/data` into a Windows path and the input is not
 found.
 
+
+## Cache Sharding with Consistent Hashing
+
+Lab 5 (#230). Every service caches its common reads in three shared cache
+nodes, `cache-1`, `cache-2` and `cache-3` (Valkey 8, host ports
+`6381`–`6383`). Each key must live on exactly one node, and every service
+must agree on which one. This section explains how we choose the node. The
+code, its tests and the Go port are in [`hash-ring/`](hash-ring/README.md).
+
+### The problem: `hash mod N`
+
+The obvious way to pick a node is `node = hash(key) mod N`. It spreads keys
+evenly, but it breaks when `N` changes. Going from 3 to 4 nodes, a key stays
+put only if `hash mod 3` equals `hash mod 4`, which happens for about 1 key in
+4. **About 3/4 of the keys move.** Every one of them is suddenly a miss on its
+new node, so adding a node empties most of the cache at once, and the
+databases take the full load. That is the opposite of what adding a node was
+for.
+
+### Consistent hashing
+
+Put the nodes and the keys on the same circle (the "ring"): positions
+`0 … 2^32 − 1`, given by the same hash function. A key belongs to the **first
+node clockwise** from its position.
+
+```
+                 cache-1
+            .  '    ●    '  .
+         '                     '        key A  → next node clockwise: cache-2
+       ●  cache-3         A ×    '
+      .                          ●  cache-2
+       '                        .
+         '      × B          '          key B  → next node clockwise: cache-3
+            '  .        .  '
+```
+
+- **Adding a node** puts it at a new position. It takes over only the keys
+  between its position and the node before it, which is **about 1/(N+1)** of
+  them: 1/4 when going from 3 to 4 nodes. All other keys stay where they are.
+- **Removing a node** moves only **that node's keys**, each to the next node
+  clockwise. Keys on the other nodes are untouched.
+
+### Virtual nodes
+
+With one point per node, three random points split the circle into three arcs
+of random length, so one node can own most of the circle. Measured on our
+ring with 100 000 keys:
+
+| Points per node | `cache-1` | `cache-2` | `cache-3` |
+|---|---|---|---|
+| 1 | 34.0% | **5.0%** | **61.0%** |
+| 10 | 27.4% | 42.9% | 29.8% |
+| 40 | 35.2% | 34.3% | 30.4% |
+| **160** (what we use) | 32.5% | 32.4% | 35.1% |
+
+So each node is placed **160 times**, at `hash("cache-1#0")` …
+`hash("cache-1#159")`. The many small arcs even out. A side benefit: when a
+node is removed, its keys spread over *all* remaining nodes instead of all
+landing on one neighbour.
+
+### Which keys move: measured
+
+`npm run stats` in `hash-ring/` (100 000 keys, cache-4 joining 3 nodes):
+
+| Method | Keys that move | Where they go |
+|---|---|---|
+| `hash mod N` | **75.3%** | everywhere, between all nodes |
+| Consistent-hash ring | **25.5%** (ideal 25%) | only to the new node |
+
+The tests check this on every run: 20–30% move, and every moved key goes to
+the new node.
+
+### Compared with Redis Cluster's 16384 hash slots
+
+Redis Cluster (and Valkey Cluster) shards differently:
+- Every key goes to one of **16384 fixed slots**: `CRC16(key) mod 16384`.
+  The number 16384 never changes, so this `mod` never reshuffles keys.
+- The cluster keeps a **table of which master owns which slots**. Adding a node
+  means *moving whole slots* to it (`CLUSTER ADDSLOTS`, resharding). The keys
+  in those slots migrate with them.
+- A client that asks the wrong node gets a `MOVED <slot> <node>` redirect, so
+  cluster clients keep a copy of the slot table.
+- The cluster itself handles failover between a master and its replicas.
+
+| | Our ring | Redis Cluster slots |
+|---|---|---|
+| Who decides the node | the client, by hashing | the cluster's slot table (the client caches it) |
+| Partitions | 160 points per node on a 2^32 circle | 16384 fixed slots |
+| Adding a node | automatic: about 1/(N+1) of the keys move to it | an operator moves slots to it |
+| Servers | three plain independent Valkey nodes | cluster mode: gossip, redirects, at least 3 masters |
+| Multi-key operations | anything on one node | only for keys in the same slot (`{hash tags}`) |
+
+Both avoid the `hash mod N` problem. Redis Cluster does it with a fixed
+number of slots plus a table, and consistent hashing does it with a ring.
+**Why we chose the ring:** the lab asks for sharding *with consistent
+hashing*; plain Valkey nodes are simpler to run than a cluster; and the
+whole algorithm is about a hundred lines we wrote ourselves and can explain.
+
+### Our algorithm
+
+The same in every service and both languages, so a key maps to the same node
+no matter which service computes it:
+
+1. `hash32(text)` = **FNV-1a 32-bit** over the UTF-8 bytes, then **murmur3's
+   `fmix32`** finalizer.
+2. Each node gets **160 points**, at `hash32("<node>#<i>")`.
+3. Points are sorted by hash; equal hashes by node name.
+4. A key belongs to the first point with hash `>=` `hash32(key)`, wrapping
+   around to the first point (binary search: 9 comparisons for 480 points).
+
+**Why fmix32:** FNV-1a is short and easy to port, but on its own it spreads
+our labels badly. `cache-1#0`, `cache-1#1`, … differ only in their last
+characters, and FNV-1a barely changes the high bits for that. With FNV-1a
+alone, one node got **59%** of the keys. `fmix32` mixes every input bit into
+every output bit, and the split becomes 32 / 32 / 35%.
+
+**A node that is down stays on the ring.** Its keys become cache misses, read
+from the database, and the other two nodes keep serving. Removing it would
+move its keys elsewhere and then move them back when it returns.
+
+### One algorithm, two languages
+
+- [`hash-ring/src/hashRing.ts`](hash-ring/src/hashRing.ts): Guild, Package
+  Registry, Map, Monster Raid.
+- [`hash-ring/go/hashring.go`](hash-ring/go/hashring.go): User Management,
+  Battle, Tamagotchi, Notification.
+- [`hash-ring/test-vectors.json`](hash-ring/test-vectors.json): 213 hashes
+  and 852 lookups, generated by the TypeScript ring. The Go port passes all of
+  them. Copied into a service, a port that passes the vectors picks the same
+  node as every other service.
 
 ## Contributing
 
@@ -1612,6 +2585,9 @@ Claim a free one when you wire up your service and add it here.
 | Grafana | `3000` |
 | Prometheus | `9090` |
 | Loki | `3100` (not published: Grafana reads it inside the stack) |
+| Data Warehouse (`data-warehouse`, Lab 5; `127.0.0.1` only) | `5440` |
+| Cache nodes (`cache-1`, `cache-2`, `cache-3`, Lab 5) | `6381`, `6382`, `6383` |
+| ETL (`etl-service`, Lab 5) | `8091` |
 
 ### Tamagotchi Service
 
@@ -1623,7 +2599,7 @@ each replica deregisters first, then lets its requests in progress finish.
 
 - **Calls from Battle and Monster Raid** come through the Message Broker, with the
   broker's `X-Broker-Key` and their own `X-Service-Key` (the broker key alone opens
-  nothing but `POST /events`).
+  nothing but `POST /events` and `POST /saga-steps`).
 - **`battle.ended`:** with `BROKER_KEY` set, every replica registers for the topic,
   and the broker hands each event to one replica at `POST /events`. It awards
   `primaryXp` and `secondaryXp` to the winner's Tamagotchis and moves
@@ -1632,17 +2608,30 @@ each replica deregisters first, then lets its requests in progress finish.
   change Battle already made itself, is applied once. It answers `2xx` once every
   change is made; `400` (not an event it can read) and `422` (e.g. a Tamagotchi
   that doesn't exist) end in the broker's Dead Letter Channel after its attempts.
+- **Saga steps** (Lab 5): the broker's saga coordinator runs Tamagotchi's steps of
+  the battle-settlement and raid-rewards sagas at `POST /saga-steps` (payloads in
+  [Saga Steps](#tamagotchi-service-tamagotchi-notification-go)), recorded in the
+  `saga_steps` table. `TAMAGOTCHI_APPLY_BATTLE_ENDED=false` (the stack's
+  setting) stops applying `battle.ended`: the battle-settlement saga does it.
 - **gRPC** on `50083`, registered as `metadata.grpcPort`: the same calls between
   services, with the same keys, limits and errors as REST (see
   [gRPC between services](#grpc-between-services)). With
   `TAMAGOTCHI_GRPC_DEPENDENCIES=package-registry-service` it also reads the stat
   definitions over gRPC, once Package Registry serves gRPC.
+- **Cache** (Lab 5): a Tamagotchi, an owner's list and a Package Registry package are
+  read through `cache-1..3`, each key on the node the shared hash ring picks
+  (`tamagotchi-service:tamagotchi:<id>`, `tamagotchi-service:owner-tamagotchis:<ownerId>`,
+  `tamagotchi-service:package:<packageId>`). Every write (REST, gRPC, `battle.ended`, saga
+  steps) deletes what it changed after its commit. A node that is down only turns its
+  own keys into database reads: no request fails, `cache unavailable` is logged once.
+  `TAMAGOTCHI_CACHE_NODES` set empty in `.env` turns it off; the details are in the
+  service's README ("Cache").
 
 ```bash
 docker compose up -d tamagotchi-service
 docker compose ps tamagotchi-service             # one line per replica
 docker compose exec tamagotchi-service wget -qO- localhost:8083/health
-# {"status":"ok","service":"tamagotchi-service","version":"4.2.0",...,
+# {"status":"ok","service":"tamagotchi-service","version":"5.1.0",...,
 #  "load":{...,"events":{"handled":0,"duplicates":0,"refused":0,"failed":0}}}
 
 # The replicas Service Discovery knows (DISCOVERY_KEY is in .env):
@@ -1650,6 +2639,10 @@ curl -s localhost:8089/services/tamagotchi-service -H "X-Discovery-Key: <DISCOVE
 
 # battle.ended lists tamagotchi-service as a subscriber (BROKER_KEY is in .env):
 curl -s http://localhost:8090/topics -H "X-Broker-Key: <BROKER_KEY>"
+
+# The cache: the second read is a hit, and where each key lives.
+curl -si http://localhost:8080/tamagotchis/<tamagotchi id> -H "Authorization: Bearer <token>" | grep X-Cache
+for n in cache-1 cache-2 cache-3; do docker compose exec $n valkey-cli -a "<CACHE_PASSWORD>" --no-auth-warning --scan --pattern 'tamagotchi-service:*'; done
 
 # A gRPC call through the broker, as Battle (grpcurl, from tamagotchi-service/):
 grpcurl -plaintext -import-path proto -proto tamagotchigo/tamagotchi/v1/tamagotchi.proto \
@@ -1663,6 +2656,16 @@ curl -X POST http://localhost:8090/topics/battle.ended/messages \
   -H "X-Broker-Key: <BROKER_KEY>" -H "Content-Type: application/json" \
   -d '{"source":"battle-service","payload":{"battleId":"b1","winnerId":"<user id>","loserId":"<user id>","primaryXp":60,"winnerPrimaryTamagotchiId":"<tamagotchi id>"}}'
 docker compose logs tamagotchi-service | grep battle.ended
+
+# A saga step, as the broker's coordinator would call it (here through the broker's
+# queue for Tamagotchi): 50 XP to a Tamagotchi, then its compensation takes it back.
+curl -X POST http://localhost:8090/services/tamagotchi-service/saga-steps \
+  -H "X-Broker-Key: <BROKER_KEY>" -H "Content-Type: application/json" \
+  -d '{"sagaId":"try-1","saga":"battle-settlement","step":"add-xp","action":"do","payload":{"battleId":"try-saga-1","winnerId":"<user id>","winnerPrimaryTamagotchiId":"<tamagotchi id>","primaryXp":50}}'
+curl -X POST http://localhost:8090/services/tamagotchi-service/saga-steps \
+  -H "X-Broker-Key: <BROKER_KEY>" -H "Content-Type: application/json" \
+  -d '{"sagaId":"try-1","saga":"battle-settlement","step":"add-xp","action":"compensate"}'
+docker compose logs tamagotchi-service | grep "saga step"
 ```
 
 **In the shared stack** players reach it through the gateway (the gateway's
@@ -1684,11 +2687,17 @@ There is no way around the gateway or the broker from outside the stack any more
 (no host port); the service's README shows calls with the gateway's or the
 broker's headers for a local `go run`.
 
+**API docs:** every replica serves `GET /docs` (Swagger UI) and `GET /openapi.yaml`
+(OpenAPI 3.0, every endpoint and DTO) without a key, like `/health`. In the stack:
+`docker compose exec tamagotchi-service wget -qO- localhost:8083/openapi.yaml`;
+on its own (the service's compose) the interactive docs are at
+<http://localhost:8080/docs>.
+
 **Gateway routes:** `/tamagotchis/**`, `/types/**` and
 `/users/{userId}/tamagotchis/**` → Tamagotchi (the gateway matches the last one
 before User Management's `/users/**`). `GET /types/advantages` needs no token.
-No WebSocket endpoints. `xp`, `transfer-owner` and `POST /events` aren't routed by
-the gateway.
+No WebSocket endpoints. `xp`, `transfer-owner`, `POST /events` and `POST /saga-steps`
+aren't routed by the gateway.
 
 **Circuit breaker:** that call has its own breaker.
 `TAMAGOTCHI_CIRCUIT_BREAKER_THRESHOLD` (3) errors within the request timeout × 3.5
@@ -1738,9 +2747,15 @@ docker compose exec notification-service-db sh -c 'redis-cli -a "$REDIS_PASSWORD
 ```
 
 **In the shared stack** it's reached only through the gateway: every endpoint
-except `GET /health` needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
+except `GET /health` and the API docs needs the gateway's `X-Gateway-Key` and `X-User-Id`, and a
 player can only register their own device and read their own notifications.
 There is no way around the gateway from outside the stack (no host port).
+
+**API docs:** every replica serves `GET /docs` (Swagger UI) and `GET /openapi.yaml`
+(OpenAPI 3.0, every endpoint and DTO) without a key, like `/health`. In the stack:
+`docker compose exec notification-service wget -qO- localhost:8084/openapi.yaml`;
+on its own (the service's compose) the interactive docs are at
+<http://localhost:8080/docs>.
 
 **Gateway routes:** `/notifications/**` → Notification. No WebSocket endpoints
 and no outgoing calls; events arrive from the Message Broker at `POST /events`
@@ -2368,7 +3383,7 @@ subscribes by listing the topics in its Service Discovery registration
 | Topic | Publisher | Subscribers | Payload defined in |
 |---|---|---|---|
 | `map.proximity_detected` | Map | Notification | Proximity Detected, in [Map Service](#map-service-map-raid-typescript) |
-| `raid.started` | Monster Raid | Notification | `{raidId, guildId}`, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) (`POST /raids`) |
+| `raid.started` | Monster Raid | Notification | `{raidId, guildId, userIds}`, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) (`POST /raids`) |
 | `raid.completed` | Monster Raid | Notification, User Management | Raid Completed, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) |
 | `raid.failed` | Monster Raid | Notification | Raid Failed, in [Monster Raid Service](#monster-raid-service-map-raid-typescript) |
 | `battle.ended` | Battle | Notification, Tamagotchi, User Management | [Battle Service](#battle-service-user-battle-go) |
@@ -2443,6 +3458,84 @@ curl -s "http://localhost:8080/logs?requestId=<id>" -H "X-Admin-Key: <BROKER_ADM
 Filters: `service`, `level`, `requestId`, `since`, `until` and `limit` (at most
 24 h and 5,000 lines per download). Tokens are redacted. It answers `401`
 without the key and `503` when Loki is down.
+
+### Data Warehouse and ETL
+
+**What it does:** the ETL copies every service's data into the Data Warehouse,
+one star schema for analysis (Lab 5, #214; the design is in "Data Warehouse"
+and "ETL" under [Lab 5 Decisions](#lab-5-decisions)). Python 3.13 + FastAPI,
+in [`Dackohn/etl-service`](https://github.com/Dackohn/etl-service) (the
+`etl-service` submodule); its README lists the sources, the warehouse tables
+and how to add a source.
+
+**In the shared stack:**
+- `data-warehouse`: PostgreSQL 16, published on `127.0.0.1:5440` only, its own
+  volume. The ETL creates its schema at start-up; nobody else writes to it.
+- `etl-service`: `dackohn/etl-service:latest` on port `8091`, **one replica**.
+  It runs once at start-up, every `ETL_INTERVAL_SECONDS` (default `300`) and
+  on `POST /runs`. It registers with Service Discovery (no topics), so
+  Prometheus scrapes its `/metrics` and probes its `/health`.
+- **Sources:** each one through its read-only role `etl_reader` and the address
+  the service itself uses (pgpool after replication, so the ETL follows the
+  primary). Every service with a PostgreSQL database is a source:
+
+  | Source | Its URL | Into |
+  |---|---|---|
+  | User Management | `USER_MANAGEMENT_ETL_DB_URL` | `dim_user` (with the balance), `fact_currency_change`, `relationship` |
+  | Battle | `BATTLE_ETL_DB_URL` | `fact_battle` |
+  | Tamagotchi | `TAMAGOTCHI_ETL_DB_URL` | `dim_tamagotchi` |
+  | Monster Raid | `MONSTER_RAID_ETL_DB_URL` | `fact_raid`, `fact_raid_participation` |
+  | Guild | `GUILD_ETL_DB_URL` | `dim_guild`, `guild_membership` |
+  | Package Registry | `PACKAGE_REGISTRY_ETL_DB_URL` | `dim_package`, `dim_raid_config`, `package_moderator`, `package_registration` |
+
+  No `etl_reader` role can read a password hash, an email or a battle's turn
+  log: each is granted named columns only. Map and Notification are not read
+  (live locations that expire; a delivery queue). A source that is down is
+  skipped (the run ends `partial`, or `failed` when no source loaded), and the
+  next run catches up.
+
+Set `DATA_WAREHOUSE_DB_USER`, `DATA_WAREHOUSE_DB_PASSWORD` and every
+`<SERVICE>_ETL_DB_PASSWORD` in `.env`. `POST /runs` and `GET /runs/latest`
+need `BROKER_ADMIN_KEY` as `X-Admin-Key` (`401` without it).
+
+```bash
+docker compose up -d etl-service
+curl http://localhost:8091/health
+curl -X POST http://localhost:8091/runs -H "X-Admin-Key: <BROKER_ADMIN_KEY>"
+# {"runId":"…","status":"started"}    (409 with the running run's id while one is going)
+curl http://localhost:8091/runs/latest -H "X-Admin-Key: <BROKER_ADMIN_KEY>"
+# {"runId":"…","trigger":"manual","status":"ok","tables":{"dim_tamagotchi":
+#   {"source":"tamagotchi","status":"ok","read":12,"written":12,"skipped":0}},"errors":[],…}
+```
+
+Query the warehouse (psql inside the container, or any client on
+`localhost:5440`):
+
+```bash
+docker compose exec data-warehouse psql -U <DATA_WAREHOUSE_DB_USER> warehouse \
+  -c "SELECT owner_id, count(*) AS tamagotchis, max(level) AS best_level
+      FROM dim_tamagotchi GROUP BY owner_id ORDER BY tamagotchis DESC LIMIT 10"
+```
+
+Guild and Package Registry (#215) fill `dim_guild`, `guild_membership`,
+`dim_package`, `dim_raid_config`, `package_moderator` and
+`package_registration`, e.g. the biggest guilds and how often each guild's
+raid configs went live:
+
+```sql
+SELECT g.name, count(m.user_id) AS members
+FROM dim_guild g JOIN guild_membership m USING (guild_id)
+GROUP BY g.name ORDER BY members DESC LIMIT 10;
+
+SELECT g.name, rc.status, count(*) AS raid_configs
+FROM dim_raid_config rc LEFT JOIN dim_guild g USING (guild_id)
+GROUP BY g.name, rc.status ORDER BY g.name;
+```
+
+**Adding your service as a source:** give your database an `etl_reader` role
+(see "ETL read-only access and `updated_at`"), add a module in the ETL's
+`app/sources/` (its README shows how), and add your
+`<SERVICE>_ETL_DB_URL` to the `etl-service` block of `docker-compose.yml`.
 
 ## Running the Whole System
 
@@ -2581,7 +3674,7 @@ Conventions, so entries do not collide — please follow them:
 |---|---|---|
 | Service entry | the repo name | `guild-service` |
 | Database entry | `<service>-db` | `guild-service-db` |
-| Volume | `<service>-db-data` | `guild-service-db-data` |
+| Volume | `<service>-db-data` (replicated: `<service>-db-0..2-data`) | `battle-service-db-data` |
 | Env prefix | `<SERVICE>_` | `GUILD_DB_PASSWORD` |
 | Image | your published image, pinned to a version tag | `you/guild-service:v1.0.0` |
 
@@ -2715,7 +3808,6 @@ DB_USER=guild_user
 DB_PASSWORD=<the main machine's GUILD_DB_PASSWORD>
 GATEWAY_KEY=<the main machine's>
 USER_MANAGEMENT_URL=http://192.168.1.10:8080
-NOTIFICATION_EVENTS_REDIS_URL=redis://:<NOTIFICATION_REDIS_PASSWORD>@192.168.1.10:6374/0
 ```
 
 Map (an excerpt: the rest is in Map's README):
@@ -2818,13 +3910,13 @@ ids into collection variables as it goes. They also run headlessly:
 
 ```bash
 npx newman run collections/user-management-service.postman_collection.json --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var guildServiceKey=<SERVICE_KEY_GUILD> --env-var mapServiceKey=<SERVICE_KEY_MAP>
-npx newman run collections/battle-service.postman_collection.json
+npx newman run collections/battle-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY>
 npx newman run collections/tamagotchi-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var brokerKey=<BROKER_KEY> --env-var battleServiceKey=<SERVICE_KEY_BATTLE> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
 npx newman run collections/notification-service.postman_collection.json --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/map-service.postman_collection.json
 npx newman run collections/monster-raid-service.postman_collection.json --env-var packageRegistryServiceKey=<PACKAGE_REGISTRY_MONSTER_RAID_SERVICE_KEY> --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/guild-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID>
-npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY>
+npx newman run collections/package-registry-service.postman_collection.json --env-var gatewayKey=<GATEWAY_KEY> --env-var brokerKey=<BROKER_KEY>
 npx newman run collections/gateway.postman_collection.json --env-var monsterRaidServiceKey=<SERVICE_KEY_MONSTER_RAID> --env-var adminKey=<BROKER_ADMIN_KEY>
 ```
 
@@ -2906,6 +3998,7 @@ version. These are the images [`docker-compose.yml`](docker-compose.yml) runs.
 | Guild | [`isstephy1/guild-service:latest`](https://hub.docker.com/r/isstephy1/guild-service) | PostgreSQL 16 | `8087` |
 | Package Registry | [`isstephy1/package-registry-service:latest`](https://hub.docker.com/r/isstephy1/package-registry-service) | PostgreSQL 16 | `8088` |
 | Gateway | [`isstephy1/gateway:latest`](https://hub.docker.com/r/isstephy1/gateway) | — | `8080` |
+| ETL | [`dackohn/etl-service:latest`](https://hub.docker.com/r/dackohn/etl-service) | PostgreSQL 16 (the Data Warehouse) | `8091` |
 
 ### Image tags
 

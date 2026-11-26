@@ -950,6 +950,46 @@
       ]
     },
     {
+      "name": "Cache (shared cache nodes)",
+      "item": [
+        {
+          "name": "Map metrics: cache hits and misses",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const text = pm.response.text();",
+                  "pm.test('the cache counter is exported', () => pm.expect(text).to.include('cache_requests_total'));",
+                  "const samples = text.split('\\n').filter(l => l.startsWith('cache_requests_total{'));",
+                  "(samples.length ? pm.test : pm.test.skip)('lookups counted per node (needs CACHE_NODES)', () => {",
+                  "    samples.forEach(l => pm.expect(l).to.match(/node=\"cache-\\d\"/));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mapUrl}}/metrics",
+              "host": [
+                "{{mapUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "User Management's relationship answers are kept 30 s on cache-1..3, so the nearby search above asks once per pair. One replica answers (through ws-proxy); each counts its own lookups."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Error cases",
       "item": [
         {

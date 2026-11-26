@@ -64,6 +64,22 @@
     {
       "key": "newAdminId",
       "value": ""
+    },
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "activationSagaId",
+      "value": ""
+    },
+    {
+      "key": "sagaConfigId",
+      "value": ""
+    },
+    {
+      "key": "forcedSagaId",
+      "value": ""
     }
   ],
   "item": [
@@ -606,6 +622,173 @@
       "response": []
     },
     {
+      "name": "Cache (Lab 5)",
+      "description": "Lab 5 (#225, #231): GET /packages and GET /packages/{packageId} are read through the shared cache nodes (cache-1..3, sharded with the consistent-hash ring). Every response says where it came from in the X-Cache header: miss (read from the database, now cached), hit (served from the cache), or off (the cache is switched off). Registering a package deletes the cached list; updating stat definitions deletes that package.",
+      "item": [
+        {
+          "name": "Get Package again (X-Cache: hit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: hit - Get Package cached it', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'); });",
+                  "pm.test('still the stored stat definitions', function () { pm.expect(pm.response.json().statDefinitions.hunger.bonusMultiplier).to.eql(1.2); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}"
+              ]
+            },
+            "description": "The same request as Get Package: answered from the cache node that owns package-registry-service:package:{packageId}."
+          },
+          "response": []
+        },
+        {
+          "name": "List Packages again (X-Cache: hit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: hit - List Packages cached it', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('hit'); });",
+                  "pm.test('lists the registered package', function () {",
+                  "    pm.expect(pm.response.json().map(p => p.packageId)).to.include(pm.collectionVariables.get('packageId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages"
+              ]
+            },
+            "description": "List Packages ran right after Register Package; nothing registered a package since (a stat-definition update doesn't change the list), so this is a hit."
+          },
+          "response": []
+        },
+        {
+          "name": "Change a stat definition (deletes the cached package)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('hunger bonus is now 1.5', function () { pm.expect(pm.response.json().statDefinitions.hunger.bonusMultiplier).to.eql(1.5); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{moderatorId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}/stat-definitions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}",
+                "stat-definitions"
+              ]
+            },
+            "description": "A write: after its commit it deletes package-registry-service:package:{packageId}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statDefinitions\": {\n    \"hunger\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 80,\n      \"bonusMultiplier\": 1.5\n    },\n    \"happiness\": {\n      \"maxValue\": 100,\n      \"bonusThreshold\": 60,\n      \"bonusMultiplier\": 1.1\n    }\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Package after the change (X-Cache: miss)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('X-Cache: miss - the update deleted the cached package', function () { pm.expect(pm.response.headers.get('X-Cache')).to.eql('miss'); });",
+                  "pm.test('the new value, not the cached 1.2', function () { pm.expect(pm.response.json().statDefinitions.hunger.bonusMultiplier).to.eql(1.5); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/packages/{{packageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "packages",
+                "{{packageId}}"
+              ]
+            },
+            "description": "The update deleted the cached package, so this read goes to the database and shows the new bonus instead of a stale one."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Add Package Moderator",
       "event": [
         {
@@ -766,7 +949,12 @@
               "pm.test('returns a raidId and active status', function () {",
               "    pm.expect(body).to.have.property('raidId');",
               "    pm.expect(body.status).to.eql('active');",
-              "});"
+              "});",
+              "// Lab 5 (#237): the activation runs as a saga in the Message Broker.",
+              "pm.test('returns the sagaId of the raid-activation saga', function () {",
+              "    pm.expect(body.sagaId).to.be.a('string').and.not.empty;",
+              "});",
+              "pm.collectionVariables.set('activationSagaId', body.sagaId);"
             ]
           }
         }
@@ -794,7 +982,7 @@
             "activate"
           ]
         },
-        "description": "Activates a raid configuration, spinning up a live raid.\n\nThe live raid is created by Monster Raid Service via its internal POST /raids, and that service owns the raidId - this service returns the id it was given. Reactivating a paused config reuses the same raid.\n\nIn the shared stack the raid is created by the real Monster Raid Service, over gRPC through the Message Broker (CreateRaid)."
+        "description": "Activates a raid configuration, spinning up a live raid in Monster Raid Service.\n\n**Lab 5 (#237): a saga.** It changes two databases, so the Message Broker's saga coordinator runs it in three steps: Package Registry marks the config `activating` → Monster Raid `create-raid` → Package Registry marks it `active` with the `raidId`. If a step fails, the finished ones are undone (the config goes back to the status it had).\n\n- `200 {raidId, status: \"active\", sagaId}` when the saga finished within 5 s;\n- `202 {sagaId, status: \"activating\"}` while it is still running: follow it with the broker's `GET /sagas/{sagaId}`;\n- `409` / `502 {error, sagaId, status}` when it was undone.\n\nRe-activating a config whose raid is still running returns that raid instead of creating another."
       },
       "response": []
     },
@@ -879,6 +1067,455 @@
         "description": "Permanently cancels the config. Any live raid instance is force-ended without rewards, and the config can never be activated again."
       },
       "response": []
+    },
+    {
+      "name": "Raid activation saga (Lab 5)",
+      "description": "The raid activation saga (#237). The first request reads the saga that **Activate Raid Config** above started, at the broker. The rest play the coordinator's own calls to `POST /saga-steps` (broker key only) to show a **forced failure**: step 1 runs, a later step fails, and the coordinator compensates step 1, so the config is back to `draft`. Stopping Monster Raid to force a real failure is in the README (\"Raid activation saga\"); a collection can't stop a container.\n\nNeeds `brokerUrl` (the broker, `http://localhost:8090`) and `brokerKey`. New ids every run.",
+      "item": [
+        {
+          "name": "The broker ran the activation as a completed saga",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const saga = pm.response.json();",
+                  "pm.test('raid-activation, completed', function () {",
+                  "    pm.expect(saga.saga).to.eql('raid-activation');",
+                  "    pm.expect(saga.state).to.eql('completed');",
+                  "});",
+                  "pm.test('mark-activating, create-raid, activate: all done, in order', function () {",
+                  "    pm.expect(saga.steps.map(s => s.step)).to.eql(['mark-activating', 'create-raid', 'activate']);",
+                  "    pm.expect(saga.steps.every(s => s.state === 'done')).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/sagas/{{activationSagaId}}",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "{{activationSagaId}}"
+              ]
+            },
+            "description": "The saga **Activate Raid Config** started, as the broker stored it: every step, who ran it and what it answered."
+          },
+          "response": []
+        },
+        {
+          "name": "Forced failure: a draft config (setup)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('sagaConfigId', pm.response.json().raidConfigId);",
+                  "pm.collectionVariables.set('forcedSagaId', 'postman-forced-' + Date.now());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{adminId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guildId\": \"{{guildId}}\",\n  \"monsterName\": \"Saga Wyrm {{$timestamp}}\",\n  \"maxHp\": 1000,\n  \"duration\": 600,\n  \"rewards\": { \"coins\": 50 },\n  \"createdByAdminId\": \"{{adminId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs"
+              ]
+            },
+            "description": "A fresh `draft` config for the forced failure below."
+          },
+          "response": []
+        },
+        {
+          "name": "Forced failure: step 1 marks it activating (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const r = pm.response.json().result;",
+                  "pm.test('activating, remembering it was draft', function () {",
+                  "    pm.expect(r.status).to.eql('activating');",
+                  "    pm.expect(r.previousStatus).to.eql('draft');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{forcedSagaId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"mark-activating\",\n  \"action\": \"do\",\n  \"payload\": { \"raidConfigId\": \"{{sagaConfigId}}\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saga-steps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saga-steps"
+              ]
+            },
+            "description": "What the coordinator sends first: `mark-activating`. The config is `activating` while Monster Raid creates the raid."
+          },
+          "response": []
+        },
+        {
+          "name": "Forced failure: activating it again meanwhile (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', function () { pm.response.to.have.status(409); });",
+                  "pm.test('says it is being activated', function () { pm.expect(pm.response.json().error).to.include('being activated'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{adminId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs/{{sagaConfigId}}/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs",
+                "{{sagaConfigId}}",
+                "activate"
+              ]
+            },
+            "description": "A second activation can't start while the first saga runs."
+          },
+          "response": []
+        },
+        {
+          "name": "Forced failure: the coordinator undoes step 1 (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "const r = pm.response.json().result;",
+                  "pm.test('compensated: back to draft', function () {",
+                  "    pm.expect(r.compensated).to.be.true;",
+                  "    pm.expect(r.restored.status).to.eql('draft');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{forcedSagaId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"mark-activating\",\n  \"action\": \"compensate\",\n  \"payload\": { \"raidConfigId\": \"{{sagaConfigId}}\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saga-steps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saga-steps"
+              ]
+            },
+            "description": "A later step failed (e.g. Monster Raid was down), so the coordinator compensates `mark-activating`: the config gets back the status it had."
+          },
+          "response": []
+        },
+        {
+          "name": "Forced failure: the same compensation again changes nothing (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK, already applied', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().result.alreadyApplied).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{forcedSagaId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"mark-activating\",\n  \"action\": \"compensate\",\n  \"payload\": { \"raidConfigId\": \"{{sagaConfigId}}\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saga-steps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saga-steps"
+              ]
+            },
+            "description": "Delivery is at least once: a repeated step or compensation returns its first answer."
+          },
+          "response": []
+        },
+        {
+          "name": "Forced failure: the step arriving late does nothing (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK, skipped', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().result.skipped).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{forcedSagaId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"mark-activating\",\n  \"action\": \"do\",\n  \"payload\": { \"raidConfigId\": \"{{sagaConfigId}}\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saga-steps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saga-steps"
+              ]
+            },
+            "description": "The step after its compensation (it timed out at the coordinator and arrived late): skipped, the config stays `draft`."
+          },
+          "response": []
+        },
+        {
+          "name": "After the failure the config can be activated (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('active, with a raid and a saga', function () {",
+                  "    const b = pm.response.json();",
+                  "    pm.expect(b.status).to.eql('active');",
+                  "    pm.expect(b.raidId).to.be.a('string').and.not.empty;",
+                  "    pm.expect(b.sagaId).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Gateway-Key",
+                "value": "{{gatewayKey}}"
+              },
+              {
+                "key": "X-User-Id",
+                "value": "{{adminId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/raid-configs/{{sagaConfigId}}/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "raid-configs",
+                "{{sagaConfigId}}",
+                "activate"
+              ]
+            },
+            "description": "The compensation left it `draft`, so a real activation (a new saga) succeeds."
+          },
+          "response": []
+        },
+        {
+          "name": "A step without the broker key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{forcedSagaId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"mark-activating\",\n  \"action\": \"do\",\n  \"payload\": { \"raidConfigId\": \"{{sagaConfigId}}\" }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saga-steps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saga-steps"
+              ]
+            },
+            "description": "Only the broker's coordinator may run a step."
+          },
+          "response": []
+        },
+        {
+          "name": "A step Package Registry doesn't run (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', function () { pm.response.to.have.status(422); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"{{forcedSagaId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"create-raid\",\n  \"action\": \"do\",\n  \"payload\": {}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saga-steps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saga-steps"
+              ]
+            },
+            "description": "`create-raid` is Monster Raid's step."
+          },
+          "response": []
+        }
+      ]
     },
     {
       "name": "Message Broker (Lab 4)",

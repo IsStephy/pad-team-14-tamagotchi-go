@@ -64,6 +64,14 @@
     {
       "key": "brokerKey",
       "value": "change_me"
+    },
+    {
+      "key": "sagaRaidId",
+      "value": ""
+    },
+    {
+      "key": "rewardSagaSteps",
+      "value": ""
     }
   ],
   "item": [
@@ -456,6 +464,7 @@
                   "const count = (name, labels) => pm.response.text().split('\\n').filter(l => l.startsWith(name + '{') && labels.every(x => l.includes(x))).reduce((sum, l) => sum + Number(l.split(' ').pop()), 0);",
                   "pm.collectionVariables.set('guildCalls', count('broker_grpc_calls_total', ['target=\"guild-service\"', 'method=\"GetGuild\"', 'code=\"OK\"']));",
                   "pm.collectionVariables.set('rewardCalls', count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"AdjustCurrency\"']));",
+                  "pm.collectionVariables.set('rewardSagaSteps', count('broker_saga_steps_total', ['saga=\"raid-rewards\"', 'step=\"pay-raid-rewards\"', 'action=\"do\"', 'outcome=\"ok\"']));",
                   "pm.collectionVariables.set('tamagotchiRequests', count('broker_requests_total', ['target=\"tamagotchi-service\"']));",
                   "pm.collectionVariables.set('raidEvents', count('broker_events_published_total', ['topic=\"raid.completed\"', 'source=\"monster-raid-service\"']));"
                 ]
@@ -822,8 +831,18 @@
           "response": []
         },
         {
-          "name": "Through the broker: Guild and User Management over gRPC, Tamagotchi over REST, raid.completed",
+          "name": "Through the broker: Guild over gRPC, Tamagotchi over REST, the reward paid, raid.completed",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The raid-rewards saga runs in the broker after the last attack has answered.",
+                  "setTimeout(function () {}, 3000);"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -834,8 +853,10 @@
                   "pm.test('membership was checked with GetGuild over gRPC', function () {",
                   "  pm.expect(count('broker_grpc_calls_total', ['target=\"guild-service\"', 'method=\"GetGuild\"', 'code=\"OK\"'])).to.be.above(Number(pm.collectionVariables.get('guildCalls')));",
                   "});",
-                  "pm.test('the reward was paid with AdjustCurrency over gRPC', function () {",
-                  "  pm.expect(count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"AdjustCurrency\"'])).to.be.above(Number(pm.collectionVariables.get('rewardCalls')));",
+                  "pm.test('the reward was paid: by the raid-rewards saga (pay-raid-rewards), or with AdjustCurrency over gRPC when RAID_REWARDS_BY_SAGA=false', function () {",
+                  "  const bySaga = count('broker_saga_steps_total', ['saga=\"raid-rewards\"', 'step=\"pay-raid-rewards\"', 'action=\"do\"', 'outcome=\"ok\"']) > Number(pm.collectionVariables.get('rewardSagaSteps'));",
+                  "  const direct = count('broker_grpc_calls_total', ['target=\"user-management-service\"', 'method=\"AdjustCurrency\"']) > Number(pm.collectionVariables.get('rewardCalls'));",
+                  "  pm.expect(bySaga || direct, 'no saga step and no AdjustCurrency call').to.eql(true);",
                   "});",
                   "pm.test('the Tamagotchi was read through the broker', function () {",
                   "  pm.expect(count('broker_requests_total', ['target=\"tamagotchi-service\"'])).to.be.above(Number(pm.collectionVariables.get('tamagotchiRequests')));",
@@ -1175,6 +1196,313 @@
               ]
             },
             "description": "Straight to Monster Raid's own port: refused, because only the gateway holds GATEWAY_KEY."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Saga steps (as the broker runs them)",
+      "item": [
+        {
+          "name": "create-raid (do), through the broker",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const result = pm.response.json().result;",
+                  "pm.test('a new raid', () => {",
+                  "    pm.expect(result.raidId).to.be.a('string').and.not.empty;",
+                  "    pm.expect(result.status).to.eql('active');",
+                  "    pm.expect(result.reused).to.eql(false);",
+                  "});",
+                  "pm.collectionVariables.set('sagaRaidId', result.raidId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/monster-raid-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "monster-raid-service",
+                "saga-steps"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"postman-activation-{{runId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"create-raid\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"configId\": \"cfg-saga-{{runId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"monsterName\": \"Saga Slime\",\n    \"maxHp\": 4,\n    \"duration\": 600,\n    \"rewards\": {\n      \"currency\": 5,\n      \"xp\": 2\n    }\n  }\n}"
+            },
+            "description": "What the broker's saga coordinator sends: POST /saga-steps with the broker key only. Monster Raid records the step once per saga."
+          },
+          "response": []
+        },
+        {
+          "name": "The same step again: its first answer, no second raid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('the same raid', () => pm.expect(pm.response.json().result.raidId).to.eql(pm.collectionVariables.get('sagaRaidId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/monster-raid-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "monster-raid-service",
+                "saga-steps"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"postman-activation-{{runId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"create-raid\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"configId\": \"cfg-saga-{{runId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"monsterName\": \"Saga Slime\",\n    \"maxHp\": 4,\n    \"duration\": 600,\n    \"rewards\": {\n      \"currency\": 5,\n      \"xp\": 2\n    }\n  }\n}"
+            },
+            "description": "A retried step (the broker never heard the answer) changes nothing twice."
+          },
+          "response": []
+        },
+        {
+          "name": "create-raid (compensate): the raid is cancelled",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const result = pm.response.json().result;",
+                  "pm.test('the raid it created was cancelled', () => {",
+                  "    pm.expect(result.stepRan).to.eql(true);",
+                  "    pm.expect(result.undone[0].raidId).to.eql(pm.collectionVariables.get('sagaRaidId'));",
+                  "    pm.expect(result.undone[0].status).to.eql('cancelled');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Broker-Key",
+                "value": "{{brokerKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/services/monster-raid-service/saga-steps",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "services",
+                "monster-raid-service",
+                "saga-steps"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"postman-activation-{{runId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"create-raid\",\n  \"action\": \"compensate\",\n  \"payload\": {\n    \"configId\": \"cfg-saga-{{runId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"monsterName\": \"Saga Slime\",\n    \"maxHp\": 4,\n    \"duration\": 600,\n    \"rewards\": {\n      \"currency\": 5,\n      \"xp\": 2\n    }\n  }\n}"
+            },
+            "description": "The undo when a later step of the saga fails."
+          },
+          "response": []
+        },
+        {
+          "name": "The cancelled raid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('cancelled', () => pm.expect(pm.response.json().status).to.eql('cancelled'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{sagaRaidId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{sagaRaidId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A cancelled raid can't be joined (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ownerToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/raids/{{sagaRaidId}}/join",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "raids",
+                "{{sagaRaidId}}",
+                "join"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{ownerId}}\",\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"idempotencyKey\": \"saga-join-{{runId}}\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "A saga step without the broker key (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{raidUrl}}/saga-steps",
+              "host": [
+                "{{raidUrl}}"
+              ],
+              "path": [
+                "saga-steps"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sagaId\": \"postman-activation-{{runId}}\",\n  \"saga\": \"raid-activation\",\n  \"step\": \"create-raid\",\n  \"action\": \"do\",\n  \"payload\": {\n    \"configId\": \"cfg-saga-{{runId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"monsterName\": \"Saga Slime\",\n    \"maxHp\": 4,\n    \"duration\": 600,\n    \"rewards\": {\n      \"currency\": 5,\n      \"xp\": 2\n    }\n  }\n}"
+            },
+            "description": "Only the broker runs saga steps."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Cache (shared cache nodes)",
+      "item": [
+        {
+          "name": "Monster Raid metrics: cache hits and misses",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const text = pm.response.text();",
+                  "pm.test('the cache counter is exported', () => pm.expect(text).to.include('cache_requests_total'));",
+                  "const samples = text.split('\\n').filter(l => l.startsWith('cache_requests_total{'));",
+                  "(samples.length ? pm.test : pm.test.skip)('lookups counted per node (needs CACHE_NODES)', () => {",
+                  "    samples.forEach(l => pm.expect(l).to.match(/node=\"cache-\\d\"/));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{raidUrl}}/metrics",
+              "host": [
+                "{{raidUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "Raid rows and Guild member lists are kept on cache-1..3, each key on the node the shared hash ring picks. One replica answers (through ws-proxy); each counts its own lookups."
           },
           "response": []
         }

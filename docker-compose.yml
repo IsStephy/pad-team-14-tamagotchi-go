@@ -10,7 +10,7 @@
 #
 #   service name   the repo name             e.g. guild-service
 #   database name  <service>-db              e.g. guild-service-db
-#   volume name    <service>-db-data         e.g. guild-service-db-data
+#   volume name    <service>-db-data         e.g. battle-service-db-data
 #   env prefix     <SERVICE>_                e.g. GUILD_DB_PASSWORD
 #   image          your published Docker Hub image, never a build: context;
 #                  the stack uses :latest - the newest release to main
@@ -21,22 +21,494 @@
 
 name: tamagotchi-go
 
+# ---------------------------------------------------- replication (shared parts)
+# Postgres: <service>-db-0..2 run repmgr (db-0 starts as primary; another node
+# is promoted when the primary stops); <service>-db is pgpool in front of them,
+# so the address a service connects to never changes. All queries go to the
+# primary. Redis: a master and 2 replicas per store, watched by the 3 shared
+# Sentinels. Sentinel watches the nodes by IP on the redis-replication network:
+# a stopped container's name stops resolving, and Sentinel stalls on that
+# instead of failing over. Addresses there:
+#   .11-.13   monster-raid-service-cache, -1, -2
+#   .21-.23   map-service-db, -1, -2
+#   .31-.33   notification-service-db, -1, -2
+#   .41-.43   battle-service-cache, -1, -2
+#   .201-.203 redis-sentinel-1..3
+#   another store: the next free block of ten below .64, and a monitor block below.
+#   .64-.127 is for containers without a fixed address (the services).
+x-monster-raid-db: &monster-raid-db
+  image: bitnamilegacy/postgresql-repmgr:16
+  environment: &monster-raid-db-env
+    POSTGRESQL_POSTGRES_PASSWORD: ${MONSTER_RAID_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    # The init script below runs as postgres: here the app user isn't a
+    # superuser, and its migrations create the etl_reader role.
+    POSTGRESQL_INITSCRIPTS_USERNAME: postgres
+    POSTGRESQL_INITSCRIPTS_PASSWORD: ${MONSTER_RAID_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_USERNAME: ${MONSTER_RAID_DB_USER:?set it in .env — copy .env.example}
+    POSTGRESQL_PASSWORD: ${MONSTER_RAID_DB_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_DATABASE: ${MONSTER_RAID_DB_NAME:-monster_raid_db}
+    REPMGR_PASSWORD: ${MONSTER_RAID_REPMGR_PASSWORD:?set it in .env — copy .env.example}
+    REPMGR_PRIMARY_HOST: monster-raid-service-db-0
+    REPMGR_PARTNER_NODES: monster-raid-service-db-0,monster-raid-service-db-1,monster-raid-service-db-2
+    # A replica is promoted ~10 s after the primary stops (the defaults take ~45 s).
+    REPMGR_RECONNECT_ATTEMPTS: "2"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+  configs:
+    - source: monster-raid-db-init
+      target: /docker-entrypoint-initdb.d/10-app-user.sql
+  healthcheck:
+    test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRESQL_PASSWORD\" pg_isready -h 127.0.0.1 -U \"$$POSTGRESQL_USERNAME\" -d \"$$POSTGRESQL_DATABASE\""]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+  # Two fixes before the image's own entrypoint (the same as Guild's and
+  # Package Registry's nodes):
+  # - repmgrd keeps its PID file in /tmp, which survives a container restart:
+  #   after an unclean stop it took the stale file for a live repmgrd and the
+  #   node restarted forever. Only that file is removed.
+  # - A node that was the primary before it stopped waits 30 s, so the new
+  #   primary's repmgrd has marked it inactive and it rejoins as a replica
+  #   instead of starting as a second primary with old data.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
+
+x-tamagotchi-db: &tamagotchi-db
+  image: bitnamilegacy/postgresql-repmgr:16
+  environment: &tamagotchi-db-env
+    POSTGRESQL_POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    # The init script below runs as postgres: here the app user isn't a
+    # superuser, and Tamagotchi creates the etl_reader role at start-up.
+    POSTGRESQL_INITSCRIPTS_USERNAME: postgres
+    POSTGRESQL_INITSCRIPTS_PASSWORD: ${TAMAGOTCHI_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_USERNAME: ${TAMAGOTCHI_DB_USER:?set it in .env — copy .env.example}
+    POSTGRESQL_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_DATABASE: ${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
+    REPMGR_PASSWORD: ${TAMAGOTCHI_REPMGR_PASSWORD:?set it in .env — copy .env.example}
+    REPMGR_PRIMARY_HOST: tamagotchi-service-db-0
+    REPMGR_PARTNER_NODES: tamagotchi-service-db-0,tamagotchi-service-db-1,tamagotchi-service-db-2
+    # A replica is promoted ~10 s after the primary stops (the defaults take ~45 s).
+    REPMGR_RECONNECT_ATTEMPTS: "2"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+  configs:
+    - source: tamagotchi-db-init
+      target: /docker-entrypoint-initdb.d/10-app-user.sql
+  healthcheck:
+    test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRESQL_PASSWORD\" pg_isready -h 127.0.0.1 -U \"$$POSTGRESQL_USERNAME\" -d \"$$POSTGRESQL_DATABASE\""]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+  # Two fixes before the image's own entrypoint (the same as the other
+  # services' nodes):
+  # - repmgrd keeps its PID file in /tmp, which survives a container restart:
+  #   after an unclean stop it took the stale file for a live repmgrd and the
+  #   node restarted forever. Only that file is removed.
+  # - A node that was the primary before it stopped waits 30 s, so the new
+  #   primary's repmgrd has marked it inactive and it rejoins as a replica
+  #   instead of starting as a second primary with old data.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
+
+# Guild's and Package Registry's Postgres (#220): the same setup as Monster
+# Raid's above, one template per service because each has its own users and
+# passwords. Both services run migrations that create the etl_reader role, so
+# their init script gives the app user CREATEROLE too.
+x-guild-db: &guild-db
+  image: bitnamilegacy/postgresql-repmgr:16
+  environment: &guild-db-env
+    POSTGRESQL_POSTGRES_PASSWORD: ${GUILD_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_INITSCRIPTS_USERNAME: postgres
+    POSTGRESQL_INITSCRIPTS_PASSWORD: ${GUILD_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_USERNAME: ${GUILD_DB_USER:?set it in .env — copy .env.example}
+    POSTGRESQL_PASSWORD: ${GUILD_DB_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_DATABASE: ${GUILD_DB_NAME:-guild_db}
+    REPMGR_PASSWORD: ${GUILD_REPMGR_PASSWORD:?set it in .env — copy .env.example}
+    REPMGR_PRIMARY_HOST: guild-service-db-0
+    REPMGR_PARTNER_NODES: guild-service-db-0,guild-service-db-1,guild-service-db-2
+    # A replica is promoted ~10 s after the primary stops (the defaults take ~45 s).
+    REPMGR_RECONNECT_ATTEMPTS: "2"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+  configs:
+    - source: guild-db-init
+      target: /docker-entrypoint-initdb.d/10-app-user.sql
+  healthcheck:
+    test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRESQL_PASSWORD\" pg_isready -h 127.0.0.1 -U \"$$POSTGRESQL_USERNAME\" -d \"$$POSTGRESQL_DATABASE\""]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+  # Two fixes before the image's own entrypoint (found by restarting a
+  # cluster after a failover and after an unclean stop):
+  # - repmgrd runs as PID 1 and writes its PID file to /tmp, which survives a
+  #   container restart. After an unclean stop the new entrypoint is PID 1
+  #   again, repmgrd takes the stale file for a live repmgrd and refuses to
+  #   start, so the node restarted forever. Only that file is removed: the
+  #   image keeps state it needs elsewhere in /tmp.
+  # - A node that was the primary before it stopped (master.lock) asks the
+  #   others who is primary now. Right after a failover their metadata can
+  #   still name it too; the image then can't decide, and starts it as a
+  #   SECOND primary with old data (split brain). Waiting 30 s first lets the
+  #   new primary's repmgrd mark the old one inactive, so it rejoins as a
+  #   replica.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
+
+x-package-registry-db: &package-registry-db
+  image: bitnamilegacy/postgresql-repmgr:16
+  environment: &package-registry-db-env
+    POSTGRESQL_POSTGRES_PASSWORD: ${PACKAGE_REGISTRY_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_INITSCRIPTS_USERNAME: postgres
+    POSTGRESQL_INITSCRIPTS_PASSWORD: ${PACKAGE_REGISTRY_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_USERNAME: ${PACKAGE_REGISTRY_DB_USER:?set it in .env — copy .env.example}
+    POSTGRESQL_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_DATABASE: ${PACKAGE_REGISTRY_DB_NAME:-package_registry_db}
+    REPMGR_PASSWORD: ${PACKAGE_REGISTRY_REPMGR_PASSWORD:?set it in .env — copy .env.example}
+    REPMGR_PRIMARY_HOST: package-registry-service-db-0
+    REPMGR_PARTNER_NODES: package-registry-service-db-0,package-registry-service-db-1,package-registry-service-db-2
+    REPMGR_RECONNECT_ATTEMPTS: "2"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+  configs:
+    - source: package-registry-db-init
+      target: /docker-entrypoint-initdb.d/10-app-user.sql
+  healthcheck:
+    test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRESQL_PASSWORD\" pg_isready -h 127.0.0.1 -U \"$$POSTGRESQL_USERNAME\" -d \"$$POSTGRESQL_DATABASE\""]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+  # Two fixes before the image's own entrypoint (found by restarting a
+  # cluster after a failover and after an unclean stop):
+  # - repmgrd runs as PID 1 and writes its PID file to /tmp, which survives a
+  #   container restart. After an unclean stop the new entrypoint is PID 1
+  #   again, repmgrd takes the stale file for a live repmgrd and refuses to
+  #   start, so the node restarted forever. Only that file is removed: the
+  #   image keeps state it needs elsewhere in /tmp.
+  # - A node that was the primary before it stopped (master.lock) asks the
+  #   others who is primary now. Right after a failover their metadata can
+  #   still name it too; the image then can't decide, and starts it as a
+  #   SECOND primary with old data (split brain). Waiting 30 s first lets the
+  #   new primary's repmgrd mark the old one inactive, so it rejoins as a
+  #   replica.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
+
+# User Management's and Battle's Postgres (#221): the same setup, with the
+# same restart wrapper. Both services create the etl_reader role at
+# start-up, so their init script gives the app user CREATEROLE.
+x-user-management-db: &user-management-db
+  image: bitnamilegacy/postgresql-repmgr:16
+  environment: &user-management-db-env
+    POSTGRESQL_POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    # The init script below runs as postgres: here the app user isn't a
+    # superuser, and User Management creates the etl_reader role at start-up.
+    POSTGRESQL_INITSCRIPTS_USERNAME: postgres
+    POSTGRESQL_INITSCRIPTS_PASSWORD: ${USER_MANAGEMENT_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_USERNAME: ${USER_MANAGEMENT_DB_USER:?set it in .env — copy .env.example}
+    POSTGRESQL_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_DATABASE: ${USER_MANAGEMENT_DB_NAME:-user_management_db}
+    REPMGR_PASSWORD: ${USER_MANAGEMENT_REPMGR_PASSWORD:?set it in .env — copy .env.example}
+    REPMGR_PRIMARY_HOST: user-management-service-db-0
+    REPMGR_PARTNER_NODES: user-management-service-db-0,user-management-service-db-1,user-management-service-db-2
+    # A replica is promoted ~10 s after the primary stops (the defaults take ~45 s).
+    REPMGR_RECONNECT_ATTEMPTS: "2"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+  configs:
+    - source: user-management-service-db-init
+      target: /docker-entrypoint-initdb.d/10-app-user.sql
+  healthcheck:
+    test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRESQL_PASSWORD\" pg_isready -h 127.0.0.1 -U \"$$POSTGRESQL_USERNAME\" -d \"$$POSTGRESQL_DATABASE\""]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+  # Two fixes before the image's own entrypoint (found by restarting a
+  # cluster after a failover and after an unclean stop):
+  # - repmgrd runs as PID 1 and writes its PID file to /tmp, which survives a
+  #   container restart. After an unclean stop the new entrypoint is PID 1
+  #   again, repmgrd takes the stale file for a live repmgrd and refuses to
+  #   start, so the node restarted forever. Only that file is removed: the
+  #   image keeps state it needs elsewhere in /tmp.
+  # - A node that was the primary before it stopped (master.lock) asks the
+  #   others who is primary now. Right after a failover their metadata can
+  #   still name it too; the image then can't decide, and starts it as a
+  #   SECOND primary with old data (split brain). Waiting 30 s first lets the
+  #   new primary's repmgrd mark the old one inactive, so it rejoins as a
+  #   replica.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
+
+x-battle-db: &battle-db
+  image: bitnamilegacy/postgresql-repmgr:16
+  environment: &battle-db-env
+    POSTGRESQL_POSTGRES_PASSWORD: ${BATTLE_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    # The init script below runs as postgres: here the app user isn't a
+    # superuser, and Battle creates the etl_reader role at start-up.
+    POSTGRESQL_INITSCRIPTS_USERNAME: postgres
+    POSTGRESQL_INITSCRIPTS_PASSWORD: ${BATTLE_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_USERNAME: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
+    POSTGRESQL_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRESQL_DATABASE: ${BATTLE_DB_NAME:-battle_db}
+    REPMGR_PASSWORD: ${BATTLE_REPMGR_PASSWORD:?set it in .env — copy .env.example}
+    REPMGR_PRIMARY_HOST: battle-service-db-0
+    REPMGR_PARTNER_NODES: battle-service-db-0,battle-service-db-1,battle-service-db-2
+    # A replica is promoted ~10 s after the primary stops (the defaults take ~45 s).
+    REPMGR_RECONNECT_ATTEMPTS: "2"
+    REPMGR_RECONNECT_INTERVAL: "2"
+    REPMGR_MASTER_RESPONSE_TIMEOUT: "5"
+  configs:
+    - source: battle-service-db-init
+      target: /docker-entrypoint-initdb.d/10-app-user.sql
+  healthcheck:
+    test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRESQL_PASSWORD\" pg_isready -h 127.0.0.1 -U \"$$POSTGRESQL_USERNAME\" -d \"$$POSTGRESQL_DATABASE\""]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+  restart: unless-stopped
+  # Two fixes before the image's own entrypoint (found by restarting a
+  # cluster after a failover and after an unclean stop):
+  # - repmgrd runs as PID 1 and writes its PID file to /tmp, which survives a
+  #   container restart. After an unclean stop the new entrypoint is PID 1
+  #   again, repmgrd takes the stale file for a live repmgrd and refuses to
+  #   start, so the node restarted forever. Only that file is removed: the
+  #   image keeps state it needs elsewhere in /tmp.
+  # - A node that was the primary before it stopped (master.lock) asks the
+  #   others who is primary now. Right after a failover their metadata can
+  #   still name it too; the image then can't decide, and starts it as a
+  #   SECOND primary with old data (split brain). Waiting 30 s first lets the
+  #   new primary's repmgrd mark the old one inactive, so it rejoins as a
+  #   replica.
+  entrypoint:
+    - /bin/sh
+    - -c
+    - |
+      rm -f /tmp/repmgrd.pid
+      if [ -f /bitnami/postgresql/lock/master.lock ]; then
+        echo "was the primary before this restart: waiting 30 s for the cluster to settle"
+        sleep 30
+      fi
+      exec /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh "$$@"
+    - --
+  command: ["/opt/bitnami/scripts/postgresql-repmgr/run.sh"]
+
+x-redis-node: &redis-node
+  image: redis:7-alpine
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+  restart: unless-stopped
+
+x-redis-sentinel: &redis-sentinel
+  image: redis:7-alpine
+  environment:
+    MAP_REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    MONSTER_RAID_REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    NOTIFICATION_REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    BATTLE_REDIS_PASSWORD: ${BATTLE_REDIS_PASSWORD:?set it in .env — copy .env.example}
+  # Sentinel rewrites its config as it learns, so it is written fresh at start.
+  # One block per watched master; 2 of the 3 Sentinels must agree to fail over.
+  command:
+    - sh
+    - -c
+    - |
+      printf '%s\n' \
+        'port 26379' \
+        'sentinel monitor map-service-db 172.29.14.21 6379 2' \
+        "sentinel auth-pass map-service-db $$MAP_REDIS_PASSWORD" \
+        'sentinel down-after-milliseconds map-service-db 5000' \
+        'sentinel failover-timeout map-service-db 30000' \
+        'sentinel monitor monster-raid-service-cache 172.29.14.11 6379 2' \
+        "sentinel auth-pass monster-raid-service-cache $$MONSTER_RAID_REDIS_PASSWORD" \
+        'sentinel down-after-milliseconds monster-raid-service-cache 5000' \
+        'sentinel failover-timeout monster-raid-service-cache 30000' \
+        'sentinel monitor notification-service-db 172.29.14.31 6379 2' \
+        "sentinel auth-pass notification-service-db $$NOTIFICATION_REDIS_PASSWORD" \
+        'sentinel down-after-milliseconds notification-service-db 5000' \
+        'sentinel failover-timeout notification-service-db 30000' \
+        'sentinel monitor battle-service-cache 172.29.14.41 6379 2' \
+        "sentinel auth-pass battle-service-cache $$BATTLE_REDIS_PASSWORD" \
+        'sentinel down-after-milliseconds battle-service-cache 5000' \
+        'sentinel failover-timeout battle-service-cache 30000' \
+        > /tmp/sentinel.conf
+      exec redis-sentinel /tmp/sentinel.conf
+  depends_on:
+    map-service-db:
+      condition: service_healthy
+    monster-raid-service-cache:
+      condition: service_healthy
+    notification-service-db:
+      condition: service_healthy
+    battle-service-cache:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+  restart: unless-stopped
+
+networks:
+  default: {}
+  redis-replication:
+    ipam:
+      config:
+        - subnet: 172.29.14.0/24
+          # Containers without a fixed address (the services on this network)
+          # get one from .64-.127 only, so they can never take a store's or a
+          # Sentinel's fixed address (.11-.59, .201-.203) before it starts.
+          ip_range: 172.29.14.64/26
+
+configs:
+  monster-raid-db-init:
+    content: |
+      ALTER ROLE "${MONSTER_RAID_DB_USER}" CREATEROLE;
+  tamagotchi-db-init:
+    content: |
+      ALTER ROLE "${TAMAGOTCHI_DB_USER}" CREATEROLE;
+  guild-db-init:
+    content: |
+      ALTER ROLE "${GUILD_DB_USER}" CREATEROLE;
+  package-registry-db-init:
+    content: |
+      ALTER ROLE "${PACKAGE_REGISTRY_DB_USER}" CREATEROLE;
+  user-management-service-db-init:
+    content: |
+      ALTER ROLE "${USER_MANAGEMENT_DB_USER}" CREATEROLE;
+  battle-service-db-init:
+    content: |
+      ALTER ROLE "${BATTLE_DB_USER}" CREATEROLE;
+
 services:
 
   # --------------------------------------------------------------- Go / user
-  user-management-service-db:
-    image: postgres:16-alpine
+  # PostgreSQL for User Management: a primary and 2 replicas (repmgr) behind pgpool.
+  # The service creates its schema on start-up, through pgpool.
+  user-management-service-db-0:
+    <<: *user-management-db
     environment:
-      POSTGRES_DB: ${USER_MANAGEMENT_DB_NAME:-user_management_db}
-      POSTGRES_USER: ${USER_MANAGEMENT_DB_USER:?set it in .env — copy .env.example}
-      POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
+      <<: *user-management-db-env
+      REPMGR_NODE_NAME: user-management-service-db-0
+      REPMGR_NODE_NETWORK_NAME: user-management-service-db-0
     volumes:
-      - user-management-service-db-data:/var/lib/postgresql/data
+      - user-management-service-db-0-data:/bitnami/postgresql
+
+  user-management-service-db-1:
+    <<: *user-management-db
+    environment:
+      <<: *user-management-db-env
+      REPMGR_NODE_NAME: user-management-service-db-1
+      REPMGR_NODE_NETWORK_NAME: user-management-service-db-1
+    volumes:
+      - user-management-service-db-1-data:/bitnami/postgresql
+
+  user-management-service-db-2:
+    <<: *user-management-db
+    environment:
+      <<: *user-management-db-env
+      REPMGR_NODE_NAME: user-management-service-db-2
+      REPMGR_NODE_NETWORK_NAME: user-management-service-db-2
+    volumes:
+      - user-management-service-db-2-data:/bitnami/postgresql
+
+  # pgpool keeps the old address, so DB_HOST doesn't change. Every query goes
+  # to the current primary (no load balancing: replicas lag behind, and the
+  # schema migration's advisory lock only works on the primary).
+  user-management-service-db:
+    image: bitnamilegacy/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:user-management-service-db-0:5432,1:user-management-service-db-1:5432,2:user-management-service-db-2:5432
+      PGPOOL_BACKEND_APPLICATION_NAMES: user-management-service-db-0,user-management-service-db-1,user-management-service-db-2
+      PGPOOL_SR_CHECK_USER: ${USER_MANAGEMENT_DB_USER:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PERIOD: "2"
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: ${USER_MANAGEMENT_PGPOOL_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      # Who logs in through pgpool: the service, and the ETL's read-only role.
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${USER_MANAGEMENT_DB_USER},etl_reader
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${USER_MANAGEMENT_DB_PASSWORD},${USER_MANAGEMENT_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_AUTO_FAILBACK: "yes"
+      PGPOOL_HEALTH_CHECK_PERIOD: "2"
+      PGPOOL_HEALTH_CHECK_TIMEOUT: "2"
+      PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
+      PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
+      PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up user-management-service` never
+    # starts them, and pgpool started before them marks them down (#264).
+    depends_on:
+      user-management-service-db-0:
+        condition: service_healthy
+      user-management-service-db-1:
+        condition: service_healthy
+      user-management-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
+      interval: 10s
+      timeout: 15s
+      retries: 30
     restart: unless-stopped
 
   user-management-service:
@@ -54,6 +526,15 @@ services:
       PORT: 8081
       DB_HOST: user-management-service-db
       DB_PORT: 5432
+      # The password of the read-only role the ETL logs in with (through pgpool).
+      ETL_DB_PASSWORD: ${USER_MANAGEMENT_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      # Lab 5 (#226, #232): GetUser and GetRelationship (REST and gRPC) go through
+      # the shared cache-1..3, each key on the node the shared hash ring picks;
+      # every write deletes what it changed. A node that is down turns its keys
+      # into database reads, so there is no depends_on on the cache nodes.
+      # USER_MANAGEMENT_CACHE_NODES set empty in .env turns it off.
+      CACHE_NODES: ${USER_MANAGEMENT_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
       DB_NAME: ${USER_MANAGEMENT_DB_NAME:-user_management_db}
       DB_USER: ${USER_MANAGEMENT_DB_USER:?set it in .env — copy .env.example}
       DB_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD:?set it in .env — copy .env.example}
@@ -82,6 +563,15 @@ services:
       # raid.completed, taken at POST /events).
       BROKER_URL: http://message-broker:8090
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # true: raid rewards are paid by the raid-rewards saga (step
+      # pay-raid-rewards), and raid.completed is no longer consumed. Goes on
+      # and off together with Monster Raid's REWARDS_BY_SAGA (one .env key).
+      RAID_REWARDS_BY_SAGA: ${RAID_REWARDS_BY_SAGA:-true}
+      # true: battles are paid by the battle-settlement saga (steps charge-loser,
+      # pay-winner), and battle.ended is no longer consumed. Goes on and off
+      # together with Battle's SETTLEMENT_BY_SAGA (one .env key) and
+      # TAMAGOTCHI_APPLY_BATTLE_ENDED=false.
+      SETTLEMENT_BY_SAGA: ${SETTLEMENT_BY_SAGA:-true}
       # gRPC (GetUser, GetBalance, AdjustCurrency, GetRelationship): registered
       # with Service Discovery as metadata.grpcPort, reached through the broker.
       GRPC_PORT: 50081
@@ -97,36 +587,121 @@ services:
 
   # ------------------------------------------------------------- Go / battle
 
-  battle-service-db:
-    image: postgres:16-alpine
+  # PostgreSQL for Battle: a primary and 2 replicas (repmgr) behind pgpool.
+  # The service creates its schema on start-up, through pgpool.
+  battle-service-db-0:
+    <<: *battle-db
     environment:
-      POSTGRES_DB: ${BATTLE_DB_NAME:-battle_db}
-      POSTGRES_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
-      POSTGRES_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
+      <<: *battle-db-env
+      REPMGR_NODE_NAME: battle-service-db-0
+      REPMGR_NODE_NETWORK_NAME: battle-service-db-0
     volumes:
-      - battle-service-db-data:/var/lib/postgresql/data
+      - battle-service-db-0-data:/bitnami/postgresql
+
+  battle-service-db-1:
+    <<: *battle-db
+    environment:
+      <<: *battle-db-env
+      REPMGR_NODE_NAME: battle-service-db-1
+      REPMGR_NODE_NETWORK_NAME: battle-service-db-1
+    volumes:
+      - battle-service-db-1-data:/bitnami/postgresql
+
+  battle-service-db-2:
+    <<: *battle-db
+    environment:
+      <<: *battle-db-env
+      REPMGR_NODE_NAME: battle-service-db-2
+      REPMGR_NODE_NETWORK_NAME: battle-service-db-2
+    volumes:
+      - battle-service-db-2-data:/bitnami/postgresql
+
+  # pgpool keeps the old address, so DB_HOST doesn't change. Every query goes
+  # to the current primary (no load balancing: replicas lag behind, and the
+  # schema migration's advisory lock only works on the primary).
+  battle-service-db:
+    image: bitnamilegacy/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:battle-service-db-0:5432,1:battle-service-db-1:5432,2:battle-service-db-2:5432
+      PGPOOL_BACKEND_APPLICATION_NAMES: battle-service-db-0,battle-service-db-1,battle-service-db-2
+      PGPOOL_SR_CHECK_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PERIOD: "2"
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${BATTLE_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: ${BATTLE_PGPOOL_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      # Who logs in through pgpool: the service, and the ETL's read-only role.
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${BATTLE_DB_USER},etl_reader
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${BATTLE_DB_PASSWORD},${BATTLE_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_AUTO_FAILBACK: "yes"
+      PGPOOL_HEALTH_CHECK_PERIOD: "2"
+      PGPOOL_HEALTH_CHECK_TIMEOUT: "2"
+      PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
+      PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
+      PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up battle-service` never
+    # starts them, and pgpool started before them marks them down (#264).
+    depends_on:
+      battle-service-db-0:
+        condition: service_healthy
+      battle-service-db-1:
+        condition: service_healthy
+      battle-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
+      interval: 10s
+      timeout: 15s
+      retries: 30
     restart: unless-stopped
 
   # Redis that remembers used WebSocket tickets until they expire, so each
-  # ticket opens one live socket.
+  # ticket opens one live socket, and carries the live turns between replicas.
+  # A master and 2 replicas; Battle finds the current master through the
+  # Sentinels.
   battle-service-cache:
-    image: redis:7-alpine
+    <<: *redis-node
     environment:
       REDIS_PASSWORD: ${BATTLE_REDIS_PASSWORD:?set it in .env — copy .env.example}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\""]
     volumes:
       - battle-service-cache-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.41}
+
+  battle-service-cache-1:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${BATTLE_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.41 6379"]
+    volumes:
+      - battle-service-cache-1-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.42}
+    depends_on:
+      battle-service-cache:
+        condition: service_healthy
+
+  battle-service-cache-2:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${BATTLE_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.41 6379"]
+    volumes:
+      - battle-service-cache-2-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.43}
+    depends_on:
+      battle-service-cache:
+        condition: service_healthy
 
   battle-service:
     image: pshasuleiman/battle-service:latest
@@ -148,6 +723,14 @@ services:
       PORT: 8082
       DB_HOST: battle-service-db
       DB_PORT: 5432
+      # The password of the read-only role the ETL logs in with (through pgpool).
+      ETL_DB_PASSWORD: ${BATTLE_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      # Lab 5 (#226, #232): GET /battles/{battleId} and GET /battles go through the
+      # shared cache-1..3 (lists under a generation every write bumps); turns read
+      # the database. No depends_on on the cache nodes, as for User Management.
+      # BATTLE_CACHE_NODES set empty in .env turns it off.
+      CACHE_NODES: ${BATTLE_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
       DB_NAME: ${BATTLE_DB_NAME:-battle_db}
       DB_USER: ${BATTLE_DB_USER:?set it in .env — copy .env.example}
       DB_PASSWORD: ${BATTLE_DB_PASSWORD:?set it in .env — copy .env.example}
@@ -174,6 +757,12 @@ services:
       # Tamagotchi, so Battle calls neither. false = Battle calls Tamagotchi's
       # xp and transfer-owner itself (same keys, so never twice).
       TAMAGOTCHI_BY_EVENT: ${BATTLE_TAMAGOTCHI_BY_EVENT:-true}
+      # true: a finished battle is settled by the broker's battle-settlement saga
+      # (Battle, User Management, Tamagotchi; undone together if a step fails)
+      # instead of battle.ended, which Battle then publishes once the saga has
+      # completed. Same .env key as User Management's, so both switch together;
+      # TAMAGOTCHI_APPLY_BATTLE_ENDED goes to false with it.
+      SETTLEMENT_BY_SAGA: ${SETTLEMENT_BY_SAGA:-true}
       # Authorization is at the gateway: only requests carrying GATEWAY_KEY as
       # X-Gateway-Key are served, and the player comes as X-User-Id. Live
       # sockets are opened directly with a single-use ticket the gateway signs
@@ -181,6 +770,10 @@ services:
       # MAX_WS_CONNECTIONS caps open sockets (1013).
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       REDIS_URL: redis://:${BATTLE_REDIS_PASSWORD}@battle-service-cache:6379/0
+      # The current master, through the Sentinels (REDIS_URL then only gives the
+      # password and database).
+      REDIS_SENTINELS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_MASTER: battle-service-cache
       MAX_WS_CONNECTIONS: ${BATTLE_MAX_WS_CONNECTIONS:-500}
       # Task timeout (504) and concurrent task limit (503 + Retry-After).
       REQUEST_TIMEOUT_MS: ${BATTLE_REQUEST_TIMEOUT_MS:-8000}
@@ -199,25 +792,83 @@ services:
     # No published port: the gateway reaches the replicas at
     # http://battle-service:8082, which Compose DNS resolves to all of them,
     # and clients open the live socket through ws-proxy.
+    # The Sentinels hand out the master's address on redis-replication.
+    networks: [default, redis-replication]
     restart: unless-stopped
 
 
   # ------------------------------------------------------- Go / tamagotchi
-  # PostgreSQL for Tamagotchis; the service creates its schema on start-up.
-
-  tamagotchi-service-db:
-    image: postgres:16-alpine
+  # PostgreSQL for Tamagotchis: a primary and 2 replicas (repmgr) behind pgpool.
+  # The service creates its schema on start-up, through pgpool.
+  tamagotchi-service-db-0:
+    <<: *tamagotchi-db
     environment:
-      POSTGRES_DB: ${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
-      POSTGRES_USER: ${TAMAGOTCHI_DB_USER:?set it in .env — copy .env.example}
-      POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD:?set it in .env — copy .env.example}
+      <<: *tamagotchi-db-env
+      REPMGR_NODE_NAME: tamagotchi-service-db-0
+      REPMGR_NODE_NETWORK_NAME: tamagotchi-service-db-0
     volumes:
-      - tamagotchi-service-db-data:/var/lib/postgresql/data
+      - tamagotchi-service-db-0-data:/bitnami/postgresql
+
+  tamagotchi-service-db-1:
+    <<: *tamagotchi-db
+    environment:
+      <<: *tamagotchi-db-env
+      REPMGR_NODE_NAME: tamagotchi-service-db-1
+      REPMGR_NODE_NETWORK_NAME: tamagotchi-service-db-1
+    volumes:
+      - tamagotchi-service-db-1-data:/bitnami/postgresql
+
+  tamagotchi-service-db-2:
+    <<: *tamagotchi-db
+    environment:
+      <<: *tamagotchi-db-env
+      REPMGR_NODE_NAME: tamagotchi-service-db-2
+      REPMGR_NODE_NETWORK_NAME: tamagotchi-service-db-2
+    volumes:
+      - tamagotchi-service-db-2-data:/bitnami/postgresql
+
+  # pgpool keeps the old address, so DATABASE_URL doesn't change. Every query
+  # goes to the current primary (no load balancing: replicas lag behind, and
+  # the schema migration's advisory lock only works on the primary).
+  tamagotchi-service-db:
+    image: bitnamilegacy/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:tamagotchi-service-db-0:5432,1:tamagotchi-service-db-1:5432,2:tamagotchi-service-db-2:5432
+      PGPOOL_BACKEND_APPLICATION_NAMES: tamagotchi-service-db-0,tamagotchi-service-db-1,tamagotchi-service-db-2
+      PGPOOL_SR_CHECK_USER: ${TAMAGOTCHI_DB_USER:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PERIOD: "2"
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: ${TAMAGOTCHI_PGPOOL_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      # Who logs in through pgpool: the service, and the ETL's read-only role.
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${TAMAGOTCHI_DB_USER},etl_reader
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${TAMAGOTCHI_DB_PASSWORD},${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_AUTO_FAILBACK: "yes"
+      PGPOOL_HEALTH_CHECK_PERIOD: "2"
+      PGPOOL_HEALTH_CHECK_TIMEOUT: "2"
+      PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
+      PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
+      PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up tamagotchi-service` never
+    # starts them, and pgpool started before them marks them down (#264).
+    depends_on:
+      tamagotchi-service-db-0:
+        condition: service_healthy
+      tamagotchi-service-db-1:
+        condition: service_healthy
+      tamagotchi-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
+      interval: 10s
+      timeout: 15s
+      retries: 30
     restart: unless-stopped
 
   tamagotchi-service:
@@ -231,6 +882,8 @@ services:
       PORT: 8083
       APP_ENV: production
       DATABASE_URL: postgres://${TAMAGOTCHI_DB_USER}:${TAMAGOTCHI_DB_PASSWORD}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}?sslmode=disable
+      # The password of the read-only role the ETL logs in with (through pgpool).
+      ETL_DB_PASSWORD: ${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
       REQUEST_TIMEOUT_MS: ${TAMAGOTCHI_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${TAMAGOTCHI_MAX_CONCURRENT_REQUESTS:-10}
       # Reached through the gateway: X-User-Id is trusted only with this key.
@@ -247,6 +900,11 @@ services:
       # broker; empty = PACKAGE_REGISTRY_URL above.
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
       BROKER_URL: ${TAMAGOTCHI_BROKER_URL:-}
+      # Lab 5 sagas: the broker's coordinator runs Tamagotchi's steps at POST
+      # /saga-steps (broker key only). Battles are settled by the battle-settlement
+      # saga (SETTLEMENT_BY_SAGA=true), so Tamagotchi doesn't apply battle.ended
+      # (false here): the saga makes those changes. Set both back together.
+      APPLY_BATTLE_ENDED: ${TAMAGOTCHI_APPLY_BATTLE_ENDED:-false}
       # gRPC (GetTamagotchi, ListByOwner, GetTypeAdvantages, AddXp, TransferOwner):
       # registered with Service Discovery as metadata.grpcPort, reached through the
       # broker with the same keys as REST. Needs BROKER_KEY.
@@ -261,6 +919,18 @@ services:
       CIRCUIT_BREAKER_THRESHOLD: ${TAMAGOTCHI_CIRCUIT_BREAKER_THRESHOLD:-3}
       CIRCUIT_BREAKER_WINDOW_MS: ${TAMAGOTCHI_CIRCUIT_BREAKER_WINDOW_MS:-}
       CIRCUIT_BREAKER_COOLDOWN_MS: ${TAMAGOTCHI_CIRCUIT_BREAKER_COOLDOWN_MS:-}
+      # Lab 5 (#227, #233): reads of a Tamagotchi, of an owner's list and of a Package
+      # Registry package go through the shared cache-1..3, each key on the node the
+      # shared hash ring picks; every write deletes what it changed. The cache only
+      # speeds reads up: a node that is down turns its keys into database reads, so
+      # there is no depends_on on the cache nodes. TAMAGOTCHI_CACHE_NODES set empty in
+      # .env turns it off.
+      CACHE_NODES: ${TAMAGOTCHI_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
+      CACHE_TIMEOUT_MS: ${TAMAGOTCHI_CACHE_TIMEOUT_MS:-100}
+      CACHE_TTL_SECONDS: ${TAMAGOTCHI_CACHE_TTL_SECONDS:-120}
+      CACHE_LIST_TTL_SECONDS: ${TAMAGOTCHI_CACHE_LIST_TTL_SECONDS:-60}
+      CACHE_PACKAGE_TTL_SECONDS: ${TAMAGOTCHI_CACHE_PACKAGE_TTL_SECONDS:-30}
       # Each replica registers its own address (http://<hostname>:8083) here, and
       # deregisters on shutdown. The schema migration takes a lock, so replicas can
       # start together.
@@ -277,26 +947,54 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------- Go / notification
-  # Redis with append-only persistence; notifications expire after 30 days.
-
+  # Redis with append-only persistence; notifications expire after 30 days. A
+  # master and 2 replicas; Notification finds the current master through the
+  # Sentinels.
   notification-service-db:
-    image: redis:7-alpine
+    <<: *redis-node
     environment:
       REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\""]
     volumes:
       - notification-service-db-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.31}
+
+  notification-service-db-1:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.31 6379"]
+    volumes:
+      - notification-service-db-1-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.32}
+    depends_on:
+      notification-service-db:
+        condition: service_healthy
+
+  notification-service-db-2:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.31 6379"]
+    volumes:
+      - notification-service-db-2-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.33}
+    depends_on:
+      notification-service-db:
+        condition: service_healthy
 
   notification-service:
     image: dan1el50/notification-service:latest
     depends_on:
       notification-service-db:
+        condition: service_healthy
+      redis-sentinel-1:
         condition: service_healthy
       service-discovery:
         condition: service_healthy
@@ -304,6 +1002,11 @@ services:
       PORT: 8084
       APP_ENV: production
       REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
+      # The current master, through the Sentinels (REDIS_URL then only gives the
+      # database number; an image without Sentinel support uses it as before).
+      REDIS_SENTINELS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_MASTER: notification-service-db
+      REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD:?set it in .env — copy .env.example}
       REQUEST_TIMEOUT_MS: ${NOTIFICATION_REQUEST_TIMEOUT_MS:-5000}
       MAX_CONCURRENT_REQUESTS: ${NOTIFICATION_MAX_CONCURRENT_REQUESTS:-10}
       MAX_CONCURRENT_EVENTS: ${NOTIFICATION_MAX_CONCURRENT_EVENTS:-10}
@@ -326,34 +1029,83 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    # The Sentinels hand out the master's address on redis-replication.
+    networks: [default, redis-replication]
     restart: unless-stopped
 
   # ---------------------------------------------------------- TypeScript / map
-  # Redis (geospatial) with append-only persistence.
+  # Redis (geospatial) with append-only persistence: Map's database. A master
+  # and 2 replicas; Map finds the current master through the Sentinels.
   map-service-db:
-    image: redis:7-alpine
+    <<: *redis-node
     environment:
       REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\""]
     volumes:
       - map-service-db-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.21}
+
+  map-service-db-1:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.21 6379"]
+    volumes:
+      - map-service-db-1-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.22}
+    depends_on:
+      map-service-db:
+        condition: service_healthy
+
+  map-service-db-2:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.21 6379"]
+    volumes:
+      - map-service-db-2-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.23}
+    depends_on:
+      map-service-db:
+        condition: service_healthy
 
   map-service:
     image: dackohn/map-service:latest
     depends_on:
       map-service-db:
         condition: service_healthy
+      # Its replicas: nothing else starts them.
+      map-service-db-1:
+        condition: service_healthy
+      map-service-db-2:
+        condition: service_healthy
+      # It finds its Redis master through the Sentinels (REDIS_SENTINELS).
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
+        condition: service_healthy
       service-discovery:
         condition: service_healthy
     environment:
+      # Its cache on the shared cache nodes (cache-1..3), each key on the node the
+      # consistent-hash ring picks. MAP_CACHE_NODES set empty in .env turns it off.
+      CACHE_NODES: ${MAP_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
       PORT: 8085
       REDIS_URL: redis://:${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}@map-service-db:6379
+      # The current master, through the Sentinels (REDIS_URL only matters for
+      # an image without Sentinel support).
+      REDIS_SENTINELS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_MASTER: map-service-db
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:?set it in .env — copy .env.example}
       # Every request must carry this key (X-Gateway-Key); stream tickets are
       # signed with it too. The service no longer verifies user tokens.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
@@ -381,41 +1133,142 @@ services:
     # Replicas publish no ports: clients reach the location stream through ws-proxy.
     deploy:
       replicas: ${MAP_REPLICAS:-2}
+    networks: [default, redis-replication]
     restart: unless-stopped
 
   # --------------------------------------------------- TypeScript / monster raid
-  # PostgreSQL for raid records; the service runs its migrations on start-up.
-
-  monster-raid-service-db:
-    image: postgres:16-alpine
+  # PostgreSQL for raid records: a primary and 2 replicas (repmgr) behind
+  # pgpool. The service runs its migrations on start-up, through pgpool.
+  monster-raid-service-db-0:
+    <<: *monster-raid-db
     environment:
-      POSTGRES_DB: ${MONSTER_RAID_DB_NAME:-monster_raid_db}
-      POSTGRES_USER: ${MONSTER_RAID_DB_USER:?set it in .env — copy .env.example}
-      POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD:?set it in .env — copy .env.example}
+      <<: *monster-raid-db-env
+      REPMGR_NODE_NAME: monster-raid-service-db-0
+      REPMGR_NODE_NETWORK_NAME: monster-raid-service-db-0
     volumes:
-      - monster-raid-service-db-data:/var/lib/postgresql/data
+      - monster-raid-service-db-0-data:/bitnami/postgresql
+
+  monster-raid-service-db-1:
+    <<: *monster-raid-db
+    environment:
+      <<: *monster-raid-db-env
+      REPMGR_NODE_NAME: monster-raid-service-db-1
+      REPMGR_NODE_NETWORK_NAME: monster-raid-service-db-1
+    volumes:
+      - monster-raid-service-db-1-data:/bitnami/postgresql
+
+  monster-raid-service-db-2:
+    <<: *monster-raid-db
+    environment:
+      <<: *monster-raid-db-env
+      REPMGR_NODE_NAME: monster-raid-service-db-2
+      REPMGR_NODE_NETWORK_NAME: monster-raid-service-db-2
+    volumes:
+      - monster-raid-service-db-2-data:/bitnami/postgresql
+
+  # pgpool keeps the old address, so DATABASE_URL doesn't change. Every query
+  # goes to the current primary (no load balancing: replicas lag behind, and
+  # advisory locks only work on the primary).
+  monster-raid-service-db:
+    image: bitnamilegacy/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:monster-raid-service-db-0:5432,1:monster-raid-service-db-1:5432,2:monster-raid-service-db-2:5432
+      PGPOOL_BACKEND_APPLICATION_NAMES: monster-raid-service-db-0,monster-raid-service-db-1,monster-raid-service-db-2
+      PGPOOL_SR_CHECK_USER: ${MONSTER_RAID_DB_USER:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PASSWORD: ${MONSTER_RAID_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PERIOD: "2"
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${MONSTER_RAID_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: ${MONSTER_RAID_PGPOOL_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      # Who logs in through pgpool: the service, and the ETL's read-only role.
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${MONSTER_RAID_DB_USER},etl_reader
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${MONSTER_RAID_DB_PASSWORD},${MONSTER_RAID_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_AUTO_FAILBACK: "yes"
+      PGPOOL_HEALTH_CHECK_PERIOD: "2"
+      PGPOOL_HEALTH_CHECK_TIMEOUT: "2"
+      PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
+      PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
+      PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up monster-raid-service` never
+    # starts them, and pgpool started before them marks them down.
+    depends_on:
+      monster-raid-service-db-0:
+        condition: service_healthy
+      monster-raid-service-db-1:
+        condition: service_healthy
+      monster-raid-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
+      interval: 10s
+      timeout: 15s
+      retries: 30
     restart: unless-stopped
 
-  # Redis for live monster HP and idempotency keys.
-
+  # Redis for live monster HP and idempotency keys: a master and 2 replicas;
+  # Monster Raid finds the current master through the Sentinels.
   monster-raid-service-cache:
-    image: redis:7-alpine
+    <<: *redis-node
     environment:
       REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\""]
     volumes:
       - monster-raid-service-cache-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.11}
+
+  monster-raid-service-cache-1:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.11 6379"]
+    volumes:
+      - monster-raid-service-cache-1-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.12}
+    depends_on:
+      monster-raid-service-cache:
+        condition: service_healthy
+
+  monster-raid-service-cache-2:
+    <<: *redis-node
+    environment:
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof 172.29.14.11 6379"]
+    volumes:
+      - monster-raid-service-cache-2-data:/data
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.13}
+    depends_on:
+      monster-raid-service-cache:
+        condition: service_healthy
+
+  # The 3 Sentinels every replicated Redis in the stack shares.
+  redis-sentinel-1:
+    <<: *redis-sentinel
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.201}
+
+  redis-sentinel-2:
+    <<: *redis-sentinel
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.202}
+
+  redis-sentinel-3:
+    <<: *redis-sentinel
+    networks:
+      default: {}
+      redis-replication: {ipv4_address: 172.29.14.203}
 
   monster-raid-service:
     image: dackohn/monster-raid-service:latest
@@ -424,12 +1277,35 @@ services:
         condition: service_healthy
       monster-raid-service-cache:
         condition: service_healthy
+      # Its replicas: nothing else starts them.
+      monster-raid-service-cache-1:
+        condition: service_healthy
+      monster-raid-service-cache-2:
+        condition: service_healthy
+      # It finds its Redis master through the Sentinels (REDIS_SENTINELS).
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
+        condition: service_healthy
       service-discovery:
         condition: service_healthy
     environment:
+      # Its cache on the shared cache nodes (cache-1..3), each key on the node the
+      # consistent-hash ring picks. MONSTER_RAID_CACHE_NODES set empty in .env turns it off.
+      CACHE_NODES: ${MONSTER_RAID_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
       PORT: 8086
       DATABASE_URL: postgresql://${MONSTER_RAID_DB_USER}:${MONSTER_RAID_DB_PASSWORD}@monster-raid-service-db:5432/${MONSTER_RAID_DB_NAME:-monster_raid_db}
       REDIS_URL: redis://:${MONSTER_RAID_REDIS_PASSWORD}@monster-raid-service-cache:6379
+      # The current master, through the Sentinels (REDIS_URL only matters for
+      # an image without Sentinel support).
+      REDIS_SENTINELS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_SENTINEL_MASTER: monster-raid-service-cache
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD:?set it in .env — copy .env.example}
+      # The password of the read-only role the ETL logs in with (through pgpool).
+      ETL_DB_PASSWORD: ${MONSTER_RAID_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
       # Every request must carry this key (X-Gateway-Key); live-raid tickets
       # are signed with it too. The service no longer verifies user tokens.
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
@@ -465,28 +1341,93 @@ services:
       # Requests the broker delivers carry BROKER_KEY next to the sender's key.
       BROKER_URL: ${MONSTER_RAID_BROKER_URL-http://message-broker:8090}
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # true: a completed raid's rewards are paid by the broker's raid-rewards
+      # saga (Monster Raid, User Management, Tamagotchi) instead of a direct
+      # AdjustCurrency call. Same .env key as User Management's, so both switch
+      # together and nothing is paid twice or not at all.
+      REWARDS_BY_SAGA: ${RAID_REWARDS_BY_SAGA:-true}
       LOG_LEVEL: ${MONSTER_RAID_LOG_LEVEL:-info}
     # Replicas publish no ports: clients reach the live raid socket through ws-proxy.
     deploy:
       replicas: ${MONSTER_RAID_REPLICAS:-2}
+    networks: [default, redis-replication]
     restart: unless-stopped
 
   # --------------------------------------------------------- TypeScript / guild
-  # PostgreSQL for guilds, members and chat; the service runs its migrations
-  # on start-up.
-  guild-service-db:
-    image: postgres:16-alpine
+  # PostgreSQL for guilds, members and chat (Lab 5, #220): a primary and 2
+  # replicas (repmgr) behind pgpool. The service runs its migrations on
+  # start-up, through pgpool.
+  guild-service-db-0:
+    <<: *guild-db
     environment:
-      POSTGRES_DB: ${GUILD_DB_NAME:-guild_db}
-      POSTGRES_USER: ${GUILD_DB_USER:?set it in .env — copy .env.example}
-      POSTGRES_PASSWORD: ${GUILD_DB_PASSWORD:?set it in .env — copy .env.example}
+      <<: *guild-db-env
+      REPMGR_NODE_NAME: guild-service-db-0
+      REPMGR_NODE_NETWORK_NAME: guild-service-db-0
     volumes:
-      - guild-service-db-data:/var/lib/postgresql/data
+      - guild-service-db-0-data:/bitnami/postgresql
+
+  guild-service-db-1:
+    <<: *guild-db
+    environment:
+      <<: *guild-db-env
+      REPMGR_NODE_NAME: guild-service-db-1
+      REPMGR_NODE_NETWORK_NAME: guild-service-db-1
+    volumes:
+      - guild-service-db-1-data:/bitnami/postgresql
+
+  guild-service-db-2:
+    <<: *guild-db
+    environment:
+      <<: *guild-db-env
+      REPMGR_NODE_NAME: guild-service-db-2
+      REPMGR_NODE_NETWORK_NAME: guild-service-db-2
+    volumes:
+      - guild-service-db-2-data:/bitnami/postgresql
+
+  # pgpool keeps the old name, so DB_HOST and the published port 5437
+  # (docker-compose.machines.yml) don't change. Every query goes to the
+  # current primary: no load balancing, because replicas lag behind, and
+  # because Guild chat's LISTEN/NOTIFY and the migration lock only work on
+  # the primary.
+  guild-service-db:
+    image: bitnamilegacy/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:guild-service-db-0:5432,1:guild-service-db-1:5432,2:guild-service-db-2:5432
+      PGPOOL_BACKEND_APPLICATION_NAMES: guild-service-db-0,guild-service-db-1,guild-service-db-2
+      PGPOOL_SR_CHECK_USER: ${GUILD_DB_USER:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PASSWORD: ${GUILD_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PERIOD: "2"
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${GUILD_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: ${GUILD_PGPOOL_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      # Who logs in through pgpool: the service, and the ETL's read-only role.
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${GUILD_DB_USER},etl_reader
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${GUILD_DB_PASSWORD},${GUILD_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_AUTO_FAILBACK: "yes"
+      PGPOOL_HEALTH_CHECK_PERIOD: "2"
+      PGPOOL_HEALTH_CHECK_TIMEOUT: "2"
+      PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
+      PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
+      PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up guild-service` never
+    # starts them, and pgpool started before them marks them down (#264).
+    depends_on:
+      guild-service-db-0:
+        condition: service_healthy
+      guild-service-db-1:
+        condition: service_healthy
+      guild-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
+      interval: 10s
+      timeout: 15s
+      retries: 30
     restart: unless-stopped
 
   guild-service:
@@ -532,13 +1473,22 @@ services:
       # Message Broker (Lab 4). BROKER_KEY: calls the broker delivers are
       # accepted with it, and it is sent with Guild's own calls to the broker.
       # GuildInvitation goes to the topic guild.invitation, which Notification
-      # subscribes to. GUILD_BROKER_URL set empty in .env turns it off:
-      # invitations then reach Notification through Redis, as in Lab 3.
+      # subscribes to. GUILD_BROKER_URL set empty in .env turns it off, and the
+      # events are then only logged: Guild no longer publishes to Notification's
+      # Redis itself (Lab 5 decisions: after a failover a fixed Redis node can
+      # be a read-only replica, and every event already goes through the broker).
       BROKER_URL: ${GUILD_BROKER_URL-http://message-broker:8090}
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
-      # GuildInvitation events for Notification while BROKER_URL is empty: its
-      # Redis Pub/Sub channel notification-events.
-      NOTIFICATION_EVENTS_REDIS_URL: redis://:${NOTIFICATION_REDIS_PASSWORD}@notification-service-db:6379/0
+      # Lab 5: the shared cache (#225, #231). Every replica reads through
+      # cache-1..3, each key on the node the shared hash ring picks. The
+      # cache only speeds reads up: a node that is down turns its keys
+      # into database reads, so there is no depends_on on the cache nodes.
+      CACHE_NODES: ${GUILD_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
+      # Lab 5 (#215): password of the read-only role etl_reader, which the
+      # service sets at start-up. Required: pgpool (above) lists the same
+      # password, and the two must match for the ETL to log in through it.
+      ETL_DB_PASSWORD: ${GUILD_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
     # Replicas publish no ports: chat sockets and the Postman
     # collection reach them through ws-proxy (one host port for all replicas).
     deploy:
@@ -546,22 +1496,78 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------------- TypeScript / package registry
-  # PostgreSQL for packages, stat definitions, admins and raid configs; the
-  # service runs its migrations on start-up.
-
-  package-registry-service-db:
-    image: postgres:16-alpine
+  # PostgreSQL for packages, stat definitions, admins and raid configs (Lab 5,
+  # #220): a primary and 2 replicas (repmgr) behind pgpool. The service runs
+  # its migrations on start-up, through pgpool.
+  package-registry-service-db-0:
+    <<: *package-registry-db
     environment:
-      POSTGRES_DB: ${PACKAGE_REGISTRY_DB_NAME:-package_registry_db}
-      POSTGRES_USER: ${PACKAGE_REGISTRY_DB_USER:?set it in .env — copy .env.example}
-      POSTGRES_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD:?set it in .env — copy .env.example}
+      <<: *package-registry-db-env
+      REPMGR_NODE_NAME: package-registry-service-db-0
+      REPMGR_NODE_NETWORK_NAME: package-registry-service-db-0
     volumes:
-      - package-registry-service-db-data:/var/lib/postgresql/data
+      - package-registry-service-db-0-data:/bitnami/postgresql
+
+  package-registry-service-db-1:
+    <<: *package-registry-db
+    environment:
+      <<: *package-registry-db-env
+      REPMGR_NODE_NAME: package-registry-service-db-1
+      REPMGR_NODE_NETWORK_NAME: package-registry-service-db-1
+    volumes:
+      - package-registry-service-db-1-data:/bitnami/postgresql
+
+  package-registry-service-db-2:
+    <<: *package-registry-db
+    environment:
+      <<: *package-registry-db-env
+      REPMGR_NODE_NAME: package-registry-service-db-2
+      REPMGR_NODE_NETWORK_NAME: package-registry-service-db-2
+    volumes:
+      - package-registry-service-db-2-data:/bitnami/postgresql
+
+  # pgpool keeps the old name, so DB_HOST and the published port 5438 don't
+  # change. Every query goes to the current primary (no load balancing:
+  # replicas lag behind, and the migration lock only works on the primary).
+  package-registry-service-db:
+    image: bitnamilegacy/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:package-registry-service-db-0:5432,1:package-registry-service-db-1:5432,2:package-registry-service-db-2:5432
+      PGPOOL_BACKEND_APPLICATION_NAMES: package-registry-service-db-0,package-registry-service-db-1,package-registry-service-db-2
+      PGPOOL_SR_CHECK_USER: ${PACKAGE_REGISTRY_DB_USER:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_SR_CHECK_PERIOD: "2"
+      PGPOOL_POSTGRES_USERNAME: postgres
+      PGPOOL_POSTGRES_PASSWORD: ${PACKAGE_REGISTRY_DB_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ADMIN_USERNAME: admin
+      PGPOOL_ADMIN_PASSWORD: ${PACKAGE_REGISTRY_PGPOOL_ADMIN_PASSWORD:?set it in .env — copy .env.example}
+      # Who logs in through pgpool: the service, and the ETL's read-only role.
+      PGPOOL_POSTGRES_CUSTOM_USERS: ${PACKAGE_REGISTRY_DB_USER},etl_reader
+      PGPOOL_POSTGRES_CUSTOM_PASSWORDS: ${PACKAGE_REGISTRY_DB_PASSWORD},${PACKAGE_REGISTRY_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+      PGPOOL_AUTO_FAILBACK: "yes"
+      PGPOOL_HEALTH_CHECK_PERIOD: "2"
+      PGPOOL_HEALTH_CHECK_TIMEOUT: "2"
+      PGPOOL_HEALTH_CHECK_MAX_RETRIES: "2"
+      PGPOOL_HEALTH_CHECK_RETRY_DELAY: "1"
+      PGPOOL_CONNECT_TIMEOUT: "2000"
+    # All three nodes, not just the first primary: nothing else depends on the
+    # replicas, so otherwise `docker compose up package-registry-service` never
+    # starts them, and pgpool started before them marks them down (#264).
+    depends_on:
+      package-registry-service-db-0:
+        condition: service_healthy
+      package-registry-service-db-1:
+        condition: service_healthy
+      package-registry-service-db-2:
+        condition: service_healthy
+    # Bitnami's check takes 5-6 s while a node is unreachable (pgpool's
+    # connect timeout), so 5 s marked a working pgpool unhealthy.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
+      interval: 10s
+      timeout: 15s
+      retries: 30
     restart: unless-stopped
 
   package-registry-service:
@@ -613,10 +1619,91 @@ services:
       # is this BROKER_URL; a grpc:// URL goes to the broker's gRPC port.
       BROKER_URL: http://message-broker:8090
       BROKER_KEY: ${BROKER_KEY:?set it in .env — copy .env.example}
+      # Lab 5: the shared cache (#225, #231). Every replica reads through
+      # cache-1..3, each key on the node the shared hash ring picks. The
+      # cache only speeds reads up: a node that is down turns its keys
+      # into database reads, so there is no depends_on on the cache nodes.
+      CACHE_NODES: ${PACKAGE_REGISTRY_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
+      # Lab 5 (#215): password of the read-only role etl_reader, which the
+      # service sets at start-up. Required: pgpool (above) lists the same
+      # password, and the two must match for the ETL to log in through it.
+      ETL_DB_PASSWORD: ${PACKAGE_REGISTRY_ETL_DB_PASSWORD:?set it in .env — copy .env.example}
     # Replicas publish no ports: the gateway finds them in Service
     # Discovery; direct HTTP calls (the Postman collection) go through ws-proxy.
     deploy:
       replicas: ${PACKAGE_REGISTRY_REPLICAS:-3}
+    restart: unless-stopped
+
+  # ------------------------------------------------ Python / data warehouse + ETL
+  # Lab 5 (#214): the ETL copies every service's data into the Data Warehouse,
+  # one star schema for analysis (see "Data Warehouse" and "ETL" in the README).
+  # The ETL owns the warehouse: it creates the schema at start-up. Nobody else
+  # writes to it.
+  data-warehouse:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DATA_WAREHOUSE_DB_NAME:-warehouse}
+      POSTGRES_USER: ${DATA_WAREHOUSE_DB_USER:?set it in .env — copy .env.example}
+      POSTGRES_PASSWORD: ${DATA_WAREHOUSE_DB_PASSWORD:?set it in .env — copy .env.example}
+    volumes:
+      - data-warehouse-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Published for analysis queries (psql, a BI tool) from this machine only.
+    ports:
+      - "127.0.0.1:${DATA_WAREHOUSE_PORT:-5440}:5432"
+    restart: unless-stopped
+
+  etl-service:
+    # :latest = the newest version released to main (moved by the repo's release
+    # workflow). Run `docker compose pull` to get a new release.
+    image: dackohn/etl-service:latest
+    # No depends_on on the sources: a source that is down is skipped (the run
+    # ends "partial", or "failed" when no source loaded) and the next run
+    # catches up.
+    depends_on:
+      data-warehouse:
+        condition: service_healthy
+      service-discovery:
+        condition: service_healthy
+    environment:
+      PORT: 8091
+      WAREHOUSE_URL: postgresql://${DATA_WAREHOUSE_DB_USER}:${DATA_WAREHOUSE_DB_PASSWORD}@data-warehouse:5432/${DATA_WAREHOUSE_DB_NAME:-warehouse}
+      # One URL per source, through its read-only role etl_reader and the
+      # address the service itself uses (pgpool after replication, so the ETL
+      # follows the primary). A source without a URL is skipped.
+      USER_MANAGEMENT_ETL_DB_URL: postgresql://etl_reader:${USER_MANAGEMENT_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@user-management-service-db:5432/${USER_MANAGEMENT_DB_NAME:-user_management_db}
+      BATTLE_ETL_DB_URL: postgresql://etl_reader:${BATTLE_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@battle-service-db:5432/${BATTLE_DB_NAME:-battle_db}
+      TAMAGOTCHI_ETL_DB_URL: postgresql://etl_reader:${TAMAGOTCHI_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@tamagotchi-service-db:5432/${TAMAGOTCHI_DB_NAME:-tamagotchi_db}
+      MONSTER_RAID_ETL_DB_URL: postgresql://etl_reader:${MONSTER_RAID_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@monster-raid-service-db:5432/${MONSTER_RAID_DB_NAME:-monster_raid_db}
+      # Guild and Package Registry (#215): the guild_db and package_registry_db
+      # through their etl_reader roles, which each service gives its password at
+      # start-up from the same <SERVICE>_ETL_DB_PASSWORD.
+      GUILD_ETL_DB_URL: postgresql://etl_reader:${GUILD_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@guild-service-db:5432/${GUILD_DB_NAME:-guild_db}
+      PACKAGE_REGISTRY_ETL_DB_URL: postgresql://etl_reader:${PACKAGE_REGISTRY_ETL_DB_PASSWORD:?set it in .env — copy .env.example}@package-registry-service-db:5432/${PACKAGE_REGISTRY_DB_NAME:-package_registry_db}
+      ETL_INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-300}
+      ETL_OVERLAP_SECONDS: ${ETL_OVERLAP_SECONDS:-60}
+      # POST /runs and GET /runs/latest need the team's admin key (X-Admin-Key).
+      # Empty = both endpoints answer 503.
+      ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
+      # It registers with no topics: Prometheus finds its /metrics and /health
+      # there. Nothing calls it in the request path.
+      SERVICE_DISCOVERY_URL: http://service-discovery:8089
+      DISCOVERY_KEY: ${DISCOVERY_KEY:?set it in .env — copy .env.example}
+      LOG_LEVEL: ${ETL_LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    # One replica only, so a run happens exactly once.
+    ports:
+      - "${ETL_PORT:-8091}:8091"
     restart: unless-stopped
 
   # ------------------------------------------------------------ Python / gateway
@@ -624,6 +1711,58 @@ services:
   # through it. It verifies user tokens against User Management's keys, strips
   # Authorization and forwards the verified user as X-User-Id + X-Gateway-Key.
   # Service URLs default to http://<service-name>:<port>, matching this file.
+  # ------------------------------------------------ Valkey / shared cache nodes
+  # Lab 5 (#230): three cache nodes shared by every service. Each service
+  # shards its keys over them with the shared consistent-hash ring
+  # (hash-ring/), so a key always lives on the same node. Keys are prefixed
+  # with the service name (<service>:<entity>:<id>), which keeps the services
+  # apart. A cache only holds copies of database data, so there is no volume
+  # and no persistence (--save "", --appendonly no): a restarted node starts
+  # empty and refills from the databases. maxmemory + allkeys-lru make a full
+  # node evict its least recently used keys instead of refusing writes.
+
+  cache-1:
+    image: valkey/valkey:8-alpine
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec valkey-server --requirepass \"$$CACHE_PASSWORD\" --save '' --appendonly no --maxmemory ${CACHE_MAXMEMORY:-64mb} --maxmemory-policy allkeys-lru"]
+    ports:
+      - "${CACHE_1_PUBLISHED_PORT:-6381}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$CACHE_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  cache-2:
+    image: valkey/valkey:8-alpine
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec valkey-server --requirepass \"$$CACHE_PASSWORD\" --save '' --appendonly no --maxmemory ${CACHE_MAXMEMORY:-64mb} --maxmemory-policy allkeys-lru"]
+    ports:
+      - "${CACHE_2_PUBLISHED_PORT:-6382}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$CACHE_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  cache-3:
+    image: valkey/valkey:8-alpine
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD:?set it in .env — copy .env.example}
+    command: ["sh", "-c", "exec valkey-server --requirepass \"$$CACHE_PASSWORD\" --save '' --appendonly no --maxmemory ${CACHE_MAXMEMORY:-64mb} --maxmemory-policy allkeys-lru"]
+    ports:
+      - "${CACHE_3_PUBLISHED_PORT:-6383}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$CACHE_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   # ---------------------------------------------------- Python / service discovery
   # Where every running instance of every service is (Lab 3). Instances register
   # on start-up and send heartbeats; the registry is in memory, so it needs no
@@ -691,6 +1830,10 @@ services:
       # GET /dead-letters (the Dead Letter Channel) needs this key, not the
       # broker key every service holds. Empty = the endpoint refuses everyone.
       ADMIN_KEY: ${BROKER_ADMIN_KEY:-}
+      # Saga steps that answer 5xx or time out are tried again this many times
+      # (after 1, 2, 4, 8 s): 15 s, longer than a Postgres failover (9-13 s), so a
+      # battle that ends during one waits instead of being cancelled.
+      SAGA_STEP_RETRIES: ${BROKER_SAGA_STEP_RETRIES:-4}
     volumes:
       - broker-data:/data
     healthcheck:
@@ -749,6 +1892,10 @@ services:
       package-registry-service:
         condition: service_started
     environment:
+      # Its cache on the shared cache nodes (cache-1..3), each key on the node the
+      # consistent-hash ring picks. GATEWAY_CACHE_NODES set empty in .env turns it off.
+      CACHE_NODES: ${GATEWAY_CACHE_NODES:-cache-1:6379,cache-2:6379,cache-3:6379}
+      CACHE_PASSWORD: ${CACHE_PASSWORD:-}
       GATEWAY_KEY: ${GATEWAY_KEY:?set it in .env — copy .env.example}
       AUTH_MODE: ${GATEWAY_AUTH_MODE:-gateway}
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
@@ -879,16 +2026,37 @@ services:
 # Named volumes keep each database's data across restarts and rebuilds.
 # `docker compose down` keeps them; `docker compose down -v` deletes them.
 volumes:
-  user-management-service-db-data:
-  battle-service-db-data:
+  user-management-service-db-0-data:
+  user-management-service-db-1-data:
+  user-management-service-db-2-data:
+  battle-service-db-0-data:
+  battle-service-db-1-data:
+  battle-service-db-2-data:
   battle-service-cache-data:
-  tamagotchi-service-db-data:
+  battle-service-cache-1-data:
+  battle-service-cache-2-data:
+  tamagotchi-service-db-0-data:
+  tamagotchi-service-db-1-data:
+  tamagotchi-service-db-2-data:
   notification-service-db-data:
+  notification-service-db-1-data:
+  notification-service-db-2-data:
   map-service-db-data:
-  monster-raid-service-db-data:
+  map-service-db-1-data:
+  map-service-db-2-data:
+  monster-raid-service-db-0-data:
+  monster-raid-service-db-1-data:
+  monster-raid-service-db-2-data:
   monster-raid-service-cache-data:
-  guild-service-db-data:
-  package-registry-service-db-data:
+  monster-raid-service-cache-1-data:
+  monster-raid-service-cache-2-data:
+  guild-service-db-0-data:
+  guild-service-db-1-data:
+  guild-service-db-2-data:
+  package-registry-service-db-0-data:
+  package-registry-service-db-1-data:
+  package-registry-service-db-2-data:
+  data-warehouse-data:
   prometheus-data:
   broker-data:
   loki-data:
