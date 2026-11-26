@@ -1,7 +1,8 @@
 {
   "info": {
     "name": "Lab 5 demo (Team 14)",
-    "description": "The Lab 5 demo, one folder per grade, in the order it is presented. Send the requests top to bottom; steps marked ▶ are done by hand (terminal, Docker Desktop): their description says what to do. Run folder 0 first: it creates the demo player and its token.",
+    "description": "The Lab 5 demo, one folder per grade, in the order it is presented. Send the requests top to bottom; steps marked MANUAL: are done by hand (terminal, Docker Desktop): their description says what to do. Run folder 0 first: it creates the demo player and its token.",
+    "_postman_id": "5b0c6a52-7d1e-4f3a-9c2b-1a8e4d6f0c37",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -10,7 +11,7 @@
       "description": "Run these once, about 10 minutes before presenting. They check the stack is up\nand create the demo player whose token the other folders use.\n\nSelect the environment that holds this stack's keys (brokerKey, adminKey,\ngatewayKey) first: the defaults here are the `.env.example` placeholders.",
       "item": [
         {
-          "name": "▶ Start the stack, check Docker Desktop",
+          "name": "MANUAL: Start the stack, check Docker Desktop",
           "request": {
             "method": "GET",
             "header": [],
@@ -23,10 +24,7 @@
                 "health"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "In PowerShell, in `pad-team-14-tamagotchi-go`:\n\n    docker compose up -d\n\nThen Docker Desktop → Containers → `tamagotchi-go`: nothing should be\n\"Restarting\". Every pgpool now waits for its three Postgres nodes, so a cold\nstart should be clean. If a service still loops on \"pgpool is not accepting any\nnew connections\" or stops at \"waiting for migration lock\", restart its pgpool,\nthen the service, e.g.:\n\n    docker compose restart package-registry-service-db\n    docker compose restart package-registry-service"
+            "description": "In PowerShell, in `pad-team-14-tamagotchi-go`:\n\n    docker compose up -d\n\nThen Docker Desktop -> Containers -> `tamagotchi-go`: nothing should be\n\"Restarting\". Every pgpool now waits for its three Postgres nodes, so a cold\nstart should be clean. If a service still loops on \"pgpool is not accepting any\nnew connections\" or stops at \"waiting for migration lock\", restart its pgpool,\nthen the service, e.g.:\n\n    docker compose restart package-registry-service-db\n    docker compose restart package-registry-service"
           },
           "event": [
             {
@@ -53,9 +51,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -83,9 +78,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -113,9 +105,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -158,9 +147,6 @@
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "A new player for this demo. Registration and login need no token."
           },
@@ -216,9 +202,6 @@
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -239,11 +222,11 @@
       ]
     },
     {
-      "name": "Grades 2 and 3 – The architecture diagram",
+      "name": "Grades 2 and 3 - The architecture diagram",
       "description": "",
       "item": [
         {
-          "name": "▶ Open the diagram",
+          "name": "MANUAL: Open the diagram",
           "request": {
             "method": "GET",
             "header": [],
@@ -256,10 +239,7 @@
                 "health"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "Open `docs/images/architecture.png` (or the README's \"Architecture Diagram\"\nsection on GitHub, `dev` branch). Point at, in order:\n\n1. API Gateway: the single entry point.\n2. Message Broker, and inside it the Saga coordinator and its SQLite store.\n3. Service Discovery, ws-proxy, monitoring (Prometheus, Loki, Grafana).\n4. Every service with its replicas.\n5. Every data store: PostgreSQL ×3 behind pgpool, Redis ×3, and the\n   replication note (repmgr, 3 shared Sentinels, quorum 2).   ← grade 3\n6. cache-1, cache-2, cache-3: the shared cache on the hash ring.     ← grade 3\n7. ETL service and Data Warehouse.                                   ← grade 3"
+            "description": "Open `docs/images/architecture.png` (or the README's \"Architecture Diagram\"\nsection on GitHub, `dev` branch). Point at, in order:\n\n1. API Gateway: the single entry point.\n2. Message Broker, and inside it the Saga coordinator and its SQLite store.\n3. Service Discovery, ws-proxy, monitoring (Prometheus, Loki, Grafana).\n4. Every service with its replicas.\n5. Every data store: PostgreSQL x3 behind pgpool, Redis x3, and the\n   replication note (repmgr, 3 shared Sentinels, quorum 2).   <- grade 3\n6. cache-1, cache-2, cache-3: the shared cache on the hash ring.     <- grade 3\n7. ETL service and Data Warehouse.                                   <- grade 3"
           },
           "event": [
             {
@@ -276,7 +256,7 @@
       ]
     },
     {
-      "name": "Grade 4 – Data Warehouse and ETL",
+      "name": "Grade 4 - Data Warehouse and ETL",
       "description": "A separate warehouse database (`data-warehouse`, PostgreSQL 16) in Docker\nCompose, and an ETL service that copies every service's data into it,\nincrementally, on a timer and on demand.",
       "item": [
         {
@@ -297,9 +277,6 @@
               "path": [
                 "runs"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "Starts a run at once (it also runs by itself every ETL_INTERVAL_SECONDS)."
           },
@@ -338,9 +315,6 @@
                 "latest"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "Point at `tables`: each warehouse table, the service it comes from (`source`) and how many rows were written."
           },
           "event": [
@@ -363,7 +337,7 @@
                   "const run = pm.response.json();",
                   "pm.test('the run finished: ' + run.status, () => pm.expect(run.status).to.eql('ok'));",
                   "Object.entries(run.tables || {}).sort().forEach(([table, t]) =>",
-                  "    pm.test(`${table}  ←  ${t.source}: ${t.status}, ${t.written} written`, () => pm.expect(t.status).to.eql('ok')));"
+                  "    pm.test(`${table}  <-  ${t.source}: ${t.status}, ${t.written} written`, () => pm.expect(t.status).to.eql('ok')));"
                 ]
               }
             }
@@ -397,9 +371,6 @@
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -443,9 +414,6 @@
               "path": [
                 "runs"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -480,9 +448,6 @@
                 "latest"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "Only rows changed since the last run (its watermark) are read, plus a 60 s overlap; rows are upserted, so nothing is duplicated."
           },
           "event": [
@@ -503,7 +468,7 @@
                 "exec": [
                   "const run = pm.response.json();",
                   "pm.test('the run finished: ' + run.status, () => pm.expect(run.status).to.eql('ok'));",
-                  "pm.test('dim_user  ←  user_management: ' + run.tables.dim_user.written + ' written (the new player among them)',",
+                  "pm.test('dim_user  <-  user_management: ' + run.tables.dim_user.written + ' written (the new player among them)',",
                   "    () => pm.expect(run.tables.dim_user.written).to.be.at.least(1));"
                 ]
               }
@@ -511,7 +476,7 @@
           ]
         },
         {
-          "name": "▶ See the player in the warehouse",
+          "name": "MANUAL: See the player in the warehouse",
           "request": {
             "method": "GET",
             "header": [],
@@ -523,9 +488,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "In PowerShell (the exact line, with this run's username, is in Test Results):\n\n    docker compose exec data-warehouse psql -U warehouse_user -d warehouse -c \"select user_id, username, loaded_at from dim_user where username = '<etl_ username>'\"\n\nOne row, `loaded_at` a few seconds ago. All tables and their row counts:\n\n    docker compose exec data-warehouse psql -U warehouse_user -d warehouse -c \"select relname, n_live_tup from pg_stat_user_tables order by 1\""
           },
@@ -546,11 +508,11 @@
       ]
     },
     {
-      "name": "Grade 5 – Replication and failover",
+      "name": "Grade 5 - Replication and failover",
       "description": "User Management's PostgreSQL: three nodes under repmgr behind pgpool\n(`user-management-service-db`). Registering a player is a write, so it must\nreach the primary: it shows the failover directly (no cache in between).",
       "item": [
         {
-          "name": "▶ Who is the primary",
+          "name": "MANUAL: Who is the primary",
           "request": {
             "method": "GET",
             "header": [],
@@ -562,9 +524,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "In PowerShell:\n\n    docker compose exec -u 1001 user-management-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n\nOne `primary`, two `standby`. Note which node is the primary."
           },
@@ -608,9 +567,6 @@
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -636,7 +592,7 @@
           ]
         },
         {
-          "name": "▶ Stop the primary",
+          "name": "MANUAL: Stop the primary",
           "request": {
             "method": "GET",
             "header": [],
@@ -649,10 +605,7 @@
                 "health"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "Docker Desktop → `tamagotchi-go` → press **Stop** on the node that\n`cluster show` named primary (e.g. `user-management-service-db-0`).\n\nThen go straight on to the next request."
+            "description": "Docker Desktop -> `tamagotchi-go` -> press **Stop** on the node that\n`cluster show` named primary (e.g. `user-management-service-db-0`).\n\nThen go straight on to the next request."
           },
           "event": [
             {
@@ -694,9 +647,6 @@
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "Send it right after stopping the primary, and again until it is 201.\nFor a few seconds, while repmgr promotes a standby, the service answers\n503 + Retry-After: 2 (a write in flight is not repeated blindly). Measured:\ntwo 503s, then every write 201."
           },
@@ -756,9 +706,6 @@
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -774,7 +721,7 @@
           ]
         },
         {
-          "name": "▶ Who is the primary now",
+          "name": "MANUAL: Who is the primary now",
           "request": {
             "method": "GET",
             "header": [],
@@ -786,9 +733,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "In PowerShell, against a node that is still running (not the one you stopped):\n\n    docker compose exec -u 1001 user-management-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n    docker compose exec -u 1001 user-management-service-db-2 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n\nThe stopped node is `failed`; a former standby is now `primary`."
           },
@@ -805,7 +749,7 @@
           ]
         },
         {
-          "name": "▶ Start the old primary again",
+          "name": "MANUAL: Start the old primary again",
           "request": {
             "method": "GET",
             "header": [],
@@ -818,10 +762,7 @@
                 "health"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "Docker Desktop → press **Start** on the node you stopped. After about 40 s:\n\n    docker compose exec -u 1001 user-management-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n\nIt is back as a `standby` of the new primary: it rejoined by itself."
+            "description": "Docker Desktop -> press **Start** on the node you stopped. After about 40 s:\n\n    docker compose exec -u 1001 user-management-service-db-1 /opt/bitnami/scripts/postgresql-repmgr/entrypoint.sh repmgr -f /opt/bitnami/repmgr/conf/repmgr.conf cluster show\n\nIt is back as a `standby` of the new primary: it rejoined by itself."
           },
           "event": [
             {
@@ -836,7 +777,7 @@
           ]
         },
         {
-          "name": "▶ Redis too: master, 2 replicas, 3 Sentinels",
+          "name": "MANUAL: Redis too: master, 2 replicas, 3 Sentinels",
           "request": {
             "method": "GET",
             "header": [],
@@ -848,9 +789,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "In PowerShell:\n\n    docker compose exec redis-sentinel-1 redis-cli -p 26379 sentinel get-master-addr-by-name monster-raid-service-cache\n\nStop `monster-raid-service-cache` in Docker Desktop, run it again: within\nabout 5 s the address is a replica's (the Sentinels promoted it). Start the old\none again: about 15 s later it is a replica of the new master.\nEvery group at once: `docker compose exec redis-sentinel-1 redis-cli -p 26379 sentinel masters`"
           },
@@ -869,14 +807,19 @@
       ]
     },
     {
-      "name": "Grade 6 – Caching",
+      "name": "Grade 6 - Caching",
       "description": "Commonly read GETs and authentication data come from the shared cache nodes.\nEvery cached read says where it came from in the X-Cache response header:\n`miss` (the database, now cached) or `hit` (the cache). Open the response's\nHeaders tab.",
       "item": [
         {
           "name": "My profile, first read (X-Cache: miss)",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
             "url": {
               "raw": "{{gatewayUrl}}/users/{{userId}}",
               "host": [
@@ -885,16 +828,6 @@
               "path": [
                 "users",
                 "{{userId}}"
-              ]
-            },
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
               ]
             }
           },
@@ -915,7 +848,12 @@
           "name": "My profile again (X-Cache: hit)",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
             "url": {
               "raw": "{{gatewayUrl}}/users/{{userId}}",
               "host": [
@@ -924,16 +862,6 @@
               "path": [
                 "users",
                 "{{userId}}"
-              ]
-            },
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
               ]
             }
           },
@@ -986,9 +914,6 @@
                 }
               }
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "Registered by the stack's seeded admin, with the demo player as its moderator."
           },
           "event": [
@@ -1018,9 +943,6 @@
                 "packages",
                 "{{packageId}}"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -1050,9 +972,6 @@
                 "packages",
                 "{{packageId}}"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -1106,9 +1025,6 @@
                 }
               }
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "After the database commit, Package Registry deletes the package's cache key."
           },
           "event": [
@@ -1137,9 +1053,6 @@
                 "packages",
                 "{{packageId}}"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -1169,9 +1082,6 @@
                 "metrics"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "Every request above with a Bearer token was checked by the gateway once\n(signature), then found in the cache (`gateway:token:<sha256>`, until the\ntoken's exp, at most 5 min). The log shows it too:\n\n    docker compose logs --since 5m gateway | Select-String \"cache (hit|miss)\""
           },
           "event": [
@@ -1192,7 +1102,7 @@
       ]
     },
     {
-      "name": "Grade 7 – Consistent hashing and the sharded cache",
+      "name": "Grade 7 - Consistent hashing and the sharded cache",
       "description": "Every key goes to one of cache-1..3, picked by our consistent-hash ring\n(FNV-1a + fmix32, 160 virtual nodes per node), the same in TypeScript, Go and\nPython. The research: README, \"Cache Sharding with Consistent Hashing\".",
       "item": [
         {
@@ -1217,9 +1127,6 @@
                 }
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "Prometheus adds up cache_requests_total from every replica of every service, per cache node: all three nodes get traffic."
           },
           "event": [
@@ -1240,7 +1147,7 @@
           ]
         },
         {
-          "name": "▶ Keys spread over the three nodes",
+          "name": "MANUAL: Keys spread over the three nodes",
           "request": {
             "method": "GET",
             "header": [],
@@ -1252,9 +1159,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "In PowerShell, in `pad-team-14-tamagotchi-go`:\n\n    $p = (Select-String '^CACHE_PASSWORD=' .env).Line.Split('=',2)[1]\n    foreach ($n in 'cache-1','cache-2','cache-3') { \"$n : $(docker compose exec $n valkey-cli -a $p --no-auth-warning dbsize)\" }\n\nEach node holds a share. The keys on one node, from several services:\n\n    docker compose exec cache-2 valkey-cli -a $p --no-auth-warning --scan"
           },
@@ -1271,7 +1175,7 @@
           ]
         },
         {
-          "name": "▶ Why a ring: measured",
+          "name": "MANUAL: Why a ring: measured",
           "request": {
             "method": "GET",
             "header": [],
@@ -1283,9 +1187,6 @@
               "path": [
                 "health"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             },
             "description": "In PowerShell, in `pad-team-14-tamagotchi-go\\hash-ring`:\n\n    npm install\n    npm run stats\n\nWith 1 virtual node the split is about 5% / 34% / 61%; with 160, a third\neach. Adding a 4th node moves about 25% of the keys on the ring, against 75%\nwith `hash mod N`. The three ports agree on one file of test vectors:\n`cd python; python -m unittest -v`."
           },
@@ -1304,8 +1205,8 @@
       ]
     },
     {
-      "name": "Grade 9 – Long-running sagas, coordinator in the Message Broker",
-      "description": "The coordinator runs each saga's steps in order (POST /saga-steps on each\nservice). If a step says no, it undoes the finished steps in reverse order.\nHere: raid-activation = Package Registry `mark-activating` → Monster Raid\n`create-raid` → Package Registry `activate`.",
+      "name": "Grade 9 - Long-running sagas, coordinator in the Message Broker",
+      "description": "The coordinator runs each saga's steps in order (POST /saga-steps on each\nservice). If a step says no, it undoes the finished steps in reverse order.\nHere: raid-activation = Package Registry `mark-activating` -> Monster Raid\n`create-raid` -> Package Registry `activate`.",
       "item": [
         {
           "name": "A draft raid config",
@@ -1342,9 +1243,6 @@
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -1398,9 +1296,6 @@
                 }
               }
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "Started on the coordinator directly, with a raid Monster Raid must refuse.\nStep 1 marks the config `activating`; step 2 answers 422; the coordinator\ncompensates step 1 (the config goes back to `draft`); step 3 never runs."
           },
           "event": [
@@ -1445,9 +1340,6 @@
                 "activate"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "After the rollback the config is a draft again, so it can be activated. Package Registry starts the raid-activation saga on the broker."
           },
           "event": [
@@ -1484,9 +1376,6 @@
                 "sagas",
                 "{{activationSagaId}}"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -1528,9 +1417,6 @@
                 }
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
             "description": "Run the Battle collection before the demo and a battle-settlement (6 steps, 4 services) is in this list too: open it with GET /sagas/<its sagaId>."
           },
           "event": [
@@ -1542,7 +1428,7 @@
                   "pm.test('200 OK', () => pm.response.to.have.status(200));",
                   "const counts = {};",
                   "pm.response.json().forEach(s => { const k = s.saga + ': ' + s.state; counts[k] = (counts[k] || 0) + 1; });",
-                  "Object.entries(counts).sort().forEach(([k, n]) => pm.test(`${k} × ${n}`, () => {}));"
+                  "Object.entries(counts).sort().forEach(([k, n]) => pm.test(`${k} x ${n}`, () => {}));"
                 ]
               }
             }
@@ -1561,9 +1447,6 @@
               "path": [
                 "metrics"
               ]
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
           "event": [
@@ -1583,11 +1466,11 @@
       ]
     },
     {
-      "name": "Grade 10 – Postman, diagram, Docker Hub, README",
+      "name": "Grade 10 - Postman, diagram, Docker Hub, README",
       "description": "",
       "item": [
         {
-          "name": "▶ Collections, Docker Hub, README",
+          "name": "MANUAL: Collections, Docker Hub, README",
           "request": {
             "method": "GET",
             "header": [],
@@ -1600,10 +1483,7 @@
                 "health"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "- Postman: right-click a service collection → Run collection → Run. Gateway,\n  Package Registry, Message Broker, Battle and Monster Raid pass every check.\n- Docker Hub: every image has a description, e.g.\n  https://hub.docker.com/r/dackohn/message-broker,\n  https://hub.docker.com/r/dackohn/etl-service,\n  https://hub.docker.com/r/isstephy1/gateway\n- README: the \"Lab 5 Decisions\" section (cache, hash ring, replication,\n  warehouse, ETL, sagas and their compensations).\n- Diagram: grades 2 and 3 above."
+            "description": "- Postman: right-click a service collection -> Run collection -> Run. Gateway,\n  Package Registry, Message Broker, Battle and Monster Raid pass every check.\n- Docker Hub: every image has a description, e.g.\n  https://hub.docker.com/r/dackohn/message-broker,\n  https://hub.docker.com/r/dackohn/etl-service,\n  https://hub.docker.com/r/isstephy1/gateway\n- README: the \"Lab 5 Decisions\" section (cache, hash ring, replication,\n  warehouse, ETL, sagas and their compensations).\n- Diagram: grades 2 and 3 above."
           },
           "event": [
             {
